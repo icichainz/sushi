@@ -191,7 +191,11 @@ func (m Model) renderStatusBar() string {
 		if m.previewEnabled {
 			previewStatus = "👁️ "
 		}
-		rightInfo = fmt.Sprintf("%s%d/%d ", previewStatus, m.cursor+1, len(m.files))
+		syntaxStatus := ""
+		if m.syntaxHighlight {
+			syntaxStatus = "🎨 "
+		}
+		rightInfo = fmt.Sprintf("%s%s%d/%d ", syntaxStatus, previewStatus, m.cursor+1, len(m.files))
 	}
 
 	// Build status bar
