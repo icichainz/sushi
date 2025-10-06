@@ -17,9 +17,11 @@ type Model struct {
 	selected    map[string]bool
 
 	// Preview state
-	preview        components.PreviewContent
-	previewEnabled bool
-	previewWidth   int
+	preview            components.PreviewContent
+	previewEnabled     bool
+	previewWidth       int
+	syntaxHighlight    bool
+	syntaxTheme        string
 
 	// UI state
 	width  int
@@ -48,16 +50,17 @@ const (
 
 // KeyMap defines all key bindings
 type KeyMap struct {
-	Up      key.Binding
-	Down    key.Binding
-	Left    key.Binding
-	Right   key.Binding
-	Enter   key.Binding
-	Back    key.Binding
-	Delete  key.Binding
-	Quit    key.Binding
-	Help    key.Binding
-	Preview key.Binding
+	Up              key.Binding
+	Down            key.Binding
+	Left            key.Binding
+	Right           key.Binding
+	Enter           key.Binding
+	Back            key.Binding
+	Delete          key.Binding
+	Quit            key.Binding
+	Help            key.Binding
+	Preview         key.Binding
+	ToggleSyntax    key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings
@@ -103,6 +106,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("p"),
 			key.WithHelp("p", "toggle preview"),
 		),
+		ToggleSyntax: key.NewBinding(
+			key.WithKeys("s"),
+			key.WithHelp("s", "toggle syntax"),
+		),
 	}
 }
 
@@ -114,20 +121,28 @@ func NewModel(path string) Model {
 	}
 
 	m := Model{
-		currentPath:    path,
-		files:          files,
-		cursor:         0,
-		selected:       make(map[string]bool),
-		styles:         ui.DefaultStyles(),
-		keys:           DefaultKeyMap(),
-		mode:           ModeNormal,
-		previewEnabled: true,
-		previewWidth:   50, // 50% of screen
+		currentPath:     path,
+		files:           files,
+		cursor:          0,
+		selected:        make(map[string]bool),
+		styles:          ui.DefaultStyles(),
+		keys:            DefaultKeyMap(),
+		mode:            ModeNormal,
+		previewEnabled:  true,
+		previewWidth:    50, // 50% of screen
+		syntaxHighlight: true,
+		syntaxTheme:     "monokai", // Can be: monokai, dracula, github, nord, etc.
 	}
 
 	// Load initial preview
 	if len(files) > 0 {
-		m.preview = components.LoadPreview(files[0], 100)
+		config := components.PreviewConfig{
+			MaxLines:        100,
+			SyntaxHighlight: m.syntaxHighlight,
+			SyntaxTheme:     m.syntaxTheme,
+			MaxPreviewSize:  10 * 1024 * 1024,
+		}
+		m.preview = components.LoadPreviewWithConfig(files[0], config)
 	}
 
 	return m
