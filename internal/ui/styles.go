@@ -10,6 +10,9 @@ type Styles struct {
 	SelectedFile lipgloss.Style
 	StatusBar    lipgloss.Style
 	EmptyDir     lipgloss.Style
+	TabBar       lipgloss.Style
+	TabActive    lipgloss.Style
+	TabInactive  lipgloss.Style
 }
 
 // DefaultStyles returns the default style configuration
@@ -40,5 +43,22 @@ func DefaultStyles() Styles {
 		EmptyDir: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
 			Align(lipgloss.Center, lipgloss.Center),
+
+		TabBar: lipgloss.NewStyle().
+			Background(lipgloss.Color("235")).
+			Padding(0, 1),
+
+		TabActive: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("229")).
+			Background(lipgloss.Color("62")).
+			Padding(0, 1).
+			MarginRight(1),
+
+		TabInactive: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252")).
+			Background(lipgloss.Color("238")).
+			Padding(0, 1).
+			MarginRight(1),
 	}
 }

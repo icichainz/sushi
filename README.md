@@ -38,7 +38,72 @@ sushi
 
 # Open specific directory
 sushi /path/to/directory
+
+# Use ASCII icons (no Nerd Font required)
+sushi --ascii
+
+# Combine options
+sushi --ascii ~/projects
 ```
+
+### Command Line Options
+
+| Option | Description |
+|--------|-------------|
+| `--ascii` | Use ASCII text icons (works everywhere, no font required) |
+| `--bootstrap` | Use Bootstrap Icons font |
+| `--install-font` | Download and install JetBrainsMono Nerd Font |
+| `--list-fonts` | List available Nerd Fonts to install |
+| `--init-config` | Create default configuration file |
+| `--help`, `-h` | Show help message |
+
+### Icon Modes
+
+Sushi supports three icon modes:
+
+1. **Nerd Font** (default) - Rich icons for 100+ file types. Requires a [Nerd Font](https://www.nerdfonts.com/) installed.
+2. **Bootstrap Icons** (`--bootstrap`) - Clean, modern icons. Requires [Bootstrap Icons](https://icons.getbootstrap.com/) font installed.
+3. **ASCII** (`--ascii`) - Text-based icons like `[GO]`, `[PY]`, `[D]`. Works in any terminal without special fonts.
+
+## Configuration
+
+Sushi supports a YAML configuration file at `~/.config/sushi/config.yaml`.
+
+### Creating the Config File
+
+```bash
+sushi --init-config
+```
+
+### Configuration Options
+
+```yaml
+# Icon display mode: "nerd", "bootstrap", or "ascii"
+icon_mode: nerd
+
+# Show hidden files by default
+show_hidden: false
+
+# Enable preview pane by default
+preview_enabled: true
+
+# Preview pane width percentage (1-80)
+preview_width: 50
+
+# Require confirmation before deleting files
+confirm_delete: true
+
+# Sort files by: "name", "size", "modified", or "type"
+sort_by: name
+
+# Reverse sort order
+sort_reverse: false
+
+# Theme (for future use): "default", "dark", "light"
+theme: default
+```
+
+Command line flags (like `--ascii`) override config file settings.
 
 ## Keybindings
 
@@ -54,11 +119,29 @@ sushi /path/to/directory
 | `q` | Quit |
 | `?` | Show help |
 
+## Requirements
+
+- **Nerd Font** (default mode) - For proper icon display, you need a Nerd Font. Install automatically with:
+  ```bash
+  sushi --install-font
+  ```
+  Then configure your terminal to use "JetBrainsMono Nerd Font".
+
+  Or manually download from [Nerd Fonts](https://www.nerdfonts.com/):
+  - [JetBrainsMono](https://github.com/ryanoasis/nerd-fonts/releases/download/v3.3.0/JetBrainsMono.zip)
+  - [FiraCode](https://github.com/ryanoasis/nerd-fonts/releases/download/v3.3.0/FiraCode.zip)
+  - [Hack](https://github.com/ryanoasis/nerd-fonts/releases/download/v3.3.0/Hack.zip)
+
+- **Bootstrap Icons** (optional, with `--bootstrap` flag) - Install from [Bootstrap Icons](https://icons.getbootstrap.com/)
+
+- **No font required** - Use `--ascii` flag for ASCII text icons that work in any terminal
+
 ## Development
 
 ### Prerequisites
 
 - Go 1.21 or higher
+- A Nerd Font installed and configured in your terminal
 
 ### Setup
 
@@ -94,12 +177,12 @@ sushi/
 - [x] Vim-style keybindings
 - [x] File icons and colors
 - [x] File preview pane
-- [ ] Syntax highlighting in preview
-- [ ] File operations (copy, move, delete)
-- [ ] Fuzzy search
-- [ ] Bookmarks
-- [ ] Multiple tabs
-- [ ] Configuration file support
+- [x] Syntax highlighting in preview
+- [x] File operations (copy, move, delete)
+- [x] Fuzzy search
+- [x] Bookmarks
+- [x] Multiple tabs
+- [x] Configuration file support
 - [ ] Plugin system
 
 ## Contributing

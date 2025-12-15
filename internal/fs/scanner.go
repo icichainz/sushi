@@ -1,6 +1,5 @@
 package fs
 
-
 import (
 	"os"
 	"path/filepath"
