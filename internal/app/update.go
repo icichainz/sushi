@@ -113,6 +113,19 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "Preview toggled"
 		return m, nil
 
+	case key.Matches(msg, m.keys.ToggleSyntax):
+		m.syntaxHighlight = !m.syntaxHighlight
+		if m.syntaxHighlight {
+			m.statusMsg = "Syntax highlighting enabled"
+		} else {
+			m.statusMsg = "Syntax highlighting disabled"
+		}
+		// Reload current preview with new setting
+		if len(m.files) > 0 && m.previewEnabled {
+			return m, loadPreviewWithModel(m.files[m.cursor], m)
+		}
+		return m, nil
+
 	case key.Matches(msg, m.keys.Up):
 		if tab.Cursor > 0 {
 			tab.Cursor--
@@ -634,10 +647,16 @@ func loadDirectory(path string) tea.Cmd {
 	}
 }
 
-// loadPreview loads preview content asynchronously
-func loadPreview(file fs.FileInfo) tea.Cmd {
+// loadPreviewWithModel loads preview content with model's configuration
+func loadPreviewWithModel(file fs.FileInfo, m Model) tea.Cmd {
 	return func() tea.Msg {
-		preview := components.LoadPreview(file, 100)
+		config := components.PreviewConfig{
+			MaxLines:        100,
+			SyntaxHighlight: m.syntaxHighlight,
+			SyntaxTheme:     m.syntaxTheme,
+			MaxPreviewSize:  10 * 1024 * 1024,
+		}
+		preview := components.LoadPreviewWithConfig(file, config)
 		return previewLoadedMsg{
 			preview: preview,
 		}

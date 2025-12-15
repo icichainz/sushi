@@ -18,6 +18,8 @@ clean:
 
 # Install the application
 install:
+	go get github.com/alecthomas/chroma/v2
+	go mod tidy
 	go install
 
 # Run tests

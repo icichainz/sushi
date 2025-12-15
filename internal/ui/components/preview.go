@@ -2,6 +2,7 @@ package components
 
 import (
 	"bytes"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -64,8 +65,33 @@ type PreviewContent struct {
 	Error    error
 }
 
+// PreviewConfig holds preview configuration
+type PreviewConfig struct {
+	MaxLines          int
+	SyntaxHighlight   bool
+	SyntaxTheme       string
+	MaxPreviewSize    int64
+}
+
+// DefaultPreviewConfig returns default preview settings
+func DefaultPreviewConfig() PreviewConfig {
+	return PreviewConfig{
+		MaxLines:        100,
+		SyntaxHighlight: true,
+		SyntaxTheme:     "monokai", // Options: monokai, dracula, github, nord, etc.
+		MaxPreviewSize:  10 * 1024 * 1024, // 10MB
+	}
+}
+
 // LoadPreview loads the preview content for a file
 func LoadPreview(file fs.FileInfo, maxLines int) PreviewContent {
+	config := DefaultPreviewConfig()
+	config.MaxLines = maxLines
+	return LoadPreviewWithConfig(file, config)
+}
+
+// LoadPreviewWithConfig loads preview with custom configuration
+func LoadPreviewWithConfig(file fs.FileInfo, config PreviewConfig) PreviewContent {
 	preview := PreviewContent{
 		Path:     file.Path,
 		FileInfo: file,
@@ -78,8 +104,8 @@ func LoadPreview(file fs.FileInfo, maxLines int) PreviewContent {
 		return preview
 	}
 
-	// Check if file is too large (> 10MB)
-	if file.Size > 10*1024*1024 {
+	// Check if file is too large
+	if file.Size > config.MaxPreviewSize {
 		preview.Content = fmt.Sprintf("File too large to preview\nSize: %s", utils.HumanizeSize(file.Size))
 		preview.IsText = false
 		return preview
@@ -108,6 +134,16 @@ func LoadPreview(file fs.FileInfo, maxLines int) PreviewContent {
 	}
 
 	preview.IsText = true
+	
+	// Apply syntax highlighting if enabled
+	if config.SyntaxHighlight {
+		highlighted, err := highlightCode(file.Path, string(content), config.SyntaxTheme)
+		if err == nil {
+			content = []byte(highlighted)
+		}
+		// If highlighting fails, fall back to plain text
+	}
+
 	lines := strings.Split(string(content), "\n")
 
 	// Limit number of lines
@@ -127,6 +163,47 @@ func LoadPreview(file fs.FileInfo, maxLines int) PreviewContent {
 
 	preview.Content = highlighted
 	return preview
+}
+
+// highlightCode applies syntax highlighting to code
+func highlightCode(filepath string, content string, themeName string) (string, error) {
+	// Determine lexer from filename
+	lexer := lexers.Match(filepath)
+	if lexer == nil {
+		lexer = lexers.Analyse(content)
+	}
+	if lexer == nil {
+		lexer = lexers.Fallback
+	}
+
+	// Coalesce to prevent fragmented tokens
+	//lexer = lexers.Coalesce(lexer)
+
+	// Get style
+	style := styles.Get(themeName)
+	if style == nil {
+		style = styles.Fallback
+	}
+
+	// Use terminal256 formatter for better color support
+	formatter := formatters.Get("terminal256")
+	if formatter == nil {
+		formatter = formatters.Fallback
+	}
+
+	// Tokenize and format
+	iterator, err := lexer.Tokenise(nil, content)
+	if err != nil {
+		return "", err
+	}
+
+	var buf bytes.Buffer
+	err = formatter.Format(&buf, style, iterator)
+	if err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
 }
 
 // loadDirectoryPreview creates a preview for directories
@@ -190,11 +267,7 @@ func formatBinaryPreview(file fs.FileInfo) string {
 	var lines []string
 	lines = append(lines, fmt.Sprintf("%s Binary File", ui.GetBinaryIcon()))
 	lines = append(lines, "")
-	lines = append(lines, fmt.Sprintf("Name: %s", file.Name))
-	lines = append(lines, fmt.Sprintf("Size: %s", utils.HumanizeSize(file.Size)))
-	lines = append(lines, fmt.Sprintf("Type: %s", getFileType(ext)))
-	lines = append(lines, fmt.Sprintf("Modified: %s", file.ModTime.Format("2006-01-02 15:04:05")))
-	lines = append(lines, fmt.Sprintf("Permissions: %s", file.Perms.String()))
+	lines = append(lines, "Cannot preview binary content")
 
 	return strings.Join(lines, "\n")
 }
