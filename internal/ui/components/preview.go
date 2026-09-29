@@ -2,11 +2,9 @@ package components
 
 import (
 	"bytes"
-	"bytes"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2"
@@ -134,34 +132,31 @@ func LoadPreviewWithConfig(file fs.FileInfo, config PreviewConfig) PreviewConten
 	}
 
 	preview.IsText = true
-	
-	// Apply syntax highlighting if enabled
-	if config.SyntaxHighlight {
-		highlighted, err := highlightCode(file.Path, string(content), config.SyntaxTheme)
-		if err == nil {
-			content = []byte(highlighted)
-		}
-		// If highlighting fails, fall back to plain text
-	}
 
 	lines := strings.Split(string(content), "\n")
 
 	// Limit number of lines
 	totalLines := len(lines)
-	if len(lines) > maxLines {
-		lines = lines[:maxLines]
+	if len(lines) > config.MaxLines {
+		lines = lines[:config.MaxLines]
 	}
 
 	text := strings.Join(lines, "\n")
 
-	// Apply syntax highlighting
-	highlighted := highlightCode(text, file.Name)
-
-	if totalLines > maxLines {
-		highlighted += fmt.Sprintf("\n\n... (%d more lines)", totalLines-maxLines)
+	// Apply syntax highlighting if enabled
+	if config.SyntaxHighlight {
+		highlighted, err := highlightCode(file.Path, text, config.SyntaxTheme)
+		if err == nil {
+			text = highlighted
+		}
+		// If highlighting fails, fall back to plain text
 	}
 
-	preview.Content = highlighted
+	if totalLines > config.MaxLines {
+		text += fmt.Sprintf("\n\n... (%d more lines)", totalLines-config.MaxLines)
+	}
+
+	preview.Content = text
 	return preview
 }
 
@@ -262,8 +257,6 @@ func loadDirectoryPreview(path string) string {
 
 // formatBinaryPreview creates info display for binary files
 func formatBinaryPreview(file fs.FileInfo) string {
-	ext := strings.ToLower(filepath.Ext(file.Name))
-
 	var lines []string
 	lines = append(lines, fmt.Sprintf("%s Binary File", ui.GetBinaryIcon()))
 	lines = append(lines, "")
@@ -296,38 +289,6 @@ func checkBinaryFile(path string) (bool, error) {
 	return false, nil
 }
 
-// highlightCode applies syntax highlighting to code using chroma
-func highlightCode(code, filename string) string {
-	// Get lexer based on filename (lexer must be per-file, can't cache)
-	lexer := lexers.Match(filename)
-	if lexer == nil {
-		lexer = lexers.Fallback
-	}
-	lexer = chroma.Coalesce(lexer)
-
-	// Tokenize the code
-	iterator, err := lexer.Tokenise(nil, code)
-	if err != nil {
-		return code // Return unhighlighted on error
-	}
-
-	// Format to buffer using cached style and formatter
-	var buf bytes.Buffer
-	err = chromaFormatter.Format(&buf, chromaStyle, iterator)
-	if err != nil {
-		return code // Return unhighlighted on error
-	}
-
-	return buf.String()
-}
-
-// getFileType returns a human-readable file type
-func getFileType(ext string) string {
-	if t, ok := fileTypeMap[ext]; ok {
-		return t
-	}
-	return "Binary file"
-}
 
 // RenderPreview renders the preview pane with styling
 func RenderPreview(preview PreviewContent, width, height int, styles lipgloss.Style) string {
