@@ -16,6 +16,10 @@ import (
 // statusDuration is how long transient status messages stay visible
 const statusDuration = 3 * time.Second
 
+// statusTimer schedules clearing a status message; tests replace it so they
+// don't wait on real timers
+var statusTimer = tea.Tick
+
 // Update handles all state updates
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -93,6 +97,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := tea.Batch(m.setStatus(status), m.reloadAll())
 		return m, cmd
 
+	case externalDoneMsg:
+		return m.handleExternalDone(msg)
+
 	case clearStatusMsg:
 		if msg.id == m.statusID {
 			m.statusMsg = ""
@@ -115,7 +122,7 @@ func (m *Model) setStatusFor(msg string, d time.Duration) tea.Cmd {
 	m.statusID++
 	m.statusMsg = msg
 	id := m.statusID
-	return tea.Tick(d, func(time.Time) tea.Msg {
+	return statusTimer(d, func(time.Time) tea.Msg {
 		return clearStatusMsg{id: id}
 	})
 }
@@ -149,10 +156,17 @@ func previewConfig(syntax string) components.PreviewConfig {
 
 // handleKeyPress processes keyboard input
 func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Handle help mode separately
+	// Handle help mode separately: j/k scroll, any other key closes
 	if m.mode == ModeHelp {
-		// Any key exits help mode
-		m.mode = ModeNormal
+		switch msg.String() {
+		case "j", "down":
+			m.helpScroll = min(m.helpScroll+1, m.maxHelpScroll())
+		case "k", "up":
+			m.helpScroll = max(m.helpScroll-1, 0)
+		default:
+			m.mode = ModeNormal
+			m.helpScroll = 0
+		}
 		return m, nil
 	}
 
@@ -252,9 +266,18 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case key.Matches(msg, m.keys.Right), key.Matches(msg, m.keys.Enter):
-		if len(tab.Files) > 0 && tab.Files[tab.Cursor].IsDir {
+		if len(tab.Files) > 0 {
+			if file := tab.Files[tab.Cursor]; !file.IsDir {
+				return m.openFile(file)
+			}
 			return m, m.loadDir(tab, tab.Files[tab.Cursor].Path)
 		}
+
+	case key.Matches(msg, m.keys.Edit):
+		return m.edit(m.targets())
+
+	case key.Matches(msg, m.keys.Open):
+		return m.openWithSystem(m.targets())
 
 	case key.Matches(msg, m.keys.Left), key.Matches(msg, m.keys.Back):
 		parentPath := filepath.Dir(tab.CurrentPath)

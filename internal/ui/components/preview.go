@@ -91,7 +91,7 @@ func LoadPreviewWithConfig(file fs.FileInfo, config PreviewConfig) PreviewConten
 	}
 
 	// First, check if file is binary by reading only the first 512 bytes
-	isBinaryFile, err := checkBinaryFile(file.Path)
+	isBinaryFile, err := fs.IsBinary(file.Path)
 	if err != nil {
 		preview.Error = err
 		preview.Content = fmt.Sprintf("Error reading file: %v", err)
@@ -257,30 +257,6 @@ func getFileType(ext string) string {
 		return t
 	}
 	return "Binary file"
-}
-
-// checkBinaryFile checks if a file is binary by reading only the first 512 bytes
-func checkBinaryFile(path string) (bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return false, err
-	}
-	defer f.Close()
-
-	// Read only first 512 bytes
-	buf := make([]byte, 512)
-	n, err := f.Read(buf)
-	if err != nil && n == 0 {
-		return false, err
-	}
-
-	// Check for null bytes
-	for i := 0; i < n; i++ {
-		if buf[i] == 0 {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // HasSyntaxTheme reports whether name is a known Chroma style

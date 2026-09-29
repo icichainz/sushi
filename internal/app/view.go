@@ -308,7 +308,84 @@ func (m Model) renderStatusBar() string {
 		Render(utils.Clip(line, avail))
 }
 
-// renderHelpView renders the help screen
+// helpItems lists the keyboard shortcuts shown on the help screen
+var helpItems = []struct {
+	key  string
+	desc string
+}{
+	{"↑/k", "Move cursor up"},
+	{"↓/j", "Move cursor down"},
+	{"PgUp/^u", "Page up"},
+	{"PgDn/^d", "Page down"},
+	{"g/Home", "Go to first file"},
+	{"G/End", "Go to last file"},
+	{"←/h", "Go to parent directory"},
+	{"Backspace", "Go to parent directory"},
+	{"→/l", "Open file or directory"},
+	{"Enter", "Open file or directory"},
+	{"e", "Edit in $EDITOR"},
+	{"o", "Open with default app"},
+	{"/", "Fuzzy search"},
+	{"p", "Toggle preview pane"},
+	{".", "Toggle hidden files"},
+	{"Space", "Select and move down"},
+	{"*", "Invert selection"},
+	{"u", "Clear selection"},
+	{"c", "Copy"},
+	{"x", "Cut"},
+	{"v", "Paste"},
+	{"d", "Delete"},
+	{"r", "Rename"},
+	{"n", "New file (dir if ends in /)"},
+	{"N", "New directory"},
+	{"b", "Show bookmarks"},
+	{"B", "Add bookmark"},
+	{"1-9", "Jump to bookmark"},
+	{"t", "New tab (current dir)"},
+	{"T", "New tab (home dir)"},
+	{"Tab", "Next tab"},
+	{"Shift+Tab", "Previous tab"},
+	{"Ctrl+w", "Close tab"},
+	{"q", "Quit"},
+	{"?", "Show this help"},
+}
+
+// helpChrome is the rows the help box needs besides its items: border,
+// padding, title and footer
+const helpChrome = 9
+
+// helpLayout works out how many columns of help items fit the terminal,
+// how many rows they take, and how many rows are visible at once
+func (m Model) helpLayout(itemWidth int) (cols, rows, visible int) {
+	const gap = 4
+	maxCols := max((m.width-8+gap)/(itemWidth+gap), 1) // 8: border and padding
+	visible = max(m.height-helpChrome, 1)
+	cols = min(maxCols, (len(helpItems)+visible-1)/visible)
+	cols = max(cols, 1)
+	rows = (len(helpItems) + cols - 1) / cols
+	return cols, rows, min(rows, visible)
+}
+
+// maxHelpScroll returns how far the help screen can scroll
+func (m Model) maxHelpScroll() int {
+	_, rows, visible := m.helpLayout(m.helpItemWidth())
+	return rows - visible
+}
+
+// helpItemWidth returns the width of the widest rendered help item
+func (m Model) helpItemWidth() int {
+	w := 0
+	for _, item := range helpItems {
+		w = max(w, helpKeyWidth+lipgloss.Width(item.desc))
+	}
+	return w
+}
+
+// helpKeyWidth is the width of the key column on the help screen
+const helpKeyWidth = 11
+
+// renderHelpView renders the help screen, in as many columns as fit and
+// scrollable when even that is too tall
 func (m Model) renderHelpView() string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -318,62 +395,32 @@ func (m Model) renderHelpView() string {
 	keyStyle := lipgloss.NewStyle().
 		Foreground(m.theme.Highlight).
 		Bold(true).
-		Width(15)
+		Width(helpKeyWidth)
 
 	descStyle := lipgloss.NewStyle().
 		Foreground(m.theme.Text)
 
-	helpItems := []struct {
-		key  string
-		desc string
-	}{
-		{"↑/k", "Move cursor up"},
-		{"↓/j", "Move cursor down"},
-		{"PgUp/^u", "Page up"},
-		{"PgDn/^d", "Page down"},
-		{"g/Home", "Go to first file"},
-		{"G/End", "Go to last file"},
-		{"←/h", "Go to parent directory"},
-		{"→/l", "Enter directory"},
-		{"Enter", "Enter directory"},
-		{"Backspace", "Go to parent directory"},
-		{"/", "Fuzzy search"},
-		{"b", "Show bookmarks"},
-		{"B", "Add bookmark"},
-		{"1-9", "Quick jump to bookmark"},
-		{"p", "Toggle preview pane"},
-		{".", "Toggle hidden files"},
-		{"t", "New tab (current dir)"},
-		{"T", "New tab (home dir)"},
-		{"Tab", "Next tab"},
-		{"Shift+Tab", "Previous tab"},
-		{"Ctrl+w", "Close tab"},
-		{"r", "Rename"},
-		{"n", "New file (end with / for a directory)"},
-		{"N", "New directory"},
-		{"Space", "Select file and move down"},
-		{"*", "Invert selection"},
-		{"u", "Clear selection"},
-		{"d", "Delete file/directory"},
-		{"c", "Copy to clipboard"},
-		{"x", "Cut to clipboard"},
-		{"v", "Paste from clipboard"},
-		{"q", "Quit"},
-		{"?", "Show this help"},
-	}
+	cols, rows, visible := m.helpLayout(m.helpItemWidth())
+	offset := min(m.helpScroll, rows-visible)
 
-	items := make([]string, len(helpItems))
-	for i, item := range helpItems {
-		items[i] = keyStyle.Render(item.key) + descStyle.Render(item.desc)
+	columns := make([]string, 0, cols*2)
+	for c := 0; c < cols; c++ {
+		var lines []string
+		for r := offset; r < offset+visible; r++ {
+			if i := c*rows + r; i < len(helpItems) {
+				lines = append(lines, keyStyle.Render(helpItems[i].key)+descStyle.Render(helpItems[i].desc))
+			}
+		}
+		if c > 0 {
+			columns = append(columns, "    ")
+		}
+		columns = append(columns, strings.Join(lines, "\n"))
 	}
-	body := strings.Join(items, "\n")
+	body := lipgloss.JoinHorizontal(lipgloss.Top, columns...)
 
-	// Split into two columns when one would not fit the terminal height
-	const chrome = 9 // Title, hint, blank lines, padding and border
-	if len(items)+chrome > m.height {
-		half := (len(items) + 1) / 2
-		body = lipgloss.JoinHorizontal(lipgloss.Top,
-			strings.Join(items[:half], "\n"), "    ", strings.Join(items[half:], "\n"))
+	hint := "Press any key to close"
+	if rows > visible {
+		hint = fmt.Sprintf("j/k to scroll (%d-%d of %d rows) · any other key to close", offset+1, offset+visible, rows)
 	}
 
 	var lines []string
@@ -384,7 +431,7 @@ func (m Model) renderHelpView() string {
 	lines = append(lines, lipgloss.NewStyle().
 		Foreground(m.theme.Muted).
 		Italic(true).
-		Render("Press any key to close"))
+		Render(hint))
 
 	content := strings.Join(lines, "\n")
 

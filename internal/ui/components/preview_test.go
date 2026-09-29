@@ -69,3 +69,13 @@ func TestDirectoryPreviewListsEntries(t *testing.T) {
 		t.Fatalf("directory preview = %q", p.Content)
 	}
 }
+
+func TestEmptyFilePreviewsAsText(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.txt")
+	os.WriteFile(path, nil, 0644)
+
+	p := LoadPreview(fileInfo(t, path), 100)
+	if p.Error != nil || !p.IsText {
+		t.Fatalf("empty file preview: error=%v text=%v content=%q", p.Error, p.IsText, p.Content)
+	}
+}

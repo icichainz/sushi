@@ -17,6 +17,7 @@ type Config struct {
 
 	// Behavior settings
 	ConfirmDelete bool   `yaml:"confirm_delete"` // Require confirmation for delete
+	Opener        string `yaml:"opener"`         // How Enter opens files: "auto", "editor", "system"
 	SortBy        string `yaml:"sort_by"`        // "name", "size", "modified", "type"
 	SortReverse   bool   `yaml:"sort_reverse"`   // Reverse sort order
 
@@ -34,6 +35,7 @@ func DefaultConfig() *Config {
 		PreviewEnabled: true,
 		PreviewWidth:   50,
 		ConfirmDelete:  true,
+		Opener:         "auto",
 		SortBy:         "name",
 		SortReverse:    false,
 		Theme:          "default",
@@ -121,6 +123,14 @@ func (c *Config) validate() {
 		c.PreviewWidth = 1
 	} else if c.PreviewWidth > 80 {
 		c.PreviewWidth = 80
+	}
+
+	// Validate opener
+	switch c.Opener {
+	case "auto", "editor", "system":
+		// Valid
+	default:
+		c.Opener = "auto"
 	}
 
 	// Validate sort_by

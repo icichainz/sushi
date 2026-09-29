@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -12,8 +13,18 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/icichainz/sushi/internal/config"
+	"github.com/icichainz/sushi/internal/fs"
 	"github.com/icichainz/sushi/internal/ui/components"
 )
+
+func TestMain(m *testing.M) {
+	// Status timers would hold up every test for seconds; fire them at once
+	// without a message, so status text stays put for assertions
+	statusTimer = func(time.Duration, func(time.Time) tea.Msg) tea.Cmd {
+		return func() tea.Msg { return nil }
+	}
+	os.Exit(m.Run())
+}
 
 // newTestModel builds a sized model rooted at dir, with HOME redirected so
 // bookmarks and config never touch the real user directory
@@ -288,14 +299,30 @@ func TestViewFitsTerminal(t *testing.T) {
 }
 
 func TestHelpFitsTerminal(t *testing.T) {
-	m := newTestModel(t, t.TempDir(), nil)
-	m, _ = press(t, m, "?")
-	lines := strings.Split(m.View(), "\n")
-	if len(lines) > m.height {
-		t.Fatalf("help is %d lines, terminal has %d", len(lines), m.height)
-	}
-	if !strings.Contains(m.View(), "Keyboard Shortcuts") || !strings.Contains(m.View(), "Press any key") {
-		t.Fatal("help title or footer was cut off")
+	for _, size := range []tea.WindowSizeMsg{{Width: 100, Height: 24}, {Width: 60, Height: 15}, {Width: 200, Height: 60}} {
+		m := newTestModel(t, t.TempDir(), nil)
+		updated, _ := m.Update(size)
+		m, _ = press(t, updated.(Model), "?")
+
+		// Check the unclipped layout, so View's final clip can't hide overflow
+		help := m.renderHelpView()
+		if lines := strings.Split(help, "\n"); len(lines) > m.height {
+			t.Errorf("%dx%d: help is %d lines", size.Width, size.Height, len(lines))
+		}
+		if !strings.Contains(help, "Keyboard Shortcuts") || !strings.Contains(help, "close") {
+			t.Errorf("%dx%d: title or footer cut off", size.Width, size.Height)
+		}
+
+		// Scrolling reaches the last shortcut
+		for i := 0; i < len(helpItems); i++ {
+			m, _ = press(t, m, "j")
+		}
+		if !strings.Contains(m.renderHelpView(), "Show this help") {
+			t.Errorf("%dx%d: last shortcut unreachable", size.Width, size.Height)
+		}
+		if m, _ = press(t, m, "x"); m.mode != ModeNormal {
+			t.Errorf("%dx%d: other keys should close help", size.Width, size.Height)
+		}
 	}
 }
 
@@ -656,8 +683,7 @@ func typeText(t *testing.T, m Model, s string) Model {
 }
 
 // drain runs cmd and everything it leads to, feeding each result back into
-// the model. Commands that don't finish quickly, such as the timers that
-// clear status messages, are skipped.
+// the model. A command that hangs fails the test rather than blocking it.
 func drain(t *testing.T, m Model, cmd tea.Cmd) Model {
 	t.Helper()
 	if cmd == nil {
@@ -675,7 +701,8 @@ func drain(t *testing.T, m Model, cmd tea.Cmd) Model {
 		}
 		updated, next := m.Update(msg)
 		return drain(t, updated.(Model), next)
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(5 * time.Second):
+		t.Fatal("command did not finish")
 		return m
 	}
 }
@@ -780,5 +807,102 @@ func TestCreateFileAndDirectory(t *testing.T) {
 	m = submit(t, m)
 	if info, err := os.Stat(filepath.Join(dir, "build")); err != nil || !info.IsDir() {
 		t.Fatal("trailing slash did not create a directory")
+	}
+}
+
+func TestOpenerChoosesEditorForText(t *testing.T) {
+	dir := t.TempDir()
+	text := filepath.Join(dir, "notes.txt")
+	empty := filepath.Join(dir, "empty")
+	binary := filepath.Join(dir, "photo.png")
+	writeTestFile(t, text, "hello")
+	writeTestFile(t, empty, "")
+	writeTestFile(t, binary, "\x89PNG\x00\x00")
+
+	info := func(path string) fs.FileInfo {
+		st, _ := os.Stat(path)
+		return fs.NewFileInfo(path, st)
+	}
+	for _, c := range []struct {
+		opener string
+		path   string
+		editor bool
+	}{
+		{"auto", text, true},
+		{"auto", empty, true},
+		{"auto", binary, false},
+		{"editor", binary, true},
+		{"system", text, false},
+	} {
+		cfg := config.DefaultConfig()
+		cfg.Opener = c.opener
+		m := newTestModel(t, dir, cfg)
+		if got := m.useEditor(info(c.path)); got != c.editor {
+			t.Errorf("opener=%s %s: editor=%v, want %v", c.opener, filepath.Base(c.path), got, c.editor)
+		}
+	}
+}
+
+// fakeOpener puts a stand-in for the system opener on PATH that records the
+// path it was asked to open
+func fakeOpener(t *testing.T) (record string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a shell script")
+	}
+	bin := t.TempDir()
+	record = filepath.Join(bin, "opened")
+	name := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		name = "open"
+	}
+	script := "#!/bin/sh\nprintf '%s' \"$1\" > " + record + "\n"
+	if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	return record
+}
+
+func TestOpenWithSystemApp(t *testing.T) {
+	record := fakeOpener(t)
+	dir := t.TempDir()
+	photo := filepath.Join(dir, "photo.png")
+	writeTestFile(t, photo, "\x00binary")
+
+	m := newTestModel(t, dir, nil)
+	m, cmd := press(t, m, "enter") // Binary, so auto uses the system opener
+	m = drain(t, m, cmd)
+
+	if b, err := os.ReadFile(record); err != nil || string(b) != photo {
+		t.Fatalf("opener got %q (%v), want %s", b, err, photo)
+	}
+	if strings.Contains(m.statusMsg, "failed") {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+}
+
+func TestOpenFailureIsReported(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // No opener at all
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.bin"), "\x00")
+
+	m := newTestModel(t, dir, nil)
+	m, cmd := press(t, m, "o")
+	m = drain(t, m, cmd)
+	if !strings.Contains(m.statusMsg, "failed") {
+		t.Fatalf("statusMsg = %q, want the failure reported", m.statusMsg)
+	}
+}
+
+func TestEnterOnDirectoryStillNavigates(t *testing.T) {
+	root := t.TempDir()
+	os.Mkdir(filepath.Join(root, "sub"), 0755)
+
+	m := newTestModel(t, root, nil)
+	m, cmd := press(t, m, "enter")
+	m = drain(t, m, cmd)
+	if filepath.Base(m.tab().CurrentPath) != "sub" {
+		t.Fatalf("CurrentPath = %s", m.tab().CurrentPath)
 	}
 }

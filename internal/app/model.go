@@ -52,8 +52,9 @@ type Model struct {
 	keys KeyMap
 
 	// Mode
-	mode   Mode
-	prompt prompt // Text input for ModeInput
+	mode       Mode
+	prompt     prompt // Text input for ModeInput
+	helpScroll int    // First visible row of the help screen
 
 	// Status message
 	statusMsg string
@@ -145,6 +146,8 @@ type KeyMap struct {
 	Home        key.Binding
 	End         key.Binding
 	Delete      key.Binding
+	Edit        key.Binding
+	Open        key.Binding
 	Rename      key.Binding
 	NewFile     key.Binding
 	NewDir      key.Binding
@@ -185,7 +188,7 @@ func DefaultKeyMap() KeyMap {
 		),
 		Right: key.NewBinding(
 			key.WithKeys("right", "l"),
-			key.WithHelp("→/l", "enter dir"),
+			key.WithHelp("→/l", "open"),
 		),
 		Enter: key.NewBinding(
 			key.WithKeys("enter"),
@@ -214,6 +217,14 @@ func DefaultKeyMap() KeyMap {
 		Delete: key.NewBinding(
 			key.WithKeys("d"),
 			key.WithHelp("d", "delete"),
+		),
+		Edit: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "edit"),
+		),
+		Open: key.NewBinding(
+			key.WithKeys("o"),
+			key.WithHelp("o", "open with default app"),
 		),
 		Rename: key.NewBinding(
 			key.WithKeys("r"),
