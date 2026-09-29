@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2"
@@ -34,26 +35,6 @@ var fileTypeMap = map[string]string{
 	".so":   "Shared Object",
 }
 
-// Cached chroma components (initialized once, reused for all syntax highlighting)
-var (
-	chromaStyle     *chroma.Style
-	chromaFormatter chroma.Formatter
-)
-
-func init() {
-	// Initialize cached style
-	chromaStyle = styles.Get("monokai")
-	if chromaStyle == nil {
-		chromaStyle = styles.Fallback
-	}
-
-	// Initialize cached formatter
-	chromaFormatter = formatters.Get("terminal256")
-	if chromaFormatter == nil {
-		chromaFormatter = formatters.Fallback
-	}
-}
-
 // PreviewContent represents the content to preview
 type PreviewContent struct {
 	Path     string
@@ -65,10 +46,10 @@ type PreviewContent struct {
 
 // PreviewConfig holds preview configuration
 type PreviewConfig struct {
-	MaxLines          int
-	SyntaxHighlight   bool
-	SyntaxTheme       string
-	MaxPreviewSize    int64
+	MaxLines        int
+	SyntaxHighlight bool
+	SyntaxTheme     string
+	MaxPreviewSize  int64
 }
 
 // DefaultPreviewConfig returns default preview settings
@@ -76,7 +57,7 @@ func DefaultPreviewConfig() PreviewConfig {
 	return PreviewConfig{
 		MaxLines:        100,
 		SyntaxHighlight: true,
-		SyntaxTheme:     "monokai", // Options: monokai, dracula, github, nord, etc.
+		SyntaxTheme:     "monokai",        // Options: monokai, dracula, github, nord, etc.
 		MaxPreviewSize:  10 * 1024 * 1024, // 10MB
 	}
 }
@@ -171,8 +152,8 @@ func highlightCode(filepath string, content string, themeName string) (string, e
 		lexer = lexers.Fallback
 	}
 
-	// Coalesce to prevent fragmented tokens
-	//lexer = lexers.Coalesce(lexer)
+	// Coalesce to prevent fragmented tokens (fewer escape codes)
+	lexer = chroma.Coalesce(lexer)
 
 	// Get style
 	style := styles.Get(themeName)
@@ -257,12 +238,25 @@ func loadDirectoryPreview(path string) string {
 
 // formatBinaryPreview creates info display for binary files
 func formatBinaryPreview(file fs.FileInfo) string {
-	var lines []string
-	lines = append(lines, fmt.Sprintf("%s Binary File", ui.GetBinaryIcon()))
-	lines = append(lines, "")
-	lines = append(lines, "Cannot preview binary content")
-
+	lines := []string{
+		fmt.Sprintf("%s Binary File", ui.GetBinaryIcon()),
+		"",
+		fmt.Sprintf("Type:        %s", getFileType(strings.ToLower(filepath.Ext(file.Name)))),
+		fmt.Sprintf("Size:        %s", utils.HumanizeSize(file.Size)),
+		fmt.Sprintf("Modified:    %s", file.ModTime.Format("2006-01-02 15:04:05")),
+		fmt.Sprintf("Permissions: %s", file.Perms),
+		"",
+		"Cannot preview binary content",
+	}
 	return strings.Join(lines, "\n")
+}
+
+// getFileType returns a human-readable file type
+func getFileType(ext string) string {
+	if t, ok := fileTypeMap[ext]; ok {
+		return t
+	}
+	return "Binary file"
 }
 
 // checkBinaryFile checks if a file is binary by reading only the first 512 bytes
@@ -289,21 +283,24 @@ func checkBinaryFile(path string) (bool, error) {
 	return false, nil
 }
 
-
-// RenderPreview renders the preview pane with styling
-func RenderPreview(preview PreviewContent, width, height int, styles lipgloss.Style) string {
+// RenderPreview renders the preview into a block of exactly width x height cells
+func RenderPreview(preview PreviewContent, width, height int, style lipgloss.Style) string {
 	if preview.Error != nil {
-		errorStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("196")).
-			Padding(1)
-		return errorStyle.Render(preview.Content)
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	}
 
-	// Create the preview content with padding
-	contentStyle := styles.
+	// Clip before padding: lipgloss would otherwise wrap long lines, pushing
+	// the pane (and the rest of the screen) past the terminal height
+	const padding = 1
+	content := lipgloss.NewStyle().
+		MaxWidth(max(width-2*padding, 1)).
+		MaxHeight(max(height-2*padding, 1)).
+		Render(preview.Content)
+
+	return style.
 		Width(width).
 		Height(height).
-		Padding(1)
-
-	return contentStyle.Render(preview.Content)
+		MaxHeight(height).
+		Padding(padding).
+		Render(content)
 }

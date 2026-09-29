@@ -18,21 +18,34 @@ func (m Model) View() string {
 		return "Loading..."
 	}
 
-	// Show help view if in help mode
-	if m.mode == ModeHelp {
-		return m.renderHelpView()
+	var view string
+	switch m.mode {
+	case ModeHelp:
+		view = m.renderHelpView()
+	case ModeConfirm:
+		view = m.renderConfirmDialog()
+	case ModeBookmarks:
+		view = m.renderBookmarksView()
+	default:
+		view = m.renderMainView()
 	}
 
-	// Show confirmation dialog if in confirm mode
-	if m.mode == ModeConfirm {
-		return m.renderConfirmDialog()
-	}
+	// Never exceed the terminal: Bubble Tea drops lines from the top of an
+	// oversized frame, which would hide the header
+	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(view)
+}
 
-	// Show bookmarks view if in bookmarks mode
-	if m.mode == ModeBookmarks {
-		return m.renderBookmarksView()
+// contentHeight returns the rows between the header/tab bar and the status bar
+func (m Model) contentHeight() int {
+	h := m.height - 2 // Header and status bar
+	if len(m.tabs) > 1 {
+		h-- // Tab bar
 	}
+	return max(h, 1)
+}
 
+// renderMainView renders the header, file list, preview and status bar
+func (m Model) renderMainView() string {
 	tab := m.tabs[m.activeTabIdx]
 	var sections []string
 
@@ -65,8 +78,10 @@ func (m Model) View() string {
 // renderHeader renders the header with current path
 func (m Model) renderHeader() string {
 	tab := m.tabs[m.activeTabIdx]
-	pathStyle := m.styles.Header.Width(m.width)
-	return pathStyle.Render(fmt.Sprintf(" 📁 %s", tab.CurrentPath))
+	prefix := " 📁 "
+	// Header padding takes two columns; keep the end of long paths visible
+	path := utils.TruncateLeft(tab.CurrentPath, m.width-2-lipgloss.Width(prefix))
+	return m.styles.Header.Width(m.width).Render(prefix + path)
 }
 
 // renderTabBar renders the tab bar
@@ -80,9 +95,7 @@ func (m Model) renderTabBar() string {
 		}
 
 		// Truncate long names
-		if len(name) > 15 {
-			name = name[:12] + "..."
-		}
+		name = utils.Truncate(name, 15)
 
 		tabLabel := fmt.Sprintf("%d:%s", i+1, name)
 
@@ -93,16 +106,17 @@ func (m Model) renderTabBar() string {
 		}
 	}
 
-	tabContent := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+	// Cut off tabs that don't fit rather than wrapping onto a second line
+	tabContent := utils.Truncate(lipgloss.JoinHorizontal(lipgloss.Top, tabs...), m.width-2)
 	return m.styles.TabBar.Width(m.width).Render(tabContent)
 }
 
 // renderSplitView renders the split pane layout (file list + preview)
 func (m Model) renderSplitView() string {
 	tab := m.tabs[m.activeTabIdx]
-	// Calculate widths for split view
-	listWidth := m.width * tab.PreviewWidth / 100
-	previewWidth := m.width - listWidth
+	// Calculate widths for split view (PreviewWidth is the preview's share)
+	previewWidth := m.width * tab.PreviewWidth / 100
+	listWidth := m.width - previewWidth
 
 	// Render both panes
 	fileListPane := m.renderFileList(listWidth)
@@ -119,29 +133,23 @@ func (m Model) renderSplitView() string {
 // renderFileList renders the list of files
 func (m Model) renderFileList(width int) string {
 	tab := m.tabs[m.activeTabIdx]
-
-	// Account for tab bar in height calculation
-	heightOffset := 4
-	if len(m.tabs) > 1 {
-		heightOffset = 5
-	}
+	height := m.contentHeight()
 
 	if tab.Loading {
 		return m.styles.EmptyDir.
 			Width(width).
-			Height(m.height - heightOffset).
+			Height(height).
 			Render("⏳ Loading...")
 	}
 
 	if len(tab.Files) == 0 {
 		return m.styles.EmptyDir.
 			Width(width).
-			Height(m.height - heightOffset).
+			Height(height).
 			Render("Empty directory")
 	}
 
 	// Calculate visible range
-	height := m.height - heightOffset // Account for header, tab bar, and status bar
 	start := max(0, tab.Cursor-height/2)
 	end := min(len(tab.Files), start+height)
 
@@ -171,34 +179,23 @@ func (m Model) renderFileList(width int) string {
 // renderFileLine renders a single file line
 func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, isMatch bool, width int) string {
 	icon := ui.GetFileIcon(file)
-	name := file.Name
 
 	// Check if this file is in clipboard (cut mode shows strikethrough effect)
 	isCutFile := m.clipboardMode == "cut" && m.clipboard == file.Path
 
-	// Truncate name if too long
-	maxNameLen := width - 30 // Leave room for size and date
-	if maxNameLen < 10 {
-		maxNameLen = 10
-	}
-	if len(name) > maxNameLen {
-		name = name[:maxNameLen-3] + "..."
-	}
+	// Measure in terminal cells, not bytes, so accented and wide names
+	// are neither split mid-character nor misaligned
+	const metaWidth = 24 // "%10s" size + "  Jan 02 15:04"
+	inner := width - 2   // File list padding
+	nameWidth := max(inner-lipgloss.Width(icon)-2-metaWidth, 10)
+	name := utils.Truncate(file.Name, nameWidth)
+	name += strings.Repeat(" ", max(nameWidth-lipgloss.Width(name), 0))
 
 	size := utils.HumanizeSize(file.Size)
 	modTime := file.ModTime.Format("Jan 02 15:04")
 
-	// Build the line with proper spacing
-	namePart := fmt.Sprintf("%s  %-*s", icon, maxNameLen, name)
-	sizePart := fmt.Sprintf("%10s", size)
-	timePart := fmt.Sprintf("  %s", modTime)
-
-	line := namePart + sizePart + timePart
-
-	// Ensure line doesn't exceed width
-	if len(line) > width-2 {
-		line = line[:width-2]
-	}
+	// Narrow panes lose the size and date columns first
+	line := utils.Clip(fmt.Sprintf("%s  %s%10s  %s", icon, name, size, modTime), inner)
 
 	// Apply styling
 	style := m.styles.File
@@ -235,40 +232,25 @@ func (m Model) isSearchMatch(index int) bool {
 // renderPreview renders the preview pane
 func (m Model) renderPreview(width int) string {
 	tab := m.tabs[m.activeTabIdx]
-
-	// Account for tab bar in height calculation
-	heightOffset := 4
-	if len(m.tabs) > 1 {
-		heightOffset = 5
-	}
-	height := m.height - heightOffset
+	height := m.contentHeight()
+	innerWidth := max(width-1, 1) // The left border takes one column
 
 	// Create preview border style
 	previewStyle := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(lipgloss.Color("238")).
-		Width(width).
-		Height(height)
+		BorderForeground(lipgloss.Color("238"))
 
 	// If no file selected
 	if len(tab.Files) == 0 {
 		emptyStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
 			Align(lipgloss.Center, lipgloss.Center).
-			Width(width - 2).
-			Height(height - 2)
+			Width(innerWidth).
+			Height(height)
 		return previewStyle.Render(emptyStyle.Render("No file selected"))
 	}
 
-	// Render preview content
-	previewContent := components.RenderPreview(
-		tab.Preview,
-		width-4, // Account for border and padding
-		height-2,
-		m.styles.File,
-	)
-
-	return previewStyle.Render(previewContent)
+	return previewStyle.Render(components.RenderPreview(tab.Preview, innerWidth, height, m.styles.File))
 }
 
 // renderStatusBar renders the status bar
@@ -298,52 +280,16 @@ func (m Model) renderStatusBar() string {
 		rightInfo = fmt.Sprintf("%s%s%d/%d ", tabInfo, previewStatus, tab.Cursor+1, len(tab.Files))
 	}
 
-	// Build status bar using strings.Builder for efficient concatenation
-	leftWidth := lipgloss.Width(leftInfo)
-	centerWidth := lipgloss.Width(centerInfo)
-	rightWidth := lipgloss.Width(rightInfo)
-	totalContent := leftWidth + centerWidth + rightWidth
-
-	var sb strings.Builder
-	sb.Grow(m.width) // Pre-allocate capacity
-
-	if totalContent > m.width {
-		// Terminal too small, truncate center info or show minimal
-		if m.width < 40 {
-			// Very small terminal, just show position
-			sb.WriteString(rightInfo)
-		} else {
-			// Truncate center info
-			available := m.width - leftWidth - rightWidth - 2
-			if available > 0 && len(centerInfo) > available {
-				centerInfo = centerInfo[:available-3] + "..."
-			} else if available <= 0 {
-				centerInfo = ""
-			}
-			gap := m.width - leftWidth - lipgloss.Width(centerInfo) - rightWidth
-			if gap < 0 {
-				gap = 0
-			}
-			sb.WriteString(leftInfo)
-			sb.WriteString(centerInfo)
-			for i := 0; i < gap; i++ {
-				sb.WriteByte(' ')
-			}
-			sb.WriteString(rightInfo)
-		}
-	} else {
-		gap := m.width - totalContent
-		sb.WriteString(leftInfo)
-		sb.WriteString(centerInfo)
-		for i := 0; i < gap; i++ {
-			sb.WriteByte(' ')
-		}
-		sb.WriteString(rightInfo)
-	}
+	// Status bar padding takes two columns; the message gives way first
+	avail := m.width - 2
+	room := avail - lipgloss.Width(leftInfo) - lipgloss.Width(rightInfo)
+	centerInfo = utils.Truncate(centerInfo, room)
+	gap := max(room-lipgloss.Width(centerInfo), 0)
+	line := leftInfo + centerInfo + strings.Repeat(" ", gap) + rightInfo
 
 	return m.styles.StatusBar.
 		Width(m.width).
-		Render(sb.String())
+		Render(utils.Clip(line, avail))
 }
 
 // renderHelpView renders the help screen
@@ -393,15 +339,24 @@ func (m Model) renderHelpView() string {
 		{"?", "Show this help"},
 	}
 
+	items := make([]string, len(helpItems))
+	for i, item := range helpItems {
+		items[i] = keyStyle.Render(item.key) + descStyle.Render(item.desc)
+	}
+	body := strings.Join(items, "\n")
+
+	// Split into two columns when one would not fit the terminal height
+	const chrome = 9 // Title, hint, blank lines, padding and border
+	if len(items)+chrome > m.height {
+		half := (len(items) + 1) / 2
+		body = lipgloss.JoinHorizontal(lipgloss.Top,
+			strings.Join(items[:half], "\n"), "    ", strings.Join(items[half:], "\n"))
+	}
+
 	var lines []string
 	lines = append(lines, titleStyle.Render("Sushi - Keyboard Shortcuts"))
 	lines = append(lines, "")
-
-	for _, item := range helpItems {
-		line := keyStyle.Render(item.key) + descStyle.Render(item.desc)
-		lines = append(lines, line)
-	}
-
+	lines = append(lines, body)
 	lines = append(lines, "")
 	lines = append(lines, lipgloss.NewStyle().
 		Foreground(lipgloss.Color("240")).
@@ -521,16 +476,8 @@ func (m Model) renderBookmarksView() string {
 		for i := 0; i < m.bookmarks.Len(); i++ {
 			bm := m.bookmarks.Get(i)
 			num := numStyle.Render(fmt.Sprintf("%d. ", i+1))
-			name := bm.Name
-			path := bm.Path
-
-			// Truncate path if too long
-			maxLen := 40
-			if len(path) > maxLen {
-				path = "..." + path[len(path)-maxLen+3:]
-			}
-
-			line := fmt.Sprintf("%s → %s", name, path)
+			// Keep the end of long paths visible
+			line := fmt.Sprintf("%s → %s", bm.Name, utils.TruncateLeft(bm.Path, 40))
 
 			if i == m.bookmarkCursor {
 				lines = append(lines, num+selectedStyle.Render(line))
@@ -581,16 +528,18 @@ func (m Model) renderSearchBar() string {
 	matchStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("240"))
 
-	prompt := promptStyle.Render("/")
-	query := queryStyle.Render(tab.SearchQuery)
-	cursor := "█"
-
 	matchCount := fmt.Sprintf(" [%d/%d]", len(tab.SearchResults), len(tab.Files))
+
+	// Keep the end of a long query (where the user is typing) visible
+	queryWidth := m.width - 2 - 1 - 1 - lipgloss.Width(matchCount) // Padding, prompt, cursor
+	prompt := promptStyle.Render("/")
+	query := queryStyle.Render(utils.TruncateLeft(tab.SearchQuery, queryWidth))
+	cursor := "█"
 	matches := matchStyle.Render(matchCount)
 
 	searchLine := prompt + query + cursor + matches
 
-	return searchStyle.Render(searchLine)
+	return searchStyle.Render(utils.Clip(searchLine, m.width-2))
 }
 
 // Helper functions

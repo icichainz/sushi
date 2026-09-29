@@ -1,12 +1,15 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/icichainz/sushi/internal/config"
 )
 
@@ -213,5 +216,116 @@ func TestNewTabUsesConfig(t *testing.T) {
 	tab := updated.(Model).tabs[1]
 	if tab.PreviewEnabled || tab.PreviewWidth != 30 {
 		t.Fatalf("new tab preview=%v width=%d, want false/30", tab.PreviewEnabled, tab.PreviewWidth)
+	}
+}
+
+// assertFits checks the layout fits the terminal and that the header and
+// status bar both survived, i.e. nothing was pushed off screen. It checks
+// the unclipped layout so View's final clip can't hide an oversized pane.
+func assertFits(t *testing.T, label string, m Model, wantLast string) {
+	t.Helper()
+	lines := strings.Split(m.renderMainView(), "\n")
+	if len(lines) > m.height {
+		t.Errorf("%s: %d lines, terminal has %d", label, len(lines), m.height)
+	}
+	for i, l := range lines {
+		if w := lipgloss.Width(l); w > m.width {
+			t.Errorf("%s: line %d is %d wide, terminal has %d", label, i, w, m.width)
+		}
+		if !utf8.ValidString(l) {
+			t.Errorf("%s: line %d is not valid UTF-8: %q", label, i, l)
+		}
+	}
+	if !strings.Contains(lines[0], "📁") {
+		t.Errorf("%s: header missing, first line = %q", label, lines[0])
+	}
+	if last := lines[len(lines)-1]; !strings.Contains(last, wantLast) {
+		t.Errorf("%s: last line = %q, want it to contain %q", label, last, wantLast)
+	}
+}
+
+func TestViewFitsTerminal(t *testing.T) {
+	root := t.TempDir()
+	deep := filepath.Join(root, strings.Repeat("very-long-directory-name-", 6))
+	os.MkdirAll(deep, 0755)
+	longLine := "package main // " + strings.Repeat("x", 150) + "\n"
+	writeTestFile(t, filepath.Join(deep, "a.go"), strings.Repeat(longLine, 200))
+	writeTestFile(t, filepath.Join(deep, "réservé-élève-"+strings.Repeat("é", 80)+".txt"), "x")
+	writeTestFile(t, filepath.Join(deep, "日本語のとても長いファイル名"+strings.Repeat("字", 40)+".txt"), "x")
+
+	for _, size := range []tea.WindowSizeMsg{{Width: 100, Height: 24}, {Width: 60, Height: 15}, {Width: 30, Height: 10}} {
+		m := newTestModel(t, deep, nil)
+		updated, _ := m.Update(size)
+		m = updated.(Model)
+		label := fmt.Sprintf("%dx%d", size.Width, size.Height)
+
+		assertFits(t, label+" preview on", m, "files |")
+
+		m.tab().PreviewEnabled = false
+		assertFits(t, label+" preview off", m, "files |")
+		m.tab().PreviewEnabled = true
+
+		m.statusMsg = strings.Repeat("a long status message ", 10)
+		assertFits(t, label+" long status", m, "files |")
+
+		searching, _ := press(t, m, "/")
+		for _, r := range strings.Repeat("query", 20) {
+			searching, _ = press(t, searching, string(r))
+		}
+		assertFits(t, label+" search", searching, "[")
+
+		withTabs := m
+		for i := 0; i < 12; i++ {
+			updated, _ := withTabs.createTab(deep)
+			withTabs = updated.(Model)
+		}
+		assertFits(t, label+" many tabs", withTabs, "files |")
+	}
+}
+
+func TestHelpFitsTerminal(t *testing.T) {
+	m := newTestModel(t, t.TempDir(), nil)
+	m, _ = press(t, m, "?")
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) > m.height {
+		t.Fatalf("help is %d lines, terminal has %d", len(lines), m.height)
+	}
+	if !strings.Contains(m.View(), "Keyboard Shortcuts") || !strings.Contains(m.View(), "Press any key") {
+		t.Fatal("help title or footer was cut off")
+	}
+}
+
+func TestPreviewWidthIsPreviewShare(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.txt"), strings.Repeat("x", 300))
+	cfg := config.DefaultConfig()
+	cfg.PreviewWidth = 70
+
+	m := newTestModel(t, dir, cfg)
+	list := m.renderFileList(m.width - m.width*70/100)
+	if w := lipgloss.Width(list); w != 30 {
+		t.Fatalf("file list is %d wide, want 30 (preview_width: 70)", w)
+	}
+	if w := lipgloss.Width(m.renderSplitView()); w != m.width {
+		t.Fatalf("split view is %d wide, want %d", w, m.width)
+	}
+}
+
+func TestTogglingPreviewOnLoadsCurrentFile(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "hello")
+	cfg := config.DefaultConfig()
+	cfg.PreviewEnabled = false
+
+	m := newTestModel(t, dir, cfg)
+	m, cmd := press(t, m, "p")
+	if !m.tab().PreviewEnabled || cmd == nil {
+		t.Fatal("preview not enabled or no load issued")
+	}
+	// The first command in the batch is the preview load; the second is the status timer
+	updated, _ := m.Update(cmd().(tea.BatchMsg)[0]())
+	m = updated.(Model)
+	if !strings.Contains(m.tab().Preview.Content, "hello") {
+		t.Fatalf("preview content = %q, want the file", m.tab().Preview.Content)
 	}
 }

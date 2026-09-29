@@ -164,8 +164,12 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Preview):
 		tab.PreviewEnabled = !tab.PreviewEnabled
-		m.statusMsg = "Preview toggled"
-		return m, nil
+		if !tab.PreviewEnabled {
+			return m, m.setStatus("Preview off")
+		}
+		// Previews aren't loaded while hidden, so fetch the current file's now
+		tab.Preview = components.PreviewContent{}
+		return m, tea.Batch(m.previewCmd(tab), m.setStatus("Preview on"))
 
 	case key.Matches(msg, m.keys.Up):
 		if tab.Cursor > 0 {
@@ -181,10 +185,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.PageUp):
 		if len(tab.Files) > 0 {
-			pageSize := m.height - 6 // Approximate visible items
-			if pageSize < 1 {
-				pageSize = 1
-			}
+			pageSize := m.contentHeight()
 			tab.Cursor -= pageSize
 			if tab.Cursor < 0 {
 				tab.Cursor = 0
@@ -194,10 +195,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.PageDown):
 		if len(tab.Files) > 0 {
-			pageSize := m.height - 6 // Approximate visible items
-			if pageSize < 1 {
-				pageSize = 1
-			}
+			pageSize := m.contentHeight()
 			tab.Cursor += pageSize
 			if tab.Cursor >= len(tab.Files) {
 				tab.Cursor = len(tab.Files) - 1
