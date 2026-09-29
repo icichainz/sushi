@@ -329,3 +329,46 @@ func TestTogglingPreviewOnLoadsCurrentFile(t *testing.T) {
 		t.Fatalf("preview content = %q, want the file", m.tab().Preview.Content)
 	}
 }
+
+func typeQuery(t *testing.T, m Model, query string) Model {
+	t.Helper()
+	m, _ = press(t, m, "/")
+	for _, r := range query {
+		m, _ = press(t, m, string(r))
+	}
+	return m
+}
+
+func TestSearchAcceptsSpaces(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "annual report.pdf"), "")
+	writeTestFile(t, filepath.Join(dir, "annualreport.pdf"), "")
+
+	m := typeQuery(t, newTestModel(t, dir, nil), "l r")
+	if m.tab().SearchQuery != "l r" {
+		t.Fatalf("query = %q, want %q", m.tab().SearchQuery, "l r")
+	}
+	if len(m.tab().SearchResults) != 1 || m.tab().Files[m.tab().Cursor].Name != "annual report.pdf" {
+		t.Fatalf("results = %v, want only the name with a space", m.tab().SearchResults)
+	}
+}
+
+func TestSearchBackspaceRemovesWholeCharacter(t *testing.T) {
+	m := typeQuery(t, newTestModel(t, t.TempDir(), nil), "élè")
+	m, _ = press(t, m, "backspace")
+	if q := m.tab().SearchQuery; q != "él" || !utf8.ValidString(q) {
+		t.Fatalf("query = %q, want %q", q, "él")
+	}
+}
+
+func TestSearchMatchesAccentsExactly(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "élève.txt"), "")
+	// "é" is bytes C3 A9; a byte-wise match finds C3 in "è" and A9 in "©"
+	writeTestFile(t, filepath.Join(dir, "crème ©.txt"), "")
+
+	m := typeQuery(t, newTestModel(t, dir, nil), "é")
+	if len(m.tab().SearchResults) != 1 || m.tab().Files[m.tab().Cursor].Name != "élève.txt" {
+		t.Fatalf("results = %v, want only élève.txt", m.tab().SearchResults)
+	}
+}

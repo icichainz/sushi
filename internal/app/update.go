@@ -432,14 +432,10 @@ func (m Model) handleSearchMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyBackspace:
-		// Remove last character from query
-		if len(tab.SearchQuery) > 0 {
-			tab.SearchQuery = tab.SearchQuery[:len(tab.SearchQuery)-1]
-			m.updateSearchResults()
-			// Reset cursor to first match
-			if len(tab.SearchResults) > 0 {
-				tab.Cursor = tab.SearchResults[0]
-			}
+		// Remove last character (not byte, which would split accented letters)
+		if query := []rune(tab.SearchQuery); len(query) > 0 {
+			tab.SearchQuery = string(query[:len(query)-1])
+			return m, m.jumpToFirstMatch()
 		}
 		return m, nil
 
@@ -453,19 +449,24 @@ func (m Model) handleSearchMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.navigateSearchResults(1)
 		return m, m.previewCmd(tab)
 
-	case tea.KeyRunes:
-		// Add typed character to query
+	case tea.KeyRunes, tea.KeySpace:
+		// Add typed character to query (space arrives as its own key type)
 		tab.SearchQuery += string(msg.Runes)
-		m.updateSearchResults()
-		// Move cursor to first match
-		if len(tab.SearchResults) > 0 {
-			tab.Cursor = tab.SearchResults[0]
-			return m, m.previewCmd(tab)
-		}
-		return m, nil
+		return m, m.jumpToFirstMatch()
 	}
 
 	return m, nil
+}
+
+// jumpToFirstMatch refreshes the search results and moves to the first match
+func (m *Model) jumpToFirstMatch() tea.Cmd {
+	m.updateSearchResults()
+	tab := m.tab()
+	if len(tab.SearchResults) == 0 {
+		return nil
+	}
+	tab.Cursor = tab.SearchResults[0]
+	return m.previewCmd(tab)
 }
 
 // updateSearchResults updates the search results based on current query
@@ -514,20 +515,24 @@ func (m *Model) navigateSearchResults(direction int) {
 	tab.Cursor = tab.SearchResults[newIdx]
 }
 
-// fuzzyMatch checks if query characters appear in target in order
+// fuzzyMatch checks if query characters appear in target in order.
+// It compares runes, not bytes, so accented letters only match themselves.
 func fuzzyMatch(query, target string) bool {
-	if query == "" {
+	q := []rune(query)
+	if len(q) == 0 {
 		return true
 	}
 
-	queryIdx := 0
-	for i := 0; i < len(target) && queryIdx < len(query); i++ {
-		if target[i] == query[queryIdx] {
-			queryIdx++
+	i := 0
+	for _, r := range target {
+		if r == q[i] {
+			i++
+			if i == len(q) {
+				return true
+			}
 		}
 	}
-
-	return queryIdx == len(query)
+	return false
 }
 
 // handleConfirmMode handles key presses in confirmation mode
