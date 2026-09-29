@@ -21,7 +21,9 @@ type Config struct {
 	SortReverse   bool   `yaml:"sort_reverse"`   // Reverse sort order
 
 	// Theme settings
-	Theme string `yaml:"theme"` // "default", "dark", "light" (for future use)
+	Theme       string            `yaml:"theme"`        // "default", "dark" or "light"
+	Colors      map[string]string `yaml:"colors"`       // Per-color overrides of the theme
+	SyntaxTheme string            `yaml:"syntax_theme"` // Chroma style; empty follows the theme
 }
 
 // DefaultConfig returns a config with sensible defaults
@@ -127,14 +129,6 @@ func (c *Config) validate() {
 		// Valid
 	default:
 		c.SortBy = "name"
-	}
-
-	// Validate theme
-	switch c.Theme {
-	case "default", "dark", "light":
-		// Valid
-	default:
-		c.Theme = "default"
 	}
 }
 

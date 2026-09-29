@@ -203,17 +203,17 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, isMatch bool, wid
 		style = m.styles.SelectedFile
 	}
 	if file.IsDir {
-		style = style.Foreground(lipgloss.Color("12"))
+		style = style.Foreground(m.theme.Directory)
 	}
 
 	// Dim non-matching files in search mode
 	if m.mode == ModeSearch && !isMatch {
-		style = style.Foreground(lipgloss.Color("240"))
+		style = style.Foreground(m.theme.Muted)
 	}
 
 	// Visual indicator for cut files (dimmed with strikethrough effect)
 	if isCutFile {
-		style = style.Foreground(lipgloss.Color("243")).Italic(true)
+		style = style.Foreground(m.theme.Muted).Italic(true)
 	}
 
 	return style.Render(line)
@@ -238,19 +238,19 @@ func (m Model) renderPreview(width int) string {
 	// Create preview border style
 	previewStyle := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(lipgloss.Color("238"))
+		BorderForeground(m.theme.Border)
 
 	// If no file selected
 	if len(tab.Files) == 0 {
 		emptyStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
+			Foreground(m.theme.Muted).
 			Align(lipgloss.Center, lipgloss.Center).
 			Width(innerWidth).
 			Height(height)
 		return previewStyle.Render(emptyStyle.Render("No file selected"))
 	}
 
-	return previewStyle.Render(components.RenderPreview(tab.Preview, innerWidth, height, m.styles.File))
+	return previewStyle.Render(components.RenderPreview(tab.Preview, innerWidth, height, m.styles.File, m.styles.PreviewError))
 }
 
 // renderStatusBar renders the status bar
@@ -296,16 +296,16 @@ func (m Model) renderStatusBar() string {
 func (m Model) renderHelpView() string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("212")).
+		Foreground(m.theme.Title).
 		MarginBottom(1)
 
 	keyStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("229")).
+		Foreground(m.theme.Highlight).
 		Bold(true).
 		Width(15)
 
 	descStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
+		Foreground(m.theme.Text)
 
 	helpItems := []struct {
 		key  string
@@ -360,7 +360,7 @@ func (m Model) renderHelpView() string {
 	lines = append(lines, body)
 	lines = append(lines, "")
 	lines = append(lines, lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
+		Foreground(m.theme.Muted).
 		Italic(true).
 		Render("Press any key to close"))
 
@@ -369,7 +369,7 @@ func (m Model) renderHelpView() string {
 	// Center the help box
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
+		BorderForeground(m.theme.Accent).
 		Padding(1, 3).
 		Align(lipgloss.Left)
 
@@ -388,14 +388,14 @@ func (m Model) renderHelpView() string {
 func (m Model) renderConfirmDialog() string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("196")).
+		Foreground(m.theme.Danger).
 		MarginBottom(1)
 
 	messageStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
+		Foreground(m.theme.Text)
 
 	hintStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
+		Foreground(m.theme.Muted).
 		Italic(true)
 
 	var title, message string
@@ -431,7 +431,7 @@ func (m Model) renderConfirmDialog() string {
 
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("196")).
+		BorderForeground(m.theme.Danger).
 		Padding(1, 3).
 		Align(lipgloss.Center)
 
@@ -450,22 +450,22 @@ func (m Model) renderConfirmDialog() string {
 func (m Model) renderBookmarksView() string {
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("212")).
+		Foreground(m.theme.Title).
 		MarginBottom(1)
 
 	itemStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
+		Foreground(m.theme.Text)
 
 	selectedStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("229")).
-		Background(lipgloss.Color("236")).
+		Foreground(m.theme.Highlight).
+		Background(m.theme.BarBg).
 		Bold(true)
 
 	numStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
+		Foreground(m.theme.Muted)
 
 	hintStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
+		Foreground(m.theme.Muted).
 		Italic(true)
 
 	var lines []string
@@ -497,7 +497,7 @@ func (m Model) renderBookmarksView() string {
 
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
+		BorderForeground(m.theme.Accent).
 		Padding(1, 3).
 		Align(lipgloss.Left)
 
@@ -517,20 +517,20 @@ func (m Model) renderSearchBar() string {
 	tab := m.tabs[m.activeTabIdx]
 
 	searchStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Foreground(lipgloss.Color("252")).
+		Background(m.theme.BarBg).
+		Foreground(m.theme.BarFg).
 		Padding(0, 1).
 		Width(m.width)
 
 	promptStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("212")).
+		Foreground(m.theme.Title).
 		Bold(true)
 
 	queryStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("229"))
+		Foreground(m.theme.Highlight)
 
 	matchStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
+		Foreground(m.theme.Muted)
 
 	matchCount := fmt.Sprintf(" [%d/%d]", len(tab.SearchResults), len(tab.Files))
 

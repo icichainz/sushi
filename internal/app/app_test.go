@@ -122,7 +122,7 @@ func TestStalePreviewIsDropped(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, "b.txt"), "bbb")
 
 	m := newTestModel(t, dir, nil)
-	staleCmd := loadPreview(m.tab().ID, m.tab().Files[0])
+	staleCmd := loadPreview(m.tab().ID, m.tab().Files[0], m.theme.Syntax)
 	m, cmd := press(t, m, "j")
 
 	// b.txt's preview lands first, then a late one for a.txt
@@ -451,5 +451,38 @@ func TestBookmarksMoveWithJK(t *testing.T) {
 	}
 	if m.bookmarkCursor != 1 {
 		t.Fatalf("bookmarkCursor = %d, want 1 (j j j clamps at 2, then k)", m.bookmarkCursor)
+	}
+}
+
+func TestThemeFromConfig(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Theme = "light"
+	cfg.Colors = map[string]string{"directory": "33"}
+
+	m := newTestModel(t, t.TempDir(), cfg)
+	if m.theme.Name != "light" || m.theme.Directory != "33" || m.theme.Syntax != "github" {
+		t.Fatalf("theme = %s directory=%s syntax=%s", m.theme.Name, m.theme.Directory, m.theme.Syntax)
+	}
+	if m.statusMsg != "" {
+		t.Fatalf("unexpected startup status %q", m.statusMsg)
+	}
+
+	cfg.SyntaxTheme = "nord"
+	if m := newTestModel(t, t.TempDir(), cfg); m.theme.Syntax != "nord" {
+		t.Fatalf("syntax_theme ignored: %s", m.theme.Syntax)
+	}
+}
+
+func TestConfigProblemsShownAtStartup(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Theme = "neon"
+	cfg.SyntaxTheme = "nope"
+
+	m := newTestModel(t, t.TempDir(), cfg)
+	if !strings.Contains(m.statusMsg, "neon") || !strings.Contains(m.statusMsg, "nope") {
+		t.Fatalf("statusMsg = %q, want both problems", m.statusMsg)
+	}
+	if m.Init() == nil {
+		t.Fatal("Init should schedule clearing the startup warning")
 	}
 }

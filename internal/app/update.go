@@ -105,10 +105,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // setStatus shows a status message and schedules it to clear
 func (m *Model) setStatus(msg string) tea.Cmd {
+	return m.setStatusFor(msg, statusDuration)
+}
+
+// setStatusFor shows a status message for the given duration
+func (m *Model) setStatusFor(msg string, d time.Duration) tea.Cmd {
 	m.statusID++
 	m.statusMsg = msg
 	id := m.statusID
-	return tea.Tick(statusDuration, func(time.Time) tea.Msg {
+	return tea.Tick(d, func(time.Time) tea.Msg {
 		return clearStatusMsg{id: id}
 	})
 }
@@ -125,7 +130,19 @@ func (m *Model) previewCmd(tab *Tab) tea.Cmd {
 	if !tab.PreviewEnabled || len(tab.Files) == 0 {
 		return nil
 	}
-	return loadPreview(tab.ID, tab.Files[tab.Cursor])
+	return loadPreview(tab.ID, tab.Files[tab.Cursor], m.theme.Syntax)
+}
+
+// loadPreviewNow loads a preview synchronously using the theme's syntax style
+func (m *Model) loadPreviewNow(file fs.FileInfo) components.PreviewContent {
+	return components.LoadPreviewWithConfig(file, previewConfig(m.theme.Syntax))
+}
+
+// previewConfig returns the preview settings for the given syntax style
+func previewConfig(syntax string) components.PreviewConfig {
+	cfg := components.DefaultPreviewConfig()
+	cfg.SyntaxTheme = syntax
+	return cfg
 }
 
 // handleKeyPress processes keyboard input
@@ -668,11 +685,11 @@ func loadDirectory(tabID, seq int, path string, opts fs.ScanOptions) tea.Cmd {
 }
 
 // loadPreview loads preview content asynchronously
-func loadPreview(tabID int, file fs.FileInfo) tea.Cmd {
+func loadPreview(tabID int, file fs.FileInfo, syntax string) tea.Cmd {
 	return func() tea.Msg {
 		return previewLoadedMsg{
 			tabID:   tabID,
-			preview: components.LoadPreview(file, 100),
+			preview: components.LoadPreviewWithConfig(file, previewConfig(syntax)),
 		}
 	}
 }

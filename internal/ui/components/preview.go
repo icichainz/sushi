@@ -283,10 +283,16 @@ func checkBinaryFile(path string) (bool, error) {
 	return false, nil
 }
 
+// HasSyntaxTheme reports whether name is a known Chroma style
+func HasSyntaxTheme(name string) bool {
+	_, ok := styles.Registry[name]
+	return ok
+}
+
 // RenderPreview renders the preview into a block of exactly width x height cells
-func RenderPreview(preview PreviewContent, width, height int, style lipgloss.Style) string {
+func RenderPreview(preview PreviewContent, width, height int, style, errorStyle lipgloss.Style) string {
 	if preview.Error != nil {
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+		style = errorStyle
 	}
 
 	// Clip before padding: lipgloss would otherwise wrap long lines, pushing

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -37,7 +38,7 @@ func TestLoadConfigReadsAndValidates(t *testing.T) {
 
 func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
 	useTempHome(t)
-	if cfg := LoadConfig(); *cfg != *DefaultConfig() {
+	if cfg := LoadConfig(); !reflect.DeepEqual(cfg, DefaultConfig()) {
 		t.Fatalf("got %+v, want defaults", cfg)
 	}
 }

@@ -3,6 +3,8 @@ package app
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -39,9 +41,11 @@ type Model struct {
 	nextTabID    int
 
 	// UI state
-	width  int
-	height int
-	styles ui.Styles
+	width   int
+	height  int
+	theme   ui.Theme
+	styles  ui.Styles
+	initCmd tea.Cmd // Returned from Init, e.g. to clear startup warnings
 
 	// Key bindings
 	keys KeyMap
@@ -282,8 +286,19 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 		path = abs
 	}
 
+	// Problems are shown in the status bar rather than stopping startup
+	theme, problems := ui.LoadTheme(cfg.Theme, cfg.Colors)
+	if cfg.SyntaxTheme != "" {
+		if components.HasSyntaxTheme(cfg.SyntaxTheme) {
+			theme.Syntax = cfg.SyntaxTheme
+		} else {
+			problems = append(problems, fmt.Sprintf("unknown syntax_theme %q", cfg.SyntaxTheme))
+		}
+	}
+
 	m := Model{
-		styles:     ui.DefaultStyles(),
+		theme:      theme,
+		styles:     ui.NewStyles(theme),
 		keys:       DefaultKeyMap(),
 		mode:       ModeNormal,
 		bookmarks:  config.LoadBookmarks(),
@@ -295,21 +310,24 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	initialTab := m.newTab(path)
 	files, err := fs.ScanDirectory(path, m.scanOptions())
 	if err != nil {
-		m.statusMsg = fmt.Sprintf("Error: %v", err)
+		problems = append(problems, fmt.Sprintf("Error: %v", err))
 	} else {
 		initialTab.setFiles(files)
 	}
 
 	// Load initial preview
 	if len(initialTab.Files) > 0 && initialTab.PreviewEnabled {
-		initialTab.Preview = components.LoadPreview(initialTab.Files[0], 100)
+		initialTab.Preview = m.loadPreviewNow(initialTab.Files[0])
 	}
 
 	m.tabs = []Tab{initialTab}
+	if len(problems) > 0 {
+		m.initCmd = m.setStatusFor(strings.Join(problems, "; "), 10*time.Second)
+	}
 	return m
 }
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	return nil
+	return m.initCmd
 }

@@ -22,7 +22,7 @@ func fileInfo(t *testing.T, path string) fs.FileInfo {
 func TestRenderPreviewIsExactlyPaneSized(t *testing.T) {
 	long := strings.Repeat(strings.Repeat("word ", 60)+"\n", 300)
 	for _, content := range []string{long, "short", ""} {
-		out := RenderPreview(PreviewContent{Content: content}, 40, 12, lipgloss.NewStyle())
+		out := RenderPreview(PreviewContent{Content: content}, 40, 12, lipgloss.NewStyle(), lipgloss.NewStyle())
 		lines := strings.Split(out, "\n")
 		if len(lines) != 12 {
 			t.Errorf("got %d lines, want 12", len(lines))
