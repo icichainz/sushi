@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/plugins"
 	"github.com/icichainz/sushi/internal/ui"
 	"github.com/icichainz/sushi/internal/ui/components"
 )
@@ -69,6 +70,11 @@ type Model struct {
 	// Bookmarks
 	bookmarks      *config.BookmarkStore
 	bookmarkCursor int
+
+	// Plugins
+	plugins      []plugins.Plugin
+	pluginKeys   map[string]int // Shortcut to index in plugins
+	pluginCursor int
 
 	// Configuration
 	config     *config.Config
@@ -131,6 +137,7 @@ const (
 	ModeHelp
 	ModeConfirm
 	ModeBookmarks
+	ModePlugins
 )
 
 // KeyMap defines all key bindings
@@ -162,6 +169,8 @@ type KeyMap struct {
 	AddBookmark key.Binding
 	Quit        key.Binding
 	Help        key.Binding
+	Plugins     key.Binding
+	Shell       key.Binding
 	Preview     key.Binding
 	Hidden      key.Binding
 	NewTab      key.Binding
@@ -282,6 +291,14 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("?"),
 			key.WithHelp("?", "help"),
 		),
+		Plugins: key.NewBinding(
+			key.WithKeys("P"),
+			key.WithHelp("P", "plugins"),
+		),
+		Shell: key.NewBinding(
+			key.WithKeys("!"),
+			key.WithHelp("!", "run shell command"),
+		),
 		Preview: key.NewBinding(
 			key.WithKeys("p"),
 			key.WithHelp("p", "toggle preview"),
@@ -365,6 +382,12 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	}
 
 	m.tabs = []Tab{initialTab}
+
+	loaded, warnings := plugins.Load(cfg.Plugins, config.PluginDir())
+	m.plugins = loaded
+	problems = append(problems, warnings...)
+	problems = append(problems, m.bindPluginKeys()...)
+
 	if len(problems) > 0 {
 		m.initCmd = m.setStatusFor(strings.Join(problems, "; "), 10*time.Second)
 	}

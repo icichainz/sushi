@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/plugins"
 	"github.com/icichainz/sushi/internal/ui/components"
 )
 
@@ -904,5 +906,168 @@ func TestEnterOnDirectoryStillNavigates(t *testing.T) {
 	m = drain(t, m, cmd)
 	if filepath.Base(m.tab().CurrentPath) != "sub" {
 		t.Fatalf("CurrentPath = %s", m.tab().CurrentPath)
+	}
+}
+
+func skipWithoutSh(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("plugins here are sh commands")
+	}
+}
+
+func TestBackgroundPluginSendsInstructions(t *testing.T) {
+	skipWithoutSh(t)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	os.Mkdir(target, 0755)
+	writeTestFile(t, filepath.Join(target, "found.txt"), "")
+
+	cfg := config.DefaultConfig()
+	cfg.Plugins = []plugins.Plugin{{
+		Name: "jump", Key: "Z", Mode: plugins.ModeBackground,
+		Command: `echo "cd target/found.txt" > "$SUSHI_CMD_FILE"; echo "working..."; echo "jumped"`,
+	}}
+	m := newTestModel(t, dir, cfg)
+	m, cmd := press(t, m, "Z")
+	m = drain(t, m, cmd)
+
+	if m.tab().CurrentPath != target || m.tab().Files[m.tab().Cursor].Name != "found.txt" {
+		t.Fatalf("path=%s, want %s with found.txt focused", m.tab().CurrentPath, target)
+	}
+	if m.statusMsg != "jumped" {
+		t.Fatalf("statusMsg = %q, want the last line of output", m.statusMsg)
+	}
+}
+
+func TestPluginGetsSelection(t *testing.T) {
+	skipWithoutSh(t)
+	dir := t.TempDir()
+	for _, name := range []string{"a", "b", "c"} {
+		writeTestFile(t, filepath.Join(dir, name), "")
+	}
+	out := filepath.Join(t.TempDir(), "args")
+
+	cfg := config.DefaultConfig()
+	cfg.Plugins = []plugins.Plugin{{
+		Name: "list", Key: "L", Mode: plugins.ModeBackground,
+		Command: `printf '%s\n' "$@" > ` + out + `; echo "select c" > "$SUSHI_CMD_FILE"`,
+	}}
+	m := newTestModel(t, dir, cfg)
+	m, _ = press(t, m, " ") // a
+	m, _ = press(t, m, " ") // b
+	m, cmd := press(t, m, "L")
+	m = drain(t, m, cmd)
+
+	b, _ := os.ReadFile(out)
+	want := filepath.Join(dir, "a") + "\n" + filepath.Join(dir, "b") + "\n"
+	if string(b) != want {
+		t.Fatalf("plugin got %q, want %q", b, want)
+	}
+	if !m.tab().Selected[filepath.Join(dir, "c")] {
+		t.Fatal("select instruction was ignored")
+	}
+}
+
+func TestPluginFailureIsReported(t *testing.T) {
+	skipWithoutSh(t)
+	cfg := config.DefaultConfig()
+	cfg.Plugins = []plugins.Plugin{{Name: "broken", Key: "Z", Mode: plugins.ModeBackground, Command: "echo boom >&2; exit 3"}}
+
+	m := newTestModel(t, t.TempDir(), cfg)
+	m, cmd := press(t, m, "Z")
+	m = drain(t, m, cmd)
+	if !strings.Contains(m.statusMsg, "broken failed") || !strings.Contains(m.statusMsg, "boom") {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+}
+
+func TestPluginKeyConflictsAreReported(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Plugins = []plugins.Plugin{
+		{Name: "quitter", Key: "q", Command: "true"},
+		{Name: "first", Key: "Z", Command: "true"},
+		{Name: "second", Key: "Z", Command: "true"},
+	}
+	m := newTestModel(t, t.TempDir(), cfg)
+
+	if !strings.Contains(m.statusMsg, `key "q" is used by sushi`) || !strings.Contains(m.statusMsg, "already used by first") {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+	if _, ok := m.pluginKeys["q"]; ok {
+		t.Fatal("a plugin took over q")
+	}
+	if m.plugins[m.pluginKeys["Z"]].Name != "first" {
+		t.Fatal("Z should stay with the first plugin")
+	}
+}
+
+func TestScriptPluginsAreDiscovered(t *testing.T) {
+	skipWithoutSh(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".config", "sushi", "plugins")
+	os.MkdirAll(dir, 0755)
+	script := "#!/bin/sh\n# sushi-key: ctrl+g\n# sushi-mode: background\n# sushi-description: Says hi\necho hi from script\n"
+	os.WriteFile(filepath.Join(dir, "greet.sh"), []byte(script), 0755)
+
+	updated, _ := NewModelWithConfig(t.TempDir(), config.DefaultConfig()).Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m := updated.(Model)
+	if len(m.plugins) != 1 || m.plugins[0].Name != "greet" {
+		t.Fatalf("plugins = %+v", m.plugins)
+	}
+
+	// Run it from the plugin menu
+	m, _ = press(t, m, "P")
+	if !strings.Contains(m.View(), "greet [ctrl+g]") || !strings.Contains(m.View(), "Says hi") {
+		t.Fatalf("menu:\n%s", m.View())
+	}
+	m, cmd := press(t, m, "enter")
+	m = drain(t, m, cmd)
+	if m.mode != ModeNormal || m.statusMsg != "hi from script" {
+		t.Fatalf("mode=%v statusMsg=%q", m.mode, m.statusMsg)
+	}
+}
+
+func TestEmptyPluginMenuExplainsSetup(t *testing.T) {
+	m := newTestModel(t, t.TempDir(), nil)
+	m, _ = press(t, m, "P")
+	if !strings.Contains(m.View(), "No plugins yet") {
+		t.Fatalf("menu:\n%s", m.View())
+	}
+	if m, _ = press(t, m, "esc"); m.mode != ModeNormal {
+		t.Fatal("Esc did not close the menu")
+	}
+}
+
+func TestShellPromptRunsCommand(t *testing.T) {
+	m := newTestModel(t, t.TempDir(), nil)
+	m, _ = press(t, m, "!")
+	if m.mode != ModeInput || m.prompt.label != "Shell:" {
+		t.Fatalf("mode=%v label=%q", m.mode, m.prompt.label)
+	}
+	m = typeText(t, m, "ls")
+	m, cmd := press(t, m, "enter")
+	// The command runs in the terminal via tea.Exec, which needs a real
+	// program; check it was handed over
+	if m.mode != ModeNormal || cmd == nil {
+		t.Fatalf("mode=%v cmd=%v", m.mode, cmd)
+	}
+}
+
+func TestWaitCommandWaitsForEnter(t *testing.T) {
+	skipWithoutSh(t)
+	var out strings.Builder
+	w := &waitCommand{Cmd: exec.Command("sh", "-c", "echo hello; exit 2")}
+	w.SetStdin(strings.NewReader("\n"))
+	w.SetStdout(&out)
+	w.SetStderr(&out)
+
+	err := w.Run()
+	if err == nil {
+		t.Fatal("exit status should be returned")
+	}
+	if got := out.String(); !strings.Contains(got, "hello") || !strings.Contains(got, "Press Enter") || !strings.Contains(got, "exit status 2") {
+		t.Fatalf("output = %q", got)
 	}
 }

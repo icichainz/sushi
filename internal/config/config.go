@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/icichainz/sushi/internal/plugins"
 	"gopkg.in/yaml.v3"
 )
 
@@ -25,6 +26,9 @@ type Config struct {
 	Theme       string            `yaml:"theme"`        // "default", "dark" or "light"
 	Colors      map[string]string `yaml:"colors"`       // Per-color overrides of the theme
 	SyntaxTheme string            `yaml:"syntax_theme"` // Chroma style; empty follows the theme
+
+	// External commands; scripts in PluginDir are added to these
+	Plugins []plugins.Plugin `yaml:"plugins"`
 }
 
 // DefaultConfig returns a config with sensible defaults
@@ -162,6 +166,15 @@ func CreateDefaultConfigFile() (bool, error) {
 	}
 
 	return true, nil
+}
+
+// PluginDir returns the directory scanned for plugin scripts
+func PluginDir() string {
+	dir, err := getConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "plugins")
 }
 
 // GetConfigPath returns the config file path for display purposes

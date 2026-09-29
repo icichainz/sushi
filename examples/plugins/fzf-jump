@@ -1,0 +1,13 @@
+#!/bin/sh
+# sushi-key: ctrl+f
+# sushi-mode: terminal
+# sushi-description: Fuzzy-find a file below the current directory and jump to it (needs fzf)
+
+if ! command -v fzf >/dev/null 2>&1; then
+    echo "status fzf-jump needs fzf: https://github.com/junegunn/fzf" > "$SUSHI_CMD_FILE"
+    exit 1
+fi
+
+# Leaving fzf with Esc is not an error
+target=$(fzf) || exit 0
+echo "cd $target" > "$SUSHI_CMD_FILE"

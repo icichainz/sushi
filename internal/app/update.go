@@ -100,6 +100,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case externalDoneMsg:
 		return m.handleExternalDone(msg)
 
+	case pluginDoneMsg:
+		return m.handlePluginDone(msg)
+
 	case clearStatusMsg:
 		if msg.id == m.statusID {
 			m.statusMsg = ""
@@ -190,6 +193,16 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleInputMode(msg)
 	}
 
+	// Handle the plugin menu
+	if m.mode == ModePlugins {
+		return m.handlePluginMode(msg)
+	}
+
+	// Plugin shortcuts; bindPluginKeys keeps them clear of built-in keys
+	if i, ok := m.pluginKeys[msg.String()]; ok {
+		return m.runPlugin(m.plugins[i])
+	}
+
 	tab := &m.tabs[m.activeTabIdx]
 
 	switch {
@@ -199,6 +212,14 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Help):
 		m.mode = ModeHelp
 		return m, nil
+
+	case key.Matches(msg, m.keys.Plugins):
+		m.mode = ModePlugins
+		m.pluginCursor = 0
+		return m, nil
+
+	case key.Matches(msg, m.keys.Shell):
+		return m.openPrompt(prompt{action: promptShell, label: "Shell:"})
 
 	case key.Matches(msg, m.keys.Preview):
 		tab.PreviewEnabled = !tab.PreviewEnabled

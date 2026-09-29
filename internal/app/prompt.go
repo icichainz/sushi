@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/plugins"
 	"github.com/icichainz/sushi/internal/ui/components"
 )
 
@@ -17,6 +18,7 @@ const (
 	promptRename promptAction = iota
 	promptNewFile
 	promptNewDir
+	promptShell
 )
 
 // prompt is the text input shown in place of the status bar
@@ -70,6 +72,16 @@ func (m Model) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	value := m.prompt.input.Value()
 	dir := m.tab().CurrentPath
+
+	// A shell command is an unnamed plugin: it gets the same arguments and
+	// environment, and waits so its output can be read
+	if m.prompt.action == promptShell {
+		m.mode = ModeNormal
+		if strings.TrimSpace(value) == "" {
+			return m, nil
+		}
+		return m.runPlugin(plugins.Plugin{Name: "shell", Command: value, Mode: plugins.ModeWait})
+	}
 
 	var path, status string
 	var err error

@@ -26,6 +26,8 @@ func (m Model) View() string {
 		view = m.renderConfirmDialog()
 	case ModeBookmarks:
 		view = m.renderBookmarksView()
+	case ModePlugins:
+		view = m.renderPluginsView()
 	default:
 		view = m.renderMainView()
 	}
@@ -341,6 +343,8 @@ var helpItems = []struct {
 	{"b", "Show bookmarks"},
 	{"B", "Add bookmark"},
 	{"1-9", "Jump to bookmark"},
+	{"P", "Plugins"},
+	{"!", "Run a shell command"},
 	{"t", "New tab (current dir)"},
 	{"T", "New tab (home dir)"},
 	{"Tab", "Next tab"},
@@ -568,6 +572,60 @@ func (m Model) renderBookmarksView() string {
 		lipgloss.Center,
 		box,
 	)
+}
+
+// renderPluginsView renders the plugin menu
+func (m Model) renderPluginsView() string {
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(m.theme.Title).
+		MarginBottom(1)
+	nameStyle := lipgloss.NewStyle().Foreground(m.theme.Text).Bold(true)
+	selectedStyle := lipgloss.NewStyle().
+		Foreground(m.theme.Highlight).
+		Background(m.theme.BarBg).
+		Bold(true)
+	mutedStyle := lipgloss.NewStyle().Foreground(m.theme.Muted)
+	hintStyle := mutedStyle.Italic(true)
+
+	var lines []string
+	lines = append(lines, titleStyle.Render("Plugins"))
+	lines = append(lines, "")
+
+	if len(m.plugins) == 0 {
+		lines = append(lines, nameStyle.Render("No plugins yet"))
+		lines = append(lines, "")
+		lines = append(lines, hintStyle.Render("Add commands under plugins: in ~/.config/sushi/config.yaml,"))
+		lines = append(lines, hintStyle.Render("or executable scripts to ~/.config/sushi/plugins/"))
+	} else {
+		// Keep the list inside the box on narrow terminals
+		room := max(m.width-12, 20)
+		for i, p := range m.plugins {
+			name := p.Name
+			if p.Key != "" {
+				name += " [" + p.Key + "]"
+			}
+			style := nameStyle
+			if i == m.pluginCursor {
+				style = selectedStyle
+			}
+			line := style.Render(name)
+			if p.Description != "" {
+				line += mutedStyle.Render("  " + p.Description)
+			}
+			lines = append(lines, utils.Truncate(line, room))
+		}
+		lines = append(lines, "")
+		lines = append(lines, hintStyle.Render("j/k=Move  Enter=Run  Esc=Close"))
+	}
+
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(m.theme.Accent).
+		Padding(1, 3).
+		Render(strings.Join(lines, "\n"))
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 // renderSearchBar renders the search input bar

@@ -1,0 +1,5 @@
+#!/bin/sh
+# sushi-key: ctrl+g
+# sushi-description: Show git status for the current directory
+
+git -C "$SUSHI_DIR" status
