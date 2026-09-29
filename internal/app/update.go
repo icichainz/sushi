@@ -13,6 +13,9 @@ import (
 	"github.com/icichainz/sushi/internal/ui/components"
 )
 
+// statusDuration is how long transient status messages stay visible
+const statusDuration = 3 * time.Second
+
 // Update handles all state updates
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -25,53 +28,104 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case dirLoadedMsg:
-		tab := &m.tabs[m.activeTabIdx]
-		tab.Files = msg.files
+		tab := m.tabByID(msg.tabID)
+		// Drop results for closed tabs and for loads a newer one has superseded
+		if tab == nil || msg.seq != tab.loadSeq {
+			return m, nil
+		}
+		tab.Loading = false
+		if msg.err != nil {
+			// Keep showing the previous directory rather than an empty one
+			return m, m.setStatus(fmt.Sprintf("Error: %v", msg.err))
+		}
+
+		// Keep the cursor on the same file when reloading, and on the
+		// directory we came from when going up
+		samePath := msg.path == tab.CurrentPath
+		focus := ""
+		if samePath && len(tab.Files) > 0 {
+			focus = tab.Files[tab.Cursor].Path
+		} else if filepath.Dir(tab.CurrentPath) == msg.path {
+			focus = tab.CurrentPath
+		}
+
+		oldCursor := tab.Cursor
+		tab.setFiles(msg.files)
 		tab.CurrentPath = msg.path
 		tab.Cursor = 0
-		m.err = msg.err
-		tab.Loading = false
-
-		// Cache total size (calculated once, not on every render)
-		tab.TotalSize = 0
-		for _, f := range tab.Files {
-			tab.TotalSize += f.Size
+		if samePath {
+			tab.Cursor = min(oldCursor, max(len(tab.Files)-1, 0))
+		}
+		for i, f := range tab.Files {
+			if f.Path == focus {
+				tab.Cursor = i
+				break
+			}
 		}
 
-		// Load preview for first file
-		if len(tab.Files) > 0 && tab.PreviewEnabled {
-			return m, loadPreview(tab.Files[0])
+		if m.mode == ModeSearch && tab.ID == m.tab().ID {
+			m.updateSearchResults()
 		}
-		return m, nil
+		return m, m.previewCmd(tab)
 
 	case previewLoadedMsg:
-		m.tabs[m.activeTabIdx].Preview = msg.preview
+		tab := m.tabByID(msg.tabID)
+		// Drop previews that arrive after the cursor has moved on
+		if tab != nil && len(tab.Files) > 0 && tab.Files[tab.Cursor].Path == msg.preview.Path {
+			tab.Preview = msg.preview
+		}
 		return m, nil
 
 	case fileOperationMsg:
-		m.tabs[m.activeTabIdx].Loading = false
+		status := msg.message
 		if msg.err != nil {
-			m.statusMsg = fmt.Sprintf("Error: %v", msg.err)
-		} else {
-			m.statusMsg = msg.message
+			status = fmt.Sprintf("Error: %v", msg.err)
+		} else if msg.operation == "cut" {
 			// Clear clipboard after successful cut operation
-			if msg.operation == "cut" {
-				m.clipboard = ""
-				m.clipboardMode = ""
-			}
+			m.clipboard = ""
+			m.clipboardMode = ""
 		}
-		// Reload directory after file operation, and clear status after 3 seconds
-		return m, tea.Batch(
-			loadDirectory(m.tabs[m.activeTabIdx].CurrentPath),
-			clearStatusAfter(3*time.Second),
-		)
+
+		// Any tab may be showing the source or destination, so reload them all
+		cmds := []tea.Cmd{m.setStatus(status)}
+		for i := range m.tabs {
+			cmds = append(cmds, m.loadDir(&m.tabs[i], m.tabs[i].CurrentPath))
+		}
+		return m, tea.Batch(cmds...)
 
 	case clearStatusMsg:
-		m.statusMsg = ""
+		if msg.id == m.statusID {
+			m.statusMsg = ""
+		}
 		return m, nil
 	}
 
 	return m, nil
+}
+
+// setStatus shows a status message and schedules it to clear
+func (m *Model) setStatus(msg string) tea.Cmd {
+	m.statusID++
+	m.statusMsg = msg
+	id := m.statusID
+	return tea.Tick(statusDuration, func(time.Time) tea.Msg {
+		return clearStatusMsg{id: id}
+	})
+}
+
+// loadDir starts loading path into tab, superseding any load already in flight
+func (m *Model) loadDir(tab *Tab, path string) tea.Cmd {
+	tab.Loading = true
+	tab.loadSeq++
+	return loadDirectory(tab.ID, tab.loadSeq, path)
+}
+
+// previewCmd loads the preview for the file under the tab's cursor, if shown
+func (m *Model) previewCmd(tab *Tab) tea.Cmd {
+	if !tab.PreviewEnabled || len(tab.Files) == 0 {
+		return nil
+	}
+	return loadPreview(tab.ID, tab.Files[tab.Cursor])
 }
 
 // handleKeyPress processes keyboard input
@@ -116,17 +170,13 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Up):
 		if tab.Cursor > 0 {
 			tab.Cursor--
-			if len(tab.Files) > 0 && tab.PreviewEnabled {
-				return m, loadPreview(tab.Files[tab.Cursor])
-			}
+			return m, m.previewCmd(tab)
 		}
 
 	case key.Matches(msg, m.keys.Down):
 		if tab.Cursor < len(tab.Files)-1 {
 			tab.Cursor++
-			if len(tab.Files) > 0 && tab.PreviewEnabled {
-				return m, loadPreview(tab.Files[tab.Cursor])
-			}
+			return m, m.previewCmd(tab)
 		}
 
 	case key.Matches(msg, m.keys.PageUp):
@@ -139,9 +189,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if tab.Cursor < 0 {
 				tab.Cursor = 0
 			}
-			if tab.PreviewEnabled {
-				return m, loadPreview(tab.Files[tab.Cursor])
-			}
+			return m, m.previewCmd(tab)
 		}
 
 	case key.Matches(msg, m.keys.PageDown):
@@ -154,43 +202,32 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if tab.Cursor >= len(tab.Files) {
 				tab.Cursor = len(tab.Files) - 1
 			}
-			if tab.PreviewEnabled {
-				return m, loadPreview(tab.Files[tab.Cursor])
-			}
+			return m, m.previewCmd(tab)
 		}
 
 	case key.Matches(msg, m.keys.Home):
 		if len(tab.Files) > 0 && tab.Cursor != 0 {
 			tab.Cursor = 0
-			if tab.PreviewEnabled {
-				return m, loadPreview(tab.Files[tab.Cursor])
-			}
+			return m, m.previewCmd(tab)
 		}
 
 	case key.Matches(msg, m.keys.End):
 		if len(tab.Files) > 0 && tab.Cursor != len(tab.Files)-1 {
 			tab.Cursor = len(tab.Files) - 1
-			if tab.PreviewEnabled {
-				return m, loadPreview(tab.Files[tab.Cursor])
-			}
+			return m, m.previewCmd(tab)
 		}
 
 	case key.Matches(msg, m.keys.Right), key.Matches(msg, m.keys.Enter):
 		if len(tab.Files) > 0 && tab.Files[tab.Cursor].IsDir {
-			newPath := tab.Files[tab.Cursor].Path
-			tab.Loading = true
-			return m, loadDirectory(newPath)
+			return m, m.loadDir(tab, tab.Files[tab.Cursor].Path)
 		}
 
 	case key.Matches(msg, m.keys.Left), key.Matches(msg, m.keys.Back):
 		parentPath := filepath.Dir(tab.CurrentPath)
 		if parentPath != tab.CurrentPath {
-			tab.Loading = true
-			return m, loadDirectory(parentPath)
-		} else {
-			m.statusMsg = "Already at root directory"
-			return m, clearStatusAfter(2 * time.Second)
+			return m, m.loadDir(tab, parentPath)
 		}
+		return m, m.setStatus("Already at root directory")
 
 	case key.Matches(msg, m.keys.Delete):
 		if len(tab.Files) > 0 {
@@ -203,16 +240,14 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(tab.Files) > 0 {
 			m.clipboard = tab.Files[tab.Cursor].Path
 			m.clipboardMode = "copy"
-			m.statusMsg = fmt.Sprintf("Copied: %s", tab.Files[tab.Cursor].Name)
-			return m, clearStatusAfter(3 * time.Second)
+			return m, m.setStatus(fmt.Sprintf("Copied: %s", tab.Files[tab.Cursor].Name))
 		}
 
 	case key.Matches(msg, m.keys.Cut):
 		if len(tab.Files) > 0 {
 			m.clipboard = tab.Files[tab.Cursor].Path
 			m.clipboardMode = "cut"
-			m.statusMsg = fmt.Sprintf("Cut: %s", tab.Files[tab.Cursor].Name)
-			return m, clearStatusAfter(3 * time.Second)
+			return m, m.setStatus(fmt.Sprintf("Cut: %s", tab.Files[tab.Cursor].Name))
 		}
 
 	case key.Matches(msg, m.keys.Paste):
@@ -220,8 +255,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			destPath := filepath.Join(tab.CurrentPath, filepath.Base(m.clipboard))
 			// Refuse up front rather than offering to overwrite the source with itself
 			if err := fs.CheckTransfer(m.clipboard, destPath); err != nil {
-				m.statusMsg = fmt.Sprintf("Can't paste: %v", err)
-				return m, clearStatusAfter(3 * time.Second)
+				return m, m.setStatus(fmt.Sprintf("Can't paste: %v", err))
 			}
 			// Check if destination exists
 			if fs.Exists(destPath) {
@@ -232,10 +266,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// No confirmation needed, paste directly
 			tab.Loading = true
 			return m, m.executePaste()
-		} else {
-			m.statusMsg = "Nothing in clipboard"
-			return m, clearStatusAfter(2 * time.Second)
 		}
+		return m, m.setStatus("Nothing in clipboard")
 
 	case key.Matches(msg, m.keys.Search):
 		m.mode = ModeSearch
@@ -255,11 +287,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			name = "Root"
 		}
 		if err := m.bookmarks.Add(name, tab.CurrentPath); err != nil {
-			m.statusMsg = fmt.Sprintf("Error: %v", err)
-		} else {
-			m.statusMsg = fmt.Sprintf("Bookmarked: %s", tab.CurrentPath)
+			return m, m.setStatus(fmt.Sprintf("Error: %v", err))
 		}
-		return m, clearStatusAfter(3 * time.Second)
+		return m, m.setStatus(fmt.Sprintf("Bookmarked: %s", tab.CurrentPath))
 
 	// Tab management
 	case key.Matches(msg, m.keys.NewTab):
@@ -275,14 +305,14 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.NextTab):
 		if len(m.tabs) > 1 {
 			m.activeTabIdx = (m.activeTabIdx + 1) % len(m.tabs)
-			m.statusMsg = fmt.Sprintf("Tab %d/%d", m.activeTabIdx+1, len(m.tabs))
+			return m, m.setStatus(fmt.Sprintf("Tab %d/%d", m.activeTabIdx+1, len(m.tabs)))
 		}
 		return m, nil
 
 	case key.Matches(msg, m.keys.PrevTab):
 		if len(m.tabs) > 1 {
 			m.activeTabIdx = (m.activeTabIdx - 1 + len(m.tabs)) % len(m.tabs)
-			m.statusMsg = fmt.Sprintf("Tab %d/%d", m.activeTabIdx+1, len(m.tabs))
+			return m, m.setStatus(fmt.Sprintf("Tab %d/%d", m.activeTabIdx+1, len(m.tabs)))
 		}
 		return m, nil
 
@@ -296,8 +326,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if r >= '1' && r <= '9' {
 			idx := int(r - '1')
 			if bm := m.bookmarks.Get(idx); bm != nil {
-				tab.Loading = true
-				return m, loadDirectory(bm.Path)
+				return m, m.loadDir(tab, bm.Path)
 			}
 		}
 	}
@@ -307,19 +336,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // createTab creates a new tab at the specified path
 func (m Model) createTab(path string) (tea.Model, tea.Cmd) {
-	newTab := Tab{
-		CurrentPath:    path,
-		Files:          []fs.FileInfo{},
-		Cursor:         0,
-		Selected:       make(map[string]bool),
-		PreviewEnabled: true,
-		PreviewWidth:   50,
-		Loading:        true,
-	}
-	m.tabs = append(m.tabs, newTab)
+	m.tabs = append(m.tabs, m.newTab(path))
 	m.activeTabIdx = len(m.tabs) - 1
-	m.statusMsg = fmt.Sprintf("New tab %d", len(m.tabs))
-	return m, loadDirectory(path)
+	loadCmd := m.loadDir(m.tab(), path)
+	return m, tea.Batch(loadCmd, m.setStatus(fmt.Sprintf("New tab %d", len(m.tabs))))
 }
 
 // closeTab closes the current tab
@@ -337,8 +357,7 @@ func (m Model) closeTab() (tea.Model, tea.Cmd) {
 		m.activeTabIdx = len(m.tabs) - 1
 	}
 
-	m.statusMsg = fmt.Sprintf("Tab closed. %d remaining", len(m.tabs))
-	return m, nil
+	return m, m.setStatus(fmt.Sprintf("Tab closed. %d remaining", len(m.tabs)))
 }
 
 // handleBookmarkMode handles key presses in bookmark mode
@@ -352,8 +371,7 @@ func (m Model) handleBookmarkMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Go to selected bookmark
 		if bm := m.bookmarks.Get(m.bookmarkCursor); bm != nil {
 			m.mode = ModeNormal
-			m.tabs[m.activeTabIdx].Loading = true
-			return m, loadDirectory(bm.Path)
+			return m, m.loadDir(m.tab(), bm.Path)
 		}
 		return m, nil
 
@@ -372,10 +390,11 @@ func (m Model) handleBookmarkMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyRunes:
 		if len(msg.Runes) == 1 && msg.Runes[0] == 'd' {
 			// Delete selected bookmark
+			var cmd tea.Cmd
 			if err := m.bookmarks.Remove(m.bookmarkCursor); err != nil {
-				m.statusMsg = fmt.Sprintf("Error: %v", err)
+				cmd = m.setStatus(fmt.Sprintf("Error: %v", err))
 			} else {
-				m.statusMsg = "Bookmark removed"
+				cmd = m.setStatus("Bookmark removed")
 				// Adjust cursor if needed
 				if m.bookmarkCursor >= m.bookmarks.Len() && m.bookmarkCursor > 0 {
 					m.bookmarkCursor--
@@ -385,7 +404,7 @@ func (m Model) handleBookmarkMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.bookmarks.Len() == 0 {
 				m.mode = ModeNormal
 			}
-			return m, nil
+			return m, cmd
 		}
 	}
 
@@ -429,18 +448,12 @@ func (m Model) handleSearchMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyUp:
 		// Navigate to previous match
 		m.navigateSearchResults(-1)
-		if tab.PreviewEnabled && len(tab.Files) > 0 {
-			return m, loadPreview(tab.Files[tab.Cursor])
-		}
-		return m, nil
+		return m, m.previewCmd(tab)
 
 	case tea.KeyDown:
 		// Navigate to next match
 		m.navigateSearchResults(1)
-		if tab.PreviewEnabled && len(tab.Files) > 0 {
-			return m, loadPreview(tab.Files[tab.Cursor])
-		}
-		return m, nil
+		return m, m.previewCmd(tab)
 
 	case tea.KeyRunes:
 		// Add typed character to query
@@ -449,9 +462,7 @@ func (m Model) handleSearchMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Move cursor to first match
 		if len(tab.SearchResults) > 0 {
 			tab.Cursor = tab.SearchResults[0]
-			if tab.PreviewEnabled {
-				return m, loadPreview(tab.Files[tab.Cursor])
-			}
+			return m, m.previewCmd(tab)
 		}
 		return m, nil
 	}
@@ -537,8 +548,7 @@ func (m Model) handleConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "n", "N", "esc", "q":
 		m.mode = ModeNormal
-		m.statusMsg = "Cancelled"
-		return m, nil
+		return m, m.setStatus("Cancelled")
 	}
 
 	return m, nil
@@ -600,6 +610,8 @@ func (m Model) executePaste() tea.Cmd {
 
 // dirLoadedMsg is sent when a directory has been loaded
 type dirLoadedMsg struct {
+	tabID int
+	seq   int
 	path  string
 	files []fs.FileInfo
 	err   error
@@ -607,6 +619,7 @@ type dirLoadedMsg struct {
 
 // previewLoadedMsg is sent when preview content has been loaded
 type previewLoadedMsg struct {
+	tabID   int
 	preview components.PreviewContent
 }
 
@@ -618,20 +631,17 @@ type fileOperationMsg struct {
 }
 
 // clearStatusMsg is sent to clear the status message after a timeout
-type clearStatusMsg struct{}
-
-// clearStatusAfter returns a command that clears the status after a delay
-func clearStatusAfter(d time.Duration) tea.Cmd {
-	return tea.Tick(d, func(t time.Time) tea.Msg {
-		return clearStatusMsg{}
-	})
+type clearStatusMsg struct {
+	id int
 }
 
 // loadDirectory loads files from a directory asynchronously
-func loadDirectory(path string) tea.Cmd {
+func loadDirectory(tabID, seq int, path string) tea.Cmd {
 	return func() tea.Msg {
 		files, err := fs.ScanDirectory(path)
 		return dirLoadedMsg{
+			tabID: tabID,
+			seq:   seq,
 			path:  path,
 			files: files,
 			err:   err,
@@ -640,11 +650,11 @@ func loadDirectory(path string) tea.Cmd {
 }
 
 // loadPreview loads preview content asynchronously
-func loadPreview(file fs.FileInfo) tea.Cmd {
+func loadPreview(tabID int, file fs.FileInfo) tea.Cmd {
 	return func() tea.Msg {
-		preview := components.LoadPreview(file, 100)
 		return previewLoadedMsg{
-			preview: preview,
+			tabID:   tabID,
+			preview: components.LoadPreview(file, 100),
 		}
 	}
 }

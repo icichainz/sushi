@@ -1,6 +1,9 @@
 package app
 
 import (
+	"fmt"
+	"path/filepath"
+
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/config"
@@ -11,6 +14,8 @@ import (
 
 // Tab represents a single browsing session
 type Tab struct {
+	ID              int // Stable identity so async results reach the right tab
+	loadSeq         int // Incremented per directory load; stale results are dropped
 	CurrentPath     string
 	Files           []fs.FileInfo
 	Cursor          int
@@ -31,6 +36,7 @@ type Model struct {
 	// Tab management
 	tabs         []Tab
 	activeTabIdx int
+	nextTabID    int
 
 	// UI state
 	width  int
@@ -45,7 +51,7 @@ type Model struct {
 
 	// Status message
 	statusMsg string
-	err       error
+	statusID  int // Identifies the current message so older timers don't clear it
 
 	// File operations
 	clipboard     string // Path of file in clipboard
@@ -63,6 +69,38 @@ type Model struct {
 // tab returns a pointer to the active tab
 func (m *Model) tab() *Tab {
 	return &m.tabs[m.activeTabIdx]
+}
+
+// tabByID returns the tab with the given ID, or nil if it has been closed
+func (m *Model) tabByID(id int) *Tab {
+	for i := range m.tabs {
+		if m.tabs[i].ID == id {
+			return &m.tabs[i]
+		}
+	}
+	return nil
+}
+
+// newTab creates an empty tab at path using the configured defaults
+func (m *Model) newTab(path string) Tab {
+	m.nextTabID++
+	return Tab{
+		ID:             m.nextTabID,
+		CurrentPath:    path,
+		Files:          []fs.FileInfo{},
+		Selected:       make(map[string]bool),
+		PreviewEnabled: m.config.PreviewEnabled,
+		PreviewWidth:   m.config.PreviewWidth,
+	}
+}
+
+// setFiles replaces the tab's file list and refreshes the cached total size
+func (t *Tab) setFiles(files []fs.FileInfo) {
+	t.Files = files
+	t.TotalSize = 0
+	for _, f := range files {
+		t.TotalSize += f.Size
+	}
 }
 
 // Mode represents the current application mode
@@ -224,44 +262,34 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 		cfg = config.LoadConfig()
 	}
 
-	files, err := fs.ScanDirectory(path)
-	if err != nil {
-		files = []fs.FileInfo{}
-	}
-
-	// Calculate initial total size
-	var totalSize int64
-	for _, f := range files {
-		totalSize += f.Size
-	}
-
-	// Create initial tab with config settings
-	initialTab := Tab{
-		CurrentPath:    path,
-		Files:          files,
-		Cursor:         0,
-		Selected:       make(map[string]bool),
-		PreviewEnabled: cfg.PreviewEnabled,
-		PreviewWidth:   cfg.PreviewWidth,
-		TotalSize:      totalSize,
-		Loading:        false,
-	}
-
-	// Load initial preview
-	if len(files) > 0 && cfg.PreviewEnabled {
-		initialTab.Preview = components.LoadPreview(files[0], 100)
+	// Relative paths break parent navigation (the parent of ".." is ".")
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
 	}
 
 	m := Model{
-		tabs:         []Tab{initialTab},
-		activeTabIdx: 0,
-		styles:       ui.DefaultStyles(),
-		keys:         DefaultKeyMap(),
-		mode:         ModeNormal,
-		bookmarks:    config.LoadBookmarks(),
-		config:       cfg,
+		styles:    ui.DefaultStyles(),
+		keys:      DefaultKeyMap(),
+		mode:      ModeNormal,
+		bookmarks: config.LoadBookmarks(),
+		config:    cfg,
 	}
 
+	// Create initial tab with config settings
+	initialTab := m.newTab(path)
+	files, err := fs.ScanDirectory(path)
+	if err != nil {
+		m.statusMsg = fmt.Sprintf("Error: %v", err)
+	} else {
+		initialTab.setFiles(files)
+	}
+
+	// Load initial preview
+	if len(initialTab.Files) > 0 && initialTab.PreviewEnabled {
+		initialTab.Preview = components.LoadPreview(initialTab.Files[0], 100)
+	}
+
+	m.tabs = []Tab{initialTab}
 	return m
 }
 

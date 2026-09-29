@@ -282,8 +282,6 @@ func (m Model) renderStatusBar() string {
 	centerInfo := ""
 	if m.statusMsg != "" {
 		centerInfo = " " + m.statusMsg + " "
-	} else if m.err != nil {
-		centerInfo = fmt.Sprintf(" Error: %v ", m.err)
 	}
 
 	// Right side: cursor position, tab count, and preview status
