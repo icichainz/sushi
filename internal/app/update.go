@@ -117,7 +117,7 @@ func (m *Model) setStatus(msg string) tea.Cmd {
 func (m *Model) loadDir(tab *Tab, path string) tea.Cmd {
 	tab.Loading = true
 	tab.loadSeq++
-	return loadDirectory(tab.ID, tab.loadSeq, path)
+	return loadDirectory(tab.ID, tab.loadSeq, path, m.scanOptions())
 }
 
 // previewCmd loads the preview for the file under the tab's cursor, if shown
@@ -170,6 +170,19 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Previews aren't loaded while hidden, so fetch the current file's now
 		tab.Preview = components.PreviewContent{}
 		return m, tea.Batch(m.previewCmd(tab), m.setStatus("Preview on"))
+
+	case key.Matches(msg, m.keys.Hidden):
+		m.showHidden = !m.showHidden
+		status := "Hidden files hidden"
+		if m.showHidden {
+			status = "Hidden files shown"
+		}
+		// The setting is global, so refresh every tab
+		cmds := []tea.Cmd{m.setStatus(status)}
+		for i := range m.tabs {
+			cmds = append(cmds, m.loadDir(&m.tabs[i], m.tabs[i].CurrentPath))
+		}
+		return m, tea.Batch(cmds...)
 
 	case key.Matches(msg, m.keys.Up):
 		if tab.Cursor > 0 {
@@ -229,6 +242,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Delete):
 		if len(tab.Files) > 0 {
+			if !m.config.ConfirmDelete {
+				tab.Loading = true
+				return m, m.executeDelete()
+			}
 			m.confirmAction = "delete"
 			m.mode = ModeConfirm
 			return m, nil
@@ -639,9 +656,9 @@ type clearStatusMsg struct {
 }
 
 // loadDirectory loads files from a directory asynchronously
-func loadDirectory(tabID, seq int, path string) tea.Cmd {
+func loadDirectory(tabID, seq int, path string, opts fs.ScanOptions) tea.Cmd {
 	return func() tea.Msg {
-		files, err := fs.ScanDirectory(path)
+		files, err := fs.ScanDirectory(path, opts)
 		return dirLoadedMsg{
 			tabID: tabID,
 			seq:   seq,

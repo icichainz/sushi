@@ -393,3 +393,49 @@ func TestEnterSymlinkedDirectory(t *testing.T) {
 		t.Fatalf("files = %v, want inside.txt", m.tab().Files)
 	}
 }
+
+func TestToggleHiddenFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, ".env"), "")
+	writeTestFile(t, filepath.Join(dir, "main.go"), "")
+
+	m := newTestModel(t, dir, nil)
+	if len(m.tab().Files) != 1 {
+		t.Fatalf("show_hidden: false listed %d files, want 1", len(m.tab().Files))
+	}
+
+	m, cmd := press(t, m, ".")
+	for _, c := range cmd().(tea.BatchMsg)[1:] { // Skip the status timer
+		updated, _ := m.Update(c())
+		m = updated.(Model)
+	}
+	if len(m.tab().Files) != 2 {
+		t.Fatalf("after toggling, listed %d files, want 2", len(m.tab().Files))
+	}
+}
+
+func TestConfirmDeleteSetting(t *testing.T) {
+	for _, confirm := range []bool{true, false} {
+		dir := t.TempDir()
+		f := filepath.Join(dir, "doomed.txt")
+		writeTestFile(t, f, "")
+		cfg := config.DefaultConfig()
+		cfg.ConfirmDelete = confirm
+
+		m := newTestModel(t, dir, cfg)
+		m, cmd := press(t, m, "d")
+		if confirm {
+			if m.mode != ModeConfirm {
+				t.Fatal("confirm_delete: true did not ask for confirmation")
+			}
+			continue
+		}
+		if m.mode == ModeConfirm || cmd == nil {
+			t.Fatal("confirm_delete: false still asked for confirmation")
+		}
+		cmd()
+		if _, err := os.Stat(f); !os.IsNotExist(err) {
+			t.Fatal("file was not deleted")
+		}
+	}
+}

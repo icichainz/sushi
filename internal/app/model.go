@@ -63,7 +63,8 @@ type Model struct {
 	bookmarkCursor int
 
 	// Configuration
-	config *config.Config
+	config     *config.Config
+	showHidden bool // Starts from config, toggled at runtime
 }
 
 // tab returns a pointer to the active tab
@@ -79,6 +80,15 @@ func (m *Model) tabByID(id int) *Tab {
 		}
 	}
 	return nil
+}
+
+// scanOptions returns the listing options for directory scans
+func (m *Model) scanOptions() fs.ScanOptions {
+	return fs.ScanOptions{
+		ShowHidden:  m.showHidden,
+		SortBy:      m.config.SortBy,
+		SortReverse: m.config.SortReverse,
+	}
 }
 
 // newTab creates an empty tab at path using the configured defaults
@@ -137,6 +147,7 @@ type KeyMap struct {
 	Quit        key.Binding
 	Help        key.Binding
 	Preview     key.Binding
+	Hidden      key.Binding
 	NewTab      key.Binding
 	NewTabHome  key.Binding
 	NextTab     key.Binding
@@ -227,6 +238,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("p"),
 			key.WithHelp("p", "toggle preview"),
 		),
+		Hidden: key.NewBinding(
+			key.WithKeys("."),
+			key.WithHelp(".", "toggle hidden files"),
+		),
 		NewTab: key.NewBinding(
 			key.WithKeys("t"),
 			key.WithHelp("t", "new tab"),
@@ -268,16 +283,17 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	}
 
 	m := Model{
-		styles:    ui.DefaultStyles(),
-		keys:      DefaultKeyMap(),
-		mode:      ModeNormal,
-		bookmarks: config.LoadBookmarks(),
-		config:    cfg,
+		styles:     ui.DefaultStyles(),
+		keys:       DefaultKeyMap(),
+		mode:       ModeNormal,
+		bookmarks:  config.LoadBookmarks(),
+		config:     cfg,
+		showHidden: cfg.ShowHidden,
 	}
 
 	// Create initial tab with config settings
 	initialTab := m.newTab(path)
-	files, err := fs.ScanDirectory(path)
+	files, err := fs.ScanDirectory(path, m.scanOptions())
 	if err != nil {
 		m.statusMsg = fmt.Sprintf("Error: %v", err)
 	} else {

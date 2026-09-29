@@ -1,13 +1,22 @@
 package fs
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
+// ScanOptions controls which entries are listed and in what order
+type ScanOptions struct {
+	ShowHidden  bool   // Include dotfiles
+	SortBy      string // "name", "size", "modified" or "type"
+	SortReverse bool   // Reverse the order within directories and files
+}
+
 // ScanDirectory scans a directory and returns a list of files
-func ScanDirectory(path string) ([]FileInfo, error) {
+func ScanDirectory(path string, opts ScanOptions) ([]FileInfo, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
@@ -16,6 +25,10 @@ func ScanDirectory(path string) ([]FileInfo, error) {
 	files := make([]FileInfo, 0, len(entries))
 
 	for _, entry := range entries {
+		if !opts.ShowHidden && strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+
 		info, err := entry.Info()
 		if err != nil {
 			continue // Skip files we can't read
@@ -36,13 +49,53 @@ func ScanDirectory(path string) ([]FileInfo, error) {
 		files = append(files, fileInfo)
 	}
 
-	// Sort: directories first, then by name
-	sort.Slice(files, func(i, j int) bool {
-		if files[i].IsDir != files[j].IsDir {
-			return files[i].IsDir
-		}
-		return files[i].Name < files[j].Name
-	})
-
+	SortFiles(files, opts.SortBy, opts.SortReverse)
 	return files, nil
+}
+
+// SortFiles orders directories first, then by the given key. Size and
+// modified put the largest and newest first, like ls -S and ls -t; name and
+// type are alphabetical. Reverse flips the order but keeps directories first.
+func SortFiles(files []FileInfo, by string, reverse bool) {
+	sort.SliceStable(files, func(i, j int) bool {
+		a, b := files[i], files[j]
+		if a.IsDir != b.IsDir {
+			return a.IsDir
+		}
+		if c := compareBy(a, b, by); c != 0 {
+			if reverse {
+				return c > 0
+			}
+			return c < 0
+		}
+		return compareNames(a, b) < 0
+	})
+}
+
+// compareBy compares two files by the given sort key
+func compareBy(a, b FileInfo, by string) int {
+	switch by {
+	case "size":
+		return cmp.Compare(b.Size, a.Size)
+	case "modified":
+		return b.ModTime.Compare(a.ModTime)
+	case "type":
+		extA := strings.ToLower(filepath.Ext(a.Name))
+		extB := strings.ToLower(filepath.Ext(b.Name))
+		if c := strings.Compare(extA, extB); c != 0 {
+			return c
+		}
+		return compareNames(a, b)
+	default:
+		return compareNames(a, b)
+	}
+}
+
+// compareNames compares names ignoring case, so "apple" sorts next to
+// "Apple" instead of after "Zebra"; exact case breaks ties
+func compareNames(a, b FileInfo) int {
+	if c := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); c != 0 {
+		return c
+	}
+	return strings.Compare(a.Name, b.Name)
 }

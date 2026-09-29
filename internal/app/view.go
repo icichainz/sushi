@@ -326,6 +326,7 @@ func (m Model) renderHelpView() string {
 		{"B", "Add bookmark"},
 		{"1-9", "Quick jump to bookmark"},
 		{"p", "Toggle preview pane"},
+		{".", "Toggle hidden files"},
 		{"t", "New tab (current dir)"},
 		{"T", "New tab (home dir)"},
 		{"Tab", "Next tab"},
