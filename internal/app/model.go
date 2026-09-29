@@ -16,8 +16,9 @@ import (
 
 // Tab represents a single browsing session
 type Tab struct {
-	ID              int // Stable identity so async results reach the right tab
-	loadSeq         int // Incremented per directory load; stale results are dropped
+	ID              int    // Stable identity so async results reach the right tab
+	loadSeq         int    // Incremented per directory load; stale results are dropped
+	focusPath       string // File to put the cursor on after the next load
 	CurrentPath     string
 	Files           []fs.FileInfo
 	Cursor          int
@@ -51,7 +52,8 @@ type Model struct {
 	keys KeyMap
 
 	// Mode
-	mode Mode
+	mode   Mode
+	prompt prompt // Text input for ModeInput
 
 	// Status message
 	statusMsg string
@@ -124,7 +126,7 @@ type Mode int
 const (
 	ModeNormal Mode = iota
 	ModeSearch
-	ModeCommand
+	ModeInput
 	ModeHelp
 	ModeConfirm
 	ModeBookmarks
@@ -143,6 +145,9 @@ type KeyMap struct {
 	Home        key.Binding
 	End         key.Binding
 	Delete      key.Binding
+	Rename      key.Binding
+	NewFile     key.Binding
+	NewDir      key.Binding
 	Select      key.Binding
 	Invert      key.Binding
 	Unselect    key.Binding
@@ -209,6 +214,18 @@ func DefaultKeyMap() KeyMap {
 		Delete: key.NewBinding(
 			key.WithKeys("d"),
 			key.WithHelp("d", "delete"),
+		),
+		Rename: key.NewBinding(
+			key.WithKeys("r"),
+			key.WithHelp("r", "rename"),
+		),
+		NewFile: key.NewBinding(
+			key.WithKeys("n"),
+			key.WithHelp("n", "new file"),
+		),
+		NewDir: key.NewBinding(
+			key.WithKeys("N"),
+			key.WithHelp("N", "new directory"),
 		),
 		Select: key.NewBinding(
 			key.WithKeys(" "),

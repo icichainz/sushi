@@ -6,11 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/icichainz/sushi/internal/config"
+	"github.com/icichainz/sushi/internal/ui/components"
 )
 
 // newTestModel builds a sized model rooted at dir, with HOME redirected so
@@ -41,6 +43,8 @@ func press(t *testing.T, m Model, k string) (Model, tea.Cmd) {
 		msg = tea.KeyMsg{Type: tea.KeyBackspace}
 	case " ":
 		msg = tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
+	case "ctrl+u":
+		msg = tea.KeyMsg{Type: tea.KeyCtrlU}
 	default:
 		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 	}
@@ -639,5 +643,142 @@ func TestCutClearsMovedItemsFromClipboard(t *testing.T) {
 	m = run(t, m, cmd)
 	if len(m.clipboard) != 0 || m.clipboardMode != "" {
 		t.Fatalf("clipboard = %v (%s), want empty after the move", m.clipboard, m.clipboardMode)
+	}
+}
+
+// typeText types s into the model one character at a time
+func typeText(t *testing.T, m Model, s string) Model {
+	t.Helper()
+	for _, r := range s {
+		m, _ = press(t, m, string(r))
+	}
+	return m
+}
+
+// drain runs cmd and everything it leads to, feeding each result back into
+// the model. Commands that don't finish quickly, such as the timers that
+// clear status messages, are skipped.
+func drain(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	if cmd == nil {
+		return m
+	}
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	select {
+	case msg := <-done:
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, c := range batch {
+				m = drain(t, m, c)
+			}
+			return m
+		}
+		updated, next := m.Update(msg)
+		return drain(t, updated.(Model), next)
+	case <-time.After(200 * time.Millisecond):
+		return m
+	}
+}
+
+// submit presses Enter and applies everything that follows
+func submit(t *testing.T, m Model) Model {
+	t.Helper()
+	m, cmd := press(t, m, "enter")
+	return drain(t, m, cmd)
+}
+
+func TestRenameFile(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "draft.txt"), "")
+
+	m := newTestModel(t, dir, nil)
+	m.bookmarks.Add("draft", filepath.Join(dir, "draft.txt"))
+	m, _ = press(t, m, "c") // Clipboard should follow the rename
+	m, _ = press(t, m, "r")
+	if m.mode != ModeInput || m.prompt.input.Value() != "draft.txt" {
+		t.Fatalf("mode=%v value=%q", m.mode, m.prompt.input.Value())
+	}
+	// The cursor starts before the extension
+	m = typeText(t, m, "-v2")
+	m = submit(t, m)
+
+	renamed := filepath.Join(dir, "draft-v2.txt")
+	if _, err := os.Stat(renamed); err != nil {
+		t.Fatalf("rename failed: %v (status %q)", err, m.statusMsg)
+	}
+	if m.mode != ModeNormal || m.tab().Files[m.tab().Cursor].Path != renamed {
+		t.Fatal("prompt not closed or cursor not on the renamed file")
+	}
+	if m.clipboard[0] != renamed || m.bookmarks.Get(0).Path != renamed {
+		t.Fatalf("clipboard=%v bookmark=%s, want both retargeted", m.clipboard, m.bookmarks.Get(0).Path)
+	}
+}
+
+func TestRenameErrorKeepsPromptOpen(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a"), "")
+	writeTestFile(t, filepath.Join(dir, "b"), "")
+
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "r")
+	m, _ = press(t, m, "backspace")
+	m = typeText(t, m, "b")
+	m, _ = press(t, m, "enter")
+	if m.mode != ModeInput || !strings.Contains(m.prompt.err, "already exists") {
+		t.Fatalf("mode=%v err=%q", m.mode, m.prompt.err)
+	}
+	if !strings.Contains(m.renderMainView(), "already exists") {
+		t.Fatal("error not shown in the prompt bar")
+	}
+	m, _ = press(t, m, "esc")
+	if m.mode != ModeNormal {
+		t.Fatal("Esc did not close the prompt")
+	}
+}
+
+func TestRenamingDirectoryMovesTabsInsideIt(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "old", "sub"), 0755)
+
+	m := newTestModel(t, root, nil)
+	updated, _ := m.createTab(filepath.Join(root, "old", "sub"))
+	m = updated.(Model)
+	m, _ = press(t, m, "tab") // Back to tab 1, cursor on "old"
+	m, _ = press(t, m, "r")
+	m, _ = press(t, m, "ctrl+u")
+	m.prompt.input = components.NewTextInput("new")
+	m = submit(t, m)
+
+	if got := m.tabs[1].CurrentPath; got != filepath.Join(root, "new", "sub") {
+		t.Fatalf("tab 2 path = %s, want it moved with the rename", got)
+	}
+}
+
+func TestCreateFileAndDirectory(t *testing.T) {
+	dir := t.TempDir()
+	m := newTestModel(t, dir, nil)
+
+	m, _ = press(t, m, "n")
+	m = typeText(t, m, "notes.md")
+	m = submit(t, m)
+	if _, err := os.Stat(filepath.Join(dir, "notes.md")); err != nil {
+		t.Fatalf("file not created: %v", err)
+	}
+	if m.tab().Files[m.tab().Cursor].Name != "notes.md" {
+		t.Fatal("cursor not on the new file")
+	}
+
+	m, _ = press(t, m, "N")
+	m = typeText(t, m, "assets")
+	m = submit(t, m)
+	if info, err := os.Stat(filepath.Join(dir, "assets")); err != nil || !info.IsDir() {
+		t.Fatalf("directory not created: %v", err)
+	}
+
+	m, _ = press(t, m, "n")
+	m = typeText(t, m, "build/")
+	m = submit(t, m)
+	if info, err := os.Stat(filepath.Join(dir, "build")); err != nil || !info.IsDir() {
+		t.Fatal("trailing slash did not create a directory")
 	}
 }

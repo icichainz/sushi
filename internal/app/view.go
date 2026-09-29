@@ -64,10 +64,13 @@ func (m Model) renderMainView() string {
 		sections = append(sections, m.renderFileList(m.width))
 	}
 
-	// Search bar (if in search mode)
-	if m.mode == ModeSearch {
+	// Search bar or prompt replace the status bar while in use
+	switch m.mode {
+	case ModeSearch:
 		sections = append(sections, m.renderSearchBar())
-	} else {
+	case ModeInput:
+		sections = append(sections, m.renderPromptBar())
+	default:
 		// Status bar
 		sections = append(sections, m.renderStatusBar())
 	}
@@ -345,6 +348,9 @@ func (m Model) renderHelpView() string {
 		{"Tab", "Next tab"},
 		{"Shift+Tab", "Previous tab"},
 		{"Ctrl+w", "Close tab"},
+		{"r", "Rename"},
+		{"n", "New file (end with / for a directory)"},
+		{"N", "New directory"},
 		{"Space", "Select file and move down"},
 		{"*", "Invert selection"},
 		{"u", "Clear selection"},
@@ -549,6 +555,33 @@ func (m Model) renderSearchBar() string {
 	searchLine := prompt + query + cursor + matches
 
 	return searchStyle.Render(utils.Clip(searchLine, m.width-2))
+}
+
+// renderPromptBar renders the text prompt used to rename and create files
+func (m Model) renderPromptBar() string {
+	barStyle := lipgloss.NewStyle().
+		Background(m.theme.BarBg).
+		Foreground(m.theme.BarFg).
+		Padding(0, 1).
+		Width(m.width)
+
+	label := lipgloss.NewStyle().
+		Foreground(m.theme.Title).
+		Bold(true).
+		Render(m.prompt.label + " ")
+
+	errText := ""
+	if m.prompt.err != "" {
+		errText = "  " + lipgloss.NewStyle().Foreground(m.theme.Danger).Render(m.prompt.err)
+	}
+
+	// The input gets whatever room the label and error leave
+	room := max(m.width-2-lipgloss.Width(label)-lipgloss.Width(errText), 1)
+	input := m.prompt.input.View(room,
+		lipgloss.NewStyle().Foreground(m.theme.Highlight),
+		lipgloss.NewStyle().Reverse(true))
+
+	return barStyle.Render(utils.Clip(label+input+errText, m.width-2))
 }
 
 // Helper functions

@@ -44,7 +44,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// directory we came from when going up
 		samePath := msg.path == tab.CurrentPath
 		focus := ""
-		if samePath && len(tab.Files) > 0 {
+		if tab.focusPath != "" {
+			focus, tab.focusPath = tab.focusPath, ""
+		} else if samePath && len(tab.Files) > 0 {
 			focus = tab.Files[tab.Cursor].Path
 		} else if filepath.Dir(tab.CurrentPath) == msg.path {
 			focus = tab.CurrentPath
@@ -88,11 +90,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Any tab may be showing the source or destination, so reload them all
-		cmds := []tea.Cmd{m.setStatus(status)}
-		for i := range m.tabs {
-			cmds = append(cmds, m.loadDir(&m.tabs[i], m.tabs[i].CurrentPath))
-		}
-		return m, tea.Batch(cmds...)
+		cmd := tea.Batch(m.setStatus(status), m.reloadAll())
+		return m, cmd
 
 	case clearStatusMsg:
 		if msg.id == m.statusID {
@@ -172,6 +171,11 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleBookmarkMode(msg)
 	}
 
+	// Handle text prompts (rename, new file)
+	if m.mode == ModeInput {
+		return m.handleInputMode(msg)
+	}
+
 	tab := &m.tabs[m.activeTabIdx]
 
 	switch {
@@ -200,11 +204,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			status = "Hidden files shown"
 		}
 		// The setting is global, so refresh every tab
-		cmds := []tea.Cmd{m.setStatus(status)}
-		for i := range m.tabs {
-			cmds = append(cmds, m.loadDir(&m.tabs[i], m.tabs[i].CurrentPath))
-		}
-		return m, tea.Batch(cmds...)
+		cmd := tea.Batch(m.setStatus(status), m.reloadAll())
+		return m, cmd
 
 	case key.Matches(msg, m.keys.Up):
 		if tab.Cursor > 0 {
@@ -265,6 +266,15 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Delete):
 		return m.startDelete()
+
+	case key.Matches(msg, m.keys.Rename):
+		return m.startRename()
+
+	case key.Matches(msg, m.keys.NewFile):
+		return m.openPrompt(prompt{action: promptNewFile, label: "New file:"})
+
+	case key.Matches(msg, m.keys.NewDir):
+		return m.openPrompt(prompt{action: promptNewDir, label: "New directory:"})
 
 	case key.Matches(msg, m.keys.Select):
 		return m.toggleSelection()
