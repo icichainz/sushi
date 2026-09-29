@@ -18,6 +18,7 @@ go.work
 /sushi
 /bin/
 /dist/
+*.pkg
 
 # IDE
 .vscode/
@@ -29,6 +30,9 @@ go.work
 # OS
 .DS_Store
 Thumbs.db
+
+# Local notes
+.chatlinks
 
 # Dependencies
 /vendor/
