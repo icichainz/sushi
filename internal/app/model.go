@@ -21,7 +21,7 @@ type Tab struct {
 	CurrentPath     string
 	Files           []fs.FileInfo
 	Cursor          int
-	Selected        map[string]bool
+	Selected        map[string]bool // Paths marked for multi-file operations
 	Preview         components.PreviewContent
 	PreviewEnabled  bool
 	PreviewWidth    int
@@ -58,9 +58,10 @@ type Model struct {
 	statusID  int // Identifies the current message so older timers don't clear it
 
 	// File operations
-	clipboard     string // Path of file in clipboard
-	clipboardMode string // "copy" or "cut"
-	confirmAction string // "delete" or "paste"
+	clipboard     []string // Paths in the clipboard
+	clipboardMode string   // "copy" or "cut"
+	confirmAction string   // "delete" or "paste"
+	pending       []string // Paths to delete, or names a paste would overwrite
 
 	// Bookmarks
 	bookmarks      *config.BookmarkStore
@@ -142,6 +143,9 @@ type KeyMap struct {
 	Home        key.Binding
 	End         key.Binding
 	Delete      key.Binding
+	Select      key.Binding
+	Invert      key.Binding
+	Unselect    key.Binding
 	Copy        key.Binding
 	Cut         key.Binding
 	Paste       key.Binding
@@ -205,6 +209,18 @@ func DefaultKeyMap() KeyMap {
 		Delete: key.NewBinding(
 			key.WithKeys("d"),
 			key.WithHelp("d", "delete"),
+		),
+		Select: key.NewBinding(
+			key.WithKeys(" "),
+			key.WithHelp("space", "select"),
+		),
+		Invert: key.NewBinding(
+			key.WithKeys("*"),
+			key.WithHelp("*", "invert selection"),
+		),
+		Unselect: key.NewBinding(
+			key.WithKeys("u"),
+			key.WithHelp("u", "clear selection"),
 		),
 		Copy: key.NewBinding(
 			key.WithKeys("c"),

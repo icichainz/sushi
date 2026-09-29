@@ -81,10 +81,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		status := msg.message
 		if msg.err != nil {
 			status = fmt.Sprintf("Error: %v", msg.err)
-		} else if msg.operation == "cut" {
-			// Clear clipboard after successful cut operation
-			m.clipboard = ""
-			m.clipboardMode = ""
+		}
+		if msg.operation == "cut" {
+			// Whatever was moved has left the clipboard, even after a partial failure
+			m.pruneClipboard()
 		}
 
 		// Any tab may be showing the source or destination, so reload them all
@@ -264,54 +264,25 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case key.Matches(msg, m.keys.Delete):
-		if len(tab.Files) > 0 {
-			if !m.config.ConfirmDelete {
-				tab.Loading = true
-				cmd := m.executeDelete()
-				return m, cmd
-			}
-			m.confirmAction = "delete"
-			m.mode = ModeConfirm
-			return m, nil
-		}
+		return m.startDelete()
+
+	case key.Matches(msg, m.keys.Select):
+		return m.toggleSelection()
+
+	case key.Matches(msg, m.keys.Invert):
+		return m.invertSelection()
+
+	case key.Matches(msg, m.keys.Unselect):
+		return m.clearSelection()
 
 	case key.Matches(msg, m.keys.Copy):
-		if len(tab.Files) > 0 {
-			m.clipboard = tab.Files[tab.Cursor].Path
-			m.clipboardMode = "copy"
-			cmd := m.setStatus(fmt.Sprintf("Copied: %s", tab.Files[tab.Cursor].Name))
-			return m, cmd
-		}
+		return m.yank("copy")
 
 	case key.Matches(msg, m.keys.Cut):
-		if len(tab.Files) > 0 {
-			m.clipboard = tab.Files[tab.Cursor].Path
-			m.clipboardMode = "cut"
-			cmd := m.setStatus(fmt.Sprintf("Cut: %s", tab.Files[tab.Cursor].Name))
-			return m, cmd
-		}
+		return m.yank("cut")
 
 	case key.Matches(msg, m.keys.Paste):
-		if m.clipboard != "" {
-			destPath := filepath.Join(tab.CurrentPath, filepath.Base(m.clipboard))
-			// Refuse up front rather than offering to overwrite the source with itself
-			if err := fs.CheckTransfer(m.clipboard, destPath); err != nil {
-				cmd := m.setStatus(fmt.Sprintf("Can't paste: %v", err))
-				return m, cmd
-			}
-			// Check if destination exists
-			if fs.Exists(destPath) {
-				m.confirmAction = "paste"
-				m.mode = ModeConfirm
-				return m, nil
-			}
-			// No confirmation needed, paste directly
-			tab.Loading = true
-			cmd := m.executePaste()
-			return m, cmd
-		}
-		cmd := m.setStatus("Nothing in clipboard")
-		return m, cmd
+		return m.startPaste()
 
 	case key.Matches(msg, m.keys.Search):
 		m.mode = ModeSearch
@@ -590,7 +561,6 @@ func (m Model) handleConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y", "enter":
 		m.mode = ModeNormal
-		m.tabs[m.activeTabIdx].Loading = true
 
 		switch m.confirmAction {
 		case "delete":
@@ -603,65 +573,12 @@ func (m Model) handleConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "n", "N", "esc", "q":
 		m.mode = ModeNormal
+		m.pending = nil
 		cmd := m.setStatus("Cancelled")
 		return m, cmd
 	}
 
 	return m, nil
-}
-
-// executeDelete performs the delete operation
-func (m Model) executeDelete() tea.Cmd {
-	tab := m.tabs[m.activeTabIdx]
-	if tab.Cursor >= len(tab.Files) {
-		return nil
-	}
-	file := tab.Files[tab.Cursor]
-	return func() tea.Msg {
-		err := fs.DeletePath(file.Path)
-		if err != nil {
-			return fileOperationMsg{
-				operation: "delete",
-				err:       err,
-			}
-		}
-		return fileOperationMsg{
-			operation: "delete",
-			message:   fmt.Sprintf("Deleted: %s", file.Name),
-		}
-	}
-}
-
-// executePaste performs the copy or move operation
-func (m Model) executePaste() tea.Cmd {
-	tab := m.tabs[m.activeTabIdx]
-	src := m.clipboard
-	dst := filepath.Join(tab.CurrentPath, filepath.Base(src))
-	mode := m.clipboardMode
-
-	return func() tea.Msg {
-		var err error
-		var msg string
-
-		if mode == "cut" {
-			err = fs.MovePath(src, dst)
-			msg = fmt.Sprintf("Moved: %s", filepath.Base(src))
-		} else {
-			err = fs.CopyPath(src, dst)
-			msg = fmt.Sprintf("Copied: %s", filepath.Base(src))
-		}
-
-		if err != nil {
-			return fileOperationMsg{
-				operation: mode,
-				err:       err,
-			}
-		}
-		return fileOperationMsg{
-			operation: mode,
-			message:   msg,
-		}
-	}
 }
 
 // dirLoadedMsg is sent when a directory has been loaded

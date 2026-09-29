@@ -181,13 +181,20 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, isMatch bool, wid
 	icon := ui.GetFileIcon(file)
 
 	// Check if this file is in clipboard (cut mode shows strikethrough effect)
-	isCutFile := m.clipboardMode == "cut" && m.clipboard == file.Path
+	isCutFile := m.clipboardMode == "cut" && m.inClipboard(file.Path)
+	isSelected := m.tabs[m.activeTabIdx].Selected[file.Path]
+
+	// A marker column shows selection without relying on color alone
+	marker := " "
+	if isSelected {
+		marker = "*"
+	}
 
 	// Measure in terminal cells, not bytes, so accented and wide names
 	// are neither split mid-character nor misaligned
 	const metaWidth = 24 // "%10s" size + "  Jan 02 15:04"
 	inner := width - 2   // File list padding
-	nameWidth := max(inner-lipgloss.Width(icon)-2-metaWidth, 10)
+	nameWidth := max(inner-1-lipgloss.Width(icon)-2-metaWidth, 10)
 	name := utils.Truncate(file.Name, nameWidth)
 	name += strings.Repeat(" ", max(nameWidth-lipgloss.Width(name), 0))
 
@@ -195,7 +202,7 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, isMatch bool, wid
 	modTime := file.ModTime.Format("Jan 02 15:04")
 
 	// Narrow panes lose the size and date columns first
-	line := utils.Clip(fmt.Sprintf("%s  %s%10s  %s", icon, name, size, modTime), inner)
+	line := utils.Clip(fmt.Sprintf("%s%s  %s%10s  %s", marker, icon, name, size, modTime), inner)
 
 	// Apply styling
 	style := m.styles.File
@@ -204,6 +211,9 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, isMatch bool, wid
 	}
 	if file.IsDir {
 		style = style.Foreground(m.theme.Directory)
+	}
+	if isSelected && !isCursor {
+		style = style.Foreground(m.theme.Selected).Bold(true)
 	}
 
 	// Dim non-matching files in search mode
@@ -259,6 +269,9 @@ func (m Model) renderStatusBar() string {
 
 	// Left side: file count and size (using cached TotalSize)
 	leftInfo := fmt.Sprintf(" %d files | %s", len(tab.Files), utils.HumanizeSize(tab.TotalSize))
+	if len(tab.Selected) > 0 {
+		leftInfo += fmt.Sprintf(" | %d selected", len(tab.Selected))
+	}
 
 	// Center: status message
 	centerInfo := ""
@@ -332,6 +345,9 @@ func (m Model) renderHelpView() string {
 		{"Tab", "Next tab"},
 		{"Shift+Tab", "Previous tab"},
 		{"Ctrl+w", "Close tab"},
+		{"Space", "Select file and move down"},
+		{"*", "Invert selection"},
+		{"u", "Clear selection"},
 		{"d", "Delete file/directory"},
 		{"c", "Copy to clipboard"},
 		{"x", "Cut to clipboard"},
@@ -400,24 +416,13 @@ func (m Model) renderConfirmDialog() string {
 
 	var title, message string
 
-	tab := m.tabs[m.activeTabIdx]
 	switch m.confirmAction {
 	case "delete":
 		title = "Confirm Delete"
-		if len(tab.Files) > 0 {
-			file := tab.Files[tab.Cursor]
-			switch {
-			case file.IsSymlink:
-				message = fmt.Sprintf("Delete symlink '%s'? Its target is not touched.", file.Name)
-			case file.IsDir:
-				message = fmt.Sprintf("Delete directory '%s' and all its contents?", file.Name)
-			default:
-				message = fmt.Sprintf("Delete file '%s'?", file.Name)
-			}
-		}
+		message = m.deleteMessage()
 	case "paste":
 		title = "Confirm Overwrite"
-		message = fmt.Sprintf("'%s' already exists. Overwrite?", filepath.Base(m.clipboard))
+		message = m.pasteMessage()
 	}
 
 	var lines []string

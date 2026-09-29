@@ -486,3 +486,158 @@ func TestConfigProblemsShownAtStartup(t *testing.T) {
 		t.Fatal("Init should schedule clearing the startup warning")
 	}
 }
+
+// run executes cmd and feeds its message back, returning the updated model
+func run(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected a command")
+	}
+	updated, _ := m.Update(cmd())
+	return updated.(Model)
+}
+
+func TestSelectCopyPasteMultipleFiles(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		writeTestFile(t, filepath.Join(src, name), name)
+	}
+
+	m := newTestModel(t, src, nil)
+	m, _ = press(t, m, " ") // a, cursor moves to b
+	m, _ = press(t, m, "j") // skip b
+	m, _ = press(t, m, " ") // c
+	if len(m.tab().Selected) != 2 {
+		t.Fatalf("selected %d files, want 2", len(m.tab().Selected))
+	}
+	if line := m.renderFileLine(m.tab().Files[0], false, true, 80); !strings.Contains(line, "*") {
+		t.Fatalf("selected file has no marker: %q", line)
+	}
+	if !strings.Contains(m.renderStatusBar(), "2 selected") {
+		t.Fatalf("status bar = %q", m.renderStatusBar())
+	}
+
+	m, _ = press(t, m, "c")
+	if len(m.clipboard) != 2 || len(m.tab().Selected) != 0 {
+		t.Fatalf("clipboard=%v selected=%d, want 2 items and a cleared selection", m.clipboard, len(m.tab().Selected))
+	}
+
+	m.tab().CurrentPath = dst
+	m, cmd := press(t, m, "v")
+	run(t, m, cmd)
+	for _, name := range []string{"a.txt", "c.txt"} {
+		if b, err := os.ReadFile(filepath.Join(dst, name)); err != nil || string(b) != name {
+			t.Fatalf("%s not copied: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dst, "b.txt")); err == nil {
+		t.Fatal("unselected b.txt was copied")
+	}
+}
+
+func TestInvertAndClearSelection(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a", "b", "c"} {
+		writeTestFile(t, filepath.Join(dir, name), "")
+	}
+
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, " ")
+	m, _ = press(t, m, "*")
+	if got := len(m.tab().Selected); got != 2 || m.tab().Selected[m.tab().Files[0].Path] {
+		t.Fatalf("after invert: %d selected, want b and c", got)
+	}
+	m, _ = press(t, m, "u")
+	if len(m.tab().Selected) != 0 {
+		t.Fatal("u did not clear the selection")
+	}
+}
+
+func TestDeleteSelection(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"keep", "x1", "x2"} {
+		writeTestFile(t, filepath.Join(dir, name), "")
+	}
+
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "j")
+	m, _ = press(t, m, " ")
+	m, _ = press(t, m, " ")
+	m, _ = press(t, m, "d")
+	if m.mode != ModeConfirm || !strings.Contains(m.renderConfirmDialog(), "Delete 2 items?") {
+		t.Fatalf("mode=%v dialog:\n%s", m.mode, m.renderConfirmDialog())
+	}
+	m, cmd := press(t, m, "y")
+	run(t, m, cmd)
+
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 || entries[0].Name() != "keep" {
+		t.Fatalf("left %v, want only keep", entries)
+	}
+}
+
+func TestPasteAsksOnceForAllConflicts(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	for _, name := range []string{"a", "b"} {
+		writeTestFile(t, filepath.Join(src, name), "new")
+		writeTestFile(t, filepath.Join(dst, name), "old")
+	}
+
+	m := newTestModel(t, src, nil)
+	m, _ = press(t, m, "*")
+	m, _ = press(t, m, "c")
+	m.tab().CurrentPath = dst
+	m, _ = press(t, m, "v")
+	if m.mode != ModeConfirm || !strings.Contains(m.renderConfirmDialog(), "2 items already exist") {
+		t.Fatalf("dialog:\n%s", m.renderConfirmDialog())
+	}
+	m, cmd := press(t, m, "y")
+	run(t, m, cmd)
+	if b, _ := os.ReadFile(filepath.Join(dst, "b")); string(b) != "new" {
+		t.Fatalf("b = %q, want overwritten", b)
+	}
+}
+
+func TestPasteRefusesDuplicateNames(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"one", "two", "dest"} {
+		os.Mkdir(filepath.Join(root, d), 0755)
+	}
+	writeTestFile(t, filepath.Join(root, "one", "same.txt"), "1")
+	writeTestFile(t, filepath.Join(root, "two", "same.txt"), "2")
+
+	m := newTestModel(t, root, nil)
+	m.clipboard = []string{filepath.Join(root, "one", "same.txt"), filepath.Join(root, "two", "same.txt")}
+	m.clipboardMode = "copy"
+	m.tab().CurrentPath = filepath.Join(root, "dest")
+	m, _ = press(t, m, "v")
+	if !strings.Contains(m.statusMsg, "same name") {
+		t.Fatalf("statusMsg = %q, want a same-name refusal", m.statusMsg)
+	}
+}
+
+func TestBatchResultReportsPartialFailure(t *testing.T) {
+	msg := batchResult("delete", "Deleted", []string{"/a", "/b", "/c"}, func(p string) error {
+		if p == "/b" {
+			return os.ErrPermission
+		}
+		return nil
+	})
+	if msg.err == nil || !strings.Contains(msg.err.Error(), "Deleted 2 of 3 items") || !strings.Contains(msg.err.Error(), "b:") {
+		t.Fatalf("err = %v", msg.err)
+	}
+}
+
+func TestCutClearsMovedItemsFromClipboard(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	writeTestFile(t, filepath.Join(src, "a"), "")
+
+	m := newTestModel(t, src, nil)
+	m, _ = press(t, m, "x")
+	m.tab().CurrentPath = dst
+	m, cmd := press(t, m, "v")
+	m = run(t, m, cmd)
+	if len(m.clipboard) != 0 || m.clipboardMode != "" {
+		t.Fatalf("clipboard = %v (%s), want empty after the move", m.clipboard, m.clipboardMode)
+	}
+}
