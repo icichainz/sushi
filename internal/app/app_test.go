@@ -372,3 +372,24 @@ func TestSearchMatchesAccentsExactly(t *testing.T) {
 		t.Fatalf("results = %v, want only élève.txt", m.tab().SearchResults)
 	}
 }
+
+func TestEnterSymlinkedDirectory(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	os.Mkdir(target, 0755)
+	writeTestFile(t, filepath.Join(target, "inside.txt"), "x")
+	sub := filepath.Join(root, "browse")
+	os.Mkdir(sub, 0755)
+	os.Symlink(target, filepath.Join(sub, "link"))
+
+	m := newTestModel(t, sub, nil)
+	m, cmd := press(t, m, "l")
+	if cmd == nil {
+		t.Fatal("entering a symlinked directory did nothing")
+	}
+	updated, _ := m.Update(cmd())
+	m = updated.(Model)
+	if len(m.tab().Files) != 1 || m.tab().Files[0].Name != "inside.txt" {
+		t.Fatalf("files = %v, want inside.txt", m.tab().Files)
+	}
+}

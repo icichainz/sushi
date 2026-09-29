@@ -23,6 +23,16 @@ func ScanDirectory(path string) ([]FileInfo, error) {
 
 		fullPath := filepath.Join(path, entry.Name())
 		fileInfo := NewFileInfo(fullPath, info)
+
+		// Report what a symlink points to, so links to directories can be
+		// entered and previews see the real file size. Dangling links stay
+		// as plain entries.
+		if fileInfo.IsSymlink {
+			if target, err := os.Stat(fullPath); err == nil {
+				fileInfo.IsDir = target.IsDir()
+				fileInfo.Size = target.Size()
+			}
+		}
 		files = append(files, fileInfo)
 	}
 

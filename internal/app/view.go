@@ -405,9 +405,12 @@ func (m Model) renderConfirmDialog() string {
 		title = "Confirm Delete"
 		if len(tab.Files) > 0 {
 			file := tab.Files[tab.Cursor]
-			if file.IsDir {
+			switch {
+			case file.IsSymlink:
+				message = fmt.Sprintf("Delete symlink '%s'? Its target is not touched.", file.Name)
+			case file.IsDir:
 				message = fmt.Sprintf("Delete directory '%s' and all its contents?", file.Name)
-			} else {
+			default:
 				message = fmt.Sprintf("Delete file '%s'?", file.Name)
 			}
 		}
