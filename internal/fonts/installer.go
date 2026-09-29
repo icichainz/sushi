@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -102,32 +103,61 @@ func InstallFont(font NerdFont, progressFn func(status string)) error {
 	progressFn("Extracting fonts...")
 
 	// Extract font files
-	count, err := extractFonts(tmpFile.Name(), fontDir)
+	paths, added, err := extractFonts(tmpFile.Name(), fontDir)
 	if err != nil {
 		return fmt.Errorf("failed to extract fonts: %w", err)
 	}
 
-	progressFn(fmt.Sprintf("Installed %d font files to %s", count, fontDir))
+	progressFn(fmt.Sprintf("Installed %d font files to %s (%d already present)", added, fontDir, len(paths)-added))
 
 	// Platform-specific post-install
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		progressFn("Refreshing font cache...")
-		// On Linux, we should refresh the font cache
-		// User can run: fc-cache -fv
+		if out, err := exec.Command("fc-cache", "-f", fontDir).CombinedOutput(); err != nil {
+			progressFn(fmt.Sprintf("Could not refresh the font cache (%v %s); run: fc-cache -f", err, strings.TrimSpace(string(out))))
+		}
+	case "windows":
+		progressFn("Registering fonts...")
+		if err := registerWindowsFonts(paths); err != nil {
+			return fmt.Errorf("fonts were copied but not registered: %w", err)
+		}
 	}
 
 	return nil
 }
 
-// extractFonts extracts .ttf and .otf files from a zip archive
-func extractFonts(zipPath, destDir string) (int, error) {
+// registerWindowsFonts adds per-user registry entries for the fonts.
+// Windows ignores fonts copied into the per-user font folder without them.
+func registerWindowsFonts(paths []string) error {
+	const key = `HKCU\Software\Microsoft\Windows NT\CurrentVersion\Fonts`
+	for _, path := range paths {
+		kind := " (TrueType)"
+		if strings.EqualFold(filepath.Ext(path), ".otf") {
+			kind = " (OpenType)"
+		}
+		name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)) + kind
+
+		out, err := exec.Command("reg", "add", key, "/v", name, "/t", "REG_SZ", "/d", path, "/f").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("reg add %s: %v: %s", name, err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
+// extractFonts extracts .ttf and .otf files from a zip archive. It returns
+// the paths of every font from the archive now in destDir, including ones
+// already there, and how many were newly added.
+func extractFonts(zipPath, destDir string) ([]string, int, error) {
 	reader, err := zip.OpenReader(zipPath)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 	defer reader.Close()
 
-	count := 0
+	var paths []string
+	added := 0
 	for _, file := range reader.File {
 		// Only extract font files (skip Windows Compatible versions to reduce clutter)
 		name := strings.ToLower(file.Name)
@@ -146,20 +176,21 @@ func extractFonts(zipPath, destDir string) (int, error) {
 		// Check if file already exists
 		if _, err := os.Stat(destPath); err == nil {
 			// File exists, skip
+			paths = append(paths, destPath)
 			continue
 		}
 
 		// Open file in zip
 		rc, err := file.Open()
 		if err != nil {
-			return count, err
+			return paths, added, err
 		}
 
 		// Create destination file
 		destFile, err := os.Create(destPath)
 		if err != nil {
 			rc.Close()
-			return count, err
+			return paths, added, err
 		}
 
 		// Copy content
@@ -168,13 +199,14 @@ func extractFonts(zipPath, destDir string) (int, error) {
 		destFile.Close()
 
 		if err != nil {
-			return count, err
+			return paths, added, err
 		}
 
-		count++
+		paths = append(paths, destPath)
+		added++
 	}
 
-	return count, nil
+	return paths, added, nil
 }
 
 // ListInstalledNerdFonts checks which Nerd Fonts are already installed
@@ -219,6 +251,16 @@ func ListInstalledNerdFonts() ([]string, error) {
 	}
 
 	return installed, nil
+}
+
+// FindFont looks up an available font by name, ignoring case
+func FindFont(name string) (NerdFont, bool) {
+	for _, font := range AvailableFonts {
+		if strings.EqualFold(font.Name, name) {
+			return font, true
+		}
+	}
+	return NerdFont{}, false
 }
 
 // GetDefaultFont returns the recommended font to install

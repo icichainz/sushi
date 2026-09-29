@@ -16,7 +16,8 @@ func main() {
 	// Parse command line flags
 	asciiMode := flag.Bool("ascii", false, "Use ASCII icons (no icon font required)")
 	bootstrapMode := flag.Bool("bootstrap", false, "Use Bootstrap Icons font")
-	installFont := flag.Bool("install-font", false, "Download and install JetBrainsMono Nerd Font")
+	installFont := flag.Bool("install-font", false, "Download and install a Nerd Font (JetBrainsMono unless --font is given)")
+	fontName := flag.String("font", "", "Nerd Font to install with --install-font (see --list-fonts)")
 	listFonts := flag.Bool("list-fonts", false, "List available Nerd Fonts to install")
 	initConfig := flag.Bool("init-config", false, "Create default configuration file")
 	showHelp := flag.Bool("help", false, "Show help message")
@@ -33,6 +34,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  --ascii: ASCII text icons (works everywhere)\n")
 		fmt.Fprintf(os.Stderr, "\nFont Installation:\n")
 		fmt.Fprintf(os.Stderr, "  --install-font: Download and install JetBrainsMono Nerd Font\n")
+		fmt.Fprintf(os.Stderr, "  --install-font --font FiraCode: Install a different font from --list-fonts\n")
 		fmt.Fprintf(os.Stderr, "  --list-fonts: Show available Nerd Fonts\n")
 		fmt.Fprintf(os.Stderr, "\nConfiguration:\n")
 		fmt.Fprintf(os.Stderr, "  --init-config: Create default config file at ~/.config/sushi/config.yaml\n")
@@ -60,7 +62,7 @@ func main() {
 			fmt.Printf("  - %s (v%s)\n", font.Name, font.Version)
 		}
 		fmt.Println()
-		fmt.Println("Install with: sushi --install-font")
+		fmt.Println("Install with: sushi --install-font [--font NAME]")
 		fmt.Println()
 
 		// Check for installed fonts
@@ -77,6 +79,14 @@ func main() {
 	// Handle font installation
 	if *installFont {
 		font := fonts.GetDefaultFont()
+		if *fontName != "" {
+			found, ok := fonts.FindFont(*fontName)
+			if !ok {
+				fmt.Printf("Unknown font %q. Run 'sushi --list-fonts' to see the choices.\n", *fontName)
+				os.Exit(1)
+			}
+			font = found
+		}
 		fmt.Printf("Installing %s Nerd Font...\n\n", font.Name)
 
 		err := fonts.InstallFont(font, func(status string) {
@@ -93,7 +103,7 @@ func main() {
 		fmt.Println()
 		fmt.Println("Next steps:")
 		fmt.Println("  1. Open your terminal preferences/settings")
-		fmt.Println("  2. Change the font to 'JetBrainsMono Nerd Font'")
+		fmt.Printf("  2. Change the font to '%s Nerd Font'\n", font.Name)
 		fmt.Println("  3. Restart your terminal")
 		fmt.Println("  4. Run 'sushi' to enjoy file icons!")
 		os.Exit(0)
