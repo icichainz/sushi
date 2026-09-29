@@ -7,10 +7,13 @@ A fast and elegant terminal-based file explorer written in Go.
 - 🚀 Fast, asynchronous navigation with Vim-style keybindings
 - 🗂️ Multiple tabs
 - 👁️ Preview pane with syntax highlighting, directory listings and binary file details
+- 📝 Open files in your editor or their default app
 - 🔍 Fuzzy search within the current directory
-- 📋 Copy, cut, paste and delete, with safeguards against overwriting a file with itself
+- ✅ Multi-file selection
+- 📋 Copy, cut, paste, delete, rename and create, with safeguards against overwriting a file with itself
 - 🔖 Bookmarks with quick-jump keys
-- 🎨 Nerd Font, Bootstrap Icons or plain ASCII icons
+- 🧩 Plugins: run your own commands and scripts on the selection
+- 🎨 Color themes, plus Nerd Font, Bootstrap Icons or plain ASCII icons
 - ⚙️ YAML configuration for hidden files, sorting, preview layout and more
 
 ## Installation
@@ -94,6 +97,10 @@ preview_width: 50
 # Ask before deleting files
 confirm_delete: true
 
+# How Enter opens files: "auto" (text files in $EDITOR, others in their
+# default app), "editor", or "system"
+opener: auto
+
 # Sort by "name", "size" (largest first), "modified" (newest first),
 # or "type" (file extension). Directories are always listed first.
 sort_by: name
@@ -101,9 +108,26 @@ sort_by: name
 # Reverse the sort order
 sort_reverse: false
 
-# Reserved for future use; has no effect yet
+# Color theme: "default", "dark" (Dracula-inspired) or "light"
 theme: default
+
+# Override individual theme colors with ANSI numbers or hex values
+colors:
+  directory: "33"
+  accent: "#7d56f4"
+
+# Syntax highlighting style for the preview (any Chroma style, e.g.
+# "monokai", "dracula", "github", "nord"); empty follows the theme
+syntax_theme: ""
+
+# Commands to run on the selection; see docs/plugins.md
+plugins:
+  - name: git-log
+    key: ctrl+l
+    command: git log --oneline -20
 ```
+
+Color names for `colors`: `header_fg`, `header_bg`, `text`, `muted`, `directory`, `cursor_fg`, `cursor_bg`, `bar_fg`, `bar_bg`, `tab_bar_bg`, `tab_active_fg`, `tab_inactive_fg`, `tab_inactive_bg`, `accent`, `border`, `title`, `highlight`, `danger`, `selected`. Unknown names and invalid values are reported in the status bar when sushi starts.
 
 Command line flags (like `--ascii`) override config file settings.
 
@@ -120,16 +144,26 @@ Command line flags (like `--ascii`) override config file settings.
 | `g`/`Home` | Go to first file |
 | `G`/`End` | Go to last file |
 | `←`/`h`, `Backspace` | Go to parent directory |
-| `→`/`l`, `Enter` | Enter directory |
+| `→`/`l`, `Enter` | Enter a directory, or open a file (see `opener`) |
 
 ### Files
 
+Copy, cut, delete, edit and open act on the selection when there is one, and on the file under the cursor otherwise.
+
 | Key | Action |
 |-----|--------|
+| `Space` | Select file and move down |
+| `*` | Invert selection |
+| `u` | Clear selection |
 | `c` | Copy to clipboard |
 | `x` | Cut to clipboard |
 | `v` | Paste into current directory |
 | `d` | Delete (asks first unless `confirm_delete: false`) |
+| `r` | Rename |
+| `n` | New file (a name ending in `/` makes a directory; `src/main.go` creates `src/` too) |
+| `N` | New directory |
+| `e` | Edit in `$VISUAL` / `$EDITOR` |
+| `o` | Open with the default app |
 
 ### View, Search and Bookmarks
 
@@ -141,6 +175,15 @@ Command line flags (like `--ascii`) override config file settings.
 | `b` | Open bookmarks (`j`/`k` to move, `Enter` to go, `d` to delete, `Esc` to close) |
 | `B` | Bookmark current directory |
 | `1`-`9` | Jump to bookmark |
+
+### Plugins
+
+| Key | Action |
+|-----|--------|
+| `P` | Plugin menu |
+| `!` | Run a shell command on the selection |
+
+Plugins can also have their own keys. See [docs/plugins.md](docs/plugins.md).
 
 ### Tabs
 
@@ -155,7 +198,7 @@ Command line flags (like `--ascii`) override config file settings.
 
 | Key | Action |
 |-----|--------|
-| `?` | Show help |
+| `?` | Show help (`j`/`k` scroll it on small terminals) |
 | `q`/`Ctrl+c` | Quit |
 
 ## Requirements
@@ -211,8 +254,12 @@ sushi/
 │   ├── config/      # Configuration and bookmarks
 │   ├── fonts/       # Nerd Font installer
 │   ├── fs/          # File system scanning and operations
-│   ├── ui/          # Icons, styles and the preview component
+│   ├── opener/      # Editor and default-app commands
+│   ├── plugins/     # Plugin loading and running
+│   ├── ui/          # Icons, themes, styles and UI components
 │   └── utils/       # Formatting helpers
+├── docs/            # Plugin guide
+├── examples/plugins # Example plugin scripts
 └── main.go          # Entry point and command line flags
 ```
 
@@ -228,11 +275,11 @@ sushi/
 - [x] Bookmarks
 - [x] Multiple tabs
 - [x] Configuration file support
-- [ ] Open files in an editor or the system default app
-- [ ] Rename, and create files and directories
-- [ ] Multi-file selection
-- [ ] Color themes
-- [ ] Plugin system
+- [x] Open files in an editor or the system default app
+- [x] Rename, and create files and directories
+- [x] Multi-file selection
+- [x] Color themes
+- [x] Plugin system
 
 ## Contributing
 
