@@ -218,6 +218,11 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Paste):
 		if m.clipboard != "" {
 			destPath := filepath.Join(tab.CurrentPath, filepath.Base(m.clipboard))
+			// Refuse up front rather than offering to overwrite the source with itself
+			if err := fs.CheckTransfer(m.clipboard, destPath); err != nil {
+				m.statusMsg = fmt.Sprintf("Can't paste: %v", err)
+				return m, clearStatusAfter(3 * time.Second)
+			}
 			// Check if destination exists
 			if fs.Exists(destPath) {
 				m.confirmAction = "paste"
