@@ -377,6 +377,16 @@ func (m Model) closeTab() (tea.Model, tea.Cmd) {
 
 // handleBookmarkMode handles key presses in bookmark mode
 func (m Model) handleBookmarkMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Same movement keys as the file list, so j/k work as well as arrows
+	if key.Matches(msg, m.keys.Up) {
+		m.bookmarkCursor = max(m.bookmarkCursor-1, 0)
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Down) {
+		m.bookmarkCursor = min(m.bookmarkCursor+1, max(m.bookmarks.Len()-1, 0))
+		return m, nil
+	}
+
 	switch msg.Type {
 	case tea.KeyEsc:
 		m.mode = ModeNormal
@@ -387,18 +397,6 @@ func (m Model) handleBookmarkMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if bm := m.bookmarks.Get(m.bookmarkCursor); bm != nil {
 			m.mode = ModeNormal
 			return m, m.loadDir(m.tab(), bm.Path)
-		}
-		return m, nil
-
-	case tea.KeyUp:
-		if m.bookmarkCursor > 0 {
-			m.bookmarkCursor--
-		}
-		return m, nil
-
-	case tea.KeyDown:
-		if m.bookmarkCursor < m.bookmarks.Len()-1 {
-			m.bookmarkCursor++
 		}
 		return m, nil
 

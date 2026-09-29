@@ -490,7 +490,7 @@ func (m Model) renderBookmarksView() string {
 			}
 		}
 		lines = append(lines, "")
-		lines = append(lines, hintStyle.Render("Enter=Go  d=Delete  Esc=Close"))
+		lines = append(lines, hintStyle.Render("j/k=Move  Enter=Go  d=Delete  Esc=Close"))
 	}
 
 	content := strings.Join(lines, "\n")

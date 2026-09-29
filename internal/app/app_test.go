@@ -439,3 +439,17 @@ func TestConfirmDeleteSetting(t *testing.T) {
 		}
 	}
 }
+
+func TestBookmarksMoveWithJK(t *testing.T) {
+	m := newTestModel(t, t.TempDir(), nil)
+	for _, p := range []string{"/a", "/b", "/c"} {
+		m.bookmarks.Add(filepath.Base(p), p)
+	}
+	m, _ = press(t, m, "b")
+	for _, k := range []string{"j", "j", "j", "k"} {
+		m, _ = press(t, m, k)
+	}
+	if m.bookmarkCursor != 1 {
+		t.Fatalf("bookmarkCursor = %d, want 1 (j j j clamps at 2, then k)", m.bookmarkCursor)
+	}
+}
