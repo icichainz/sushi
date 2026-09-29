@@ -36,7 +36,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		tab.Loading = false
 		if msg.err != nil {
 			// Keep showing the previous directory rather than an empty one
-			return m, m.setStatus(fmt.Sprintf("Error: %v", msg.err))
+			cmd := m.setStatus(fmt.Sprintf("Error: %v", msg.err))
+			return m, cmd
 		}
 
 		// Keep the cursor on the same file when reloading, and on the
@@ -103,7 +104,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// setStatus shows a status message and schedules it to clear
+// setStatus shows a status message and schedules it to clear. It changes m,
+// so call it before "return m, ...": Go doesn't specify whether m is read
+// before or after other calls in the same return statement.
 func (m *Model) setStatus(msg string) tea.Cmd {
 	return m.setStatusFor(msg, statusDuration)
 }
@@ -182,11 +185,13 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Preview):
 		tab.PreviewEnabled = !tab.PreviewEnabled
 		if !tab.PreviewEnabled {
-			return m, m.setStatus("Preview off")
+			cmd := m.setStatus("Preview off")
+			return m, cmd
 		}
 		// Previews aren't loaded while hidden, so fetch the current file's now
 		tab.Preview = components.PreviewContent{}
-		return m, tea.Batch(m.previewCmd(tab), m.setStatus("Preview on"))
+		cmd := tea.Batch(m.previewCmd(tab), m.setStatus("Preview on"))
+		return m, cmd
 
 	case key.Matches(msg, m.keys.Hidden):
 		m.showHidden = !m.showHidden
@@ -255,13 +260,15 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if parentPath != tab.CurrentPath {
 			return m, m.loadDir(tab, parentPath)
 		}
-		return m, m.setStatus("Already at root directory")
+		cmd := m.setStatus("Already at root directory")
+		return m, cmd
 
 	case key.Matches(msg, m.keys.Delete):
 		if len(tab.Files) > 0 {
 			if !m.config.ConfirmDelete {
 				tab.Loading = true
-				return m, m.executeDelete()
+				cmd := m.executeDelete()
+				return m, cmd
 			}
 			m.confirmAction = "delete"
 			m.mode = ModeConfirm
@@ -272,14 +279,16 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(tab.Files) > 0 {
 			m.clipboard = tab.Files[tab.Cursor].Path
 			m.clipboardMode = "copy"
-			return m, m.setStatus(fmt.Sprintf("Copied: %s", tab.Files[tab.Cursor].Name))
+			cmd := m.setStatus(fmt.Sprintf("Copied: %s", tab.Files[tab.Cursor].Name))
+			return m, cmd
 		}
 
 	case key.Matches(msg, m.keys.Cut):
 		if len(tab.Files) > 0 {
 			m.clipboard = tab.Files[tab.Cursor].Path
 			m.clipboardMode = "cut"
-			return m, m.setStatus(fmt.Sprintf("Cut: %s", tab.Files[tab.Cursor].Name))
+			cmd := m.setStatus(fmt.Sprintf("Cut: %s", tab.Files[tab.Cursor].Name))
+			return m, cmd
 		}
 
 	case key.Matches(msg, m.keys.Paste):
@@ -287,7 +296,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			destPath := filepath.Join(tab.CurrentPath, filepath.Base(m.clipboard))
 			// Refuse up front rather than offering to overwrite the source with itself
 			if err := fs.CheckTransfer(m.clipboard, destPath); err != nil {
-				return m, m.setStatus(fmt.Sprintf("Can't paste: %v", err))
+				cmd := m.setStatus(fmt.Sprintf("Can't paste: %v", err))
+				return m, cmd
 			}
 			// Check if destination exists
 			if fs.Exists(destPath) {
@@ -297,9 +307,11 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			// No confirmation needed, paste directly
 			tab.Loading = true
-			return m, m.executePaste()
+			cmd := m.executePaste()
+			return m, cmd
 		}
-		return m, m.setStatus("Nothing in clipboard")
+		cmd := m.setStatus("Nothing in clipboard")
+		return m, cmd
 
 	case key.Matches(msg, m.keys.Search):
 		m.mode = ModeSearch
@@ -319,9 +331,11 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			name = "Root"
 		}
 		if err := m.bookmarks.Add(name, tab.CurrentPath); err != nil {
-			return m, m.setStatus(fmt.Sprintf("Error: %v", err))
+			cmd := m.setStatus(fmt.Sprintf("Error: %v", err))
+			return m, cmd
 		}
-		return m, m.setStatus(fmt.Sprintf("Bookmarked: %s", tab.CurrentPath))
+		cmd := m.setStatus(fmt.Sprintf("Bookmarked: %s", tab.CurrentPath))
+		return m, cmd
 
 	// Tab management
 	case key.Matches(msg, m.keys.NewTab):
@@ -337,14 +351,16 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.NextTab):
 		if len(m.tabs) > 1 {
 			m.activeTabIdx = (m.activeTabIdx + 1) % len(m.tabs)
-			return m, m.setStatus(fmt.Sprintf("Tab %d/%d", m.activeTabIdx+1, len(m.tabs)))
+			cmd := m.setStatus(fmt.Sprintf("Tab %d/%d", m.activeTabIdx+1, len(m.tabs)))
+			return m, cmd
 		}
 		return m, nil
 
 	case key.Matches(msg, m.keys.PrevTab):
 		if len(m.tabs) > 1 {
 			m.activeTabIdx = (m.activeTabIdx - 1 + len(m.tabs)) % len(m.tabs)
-			return m, m.setStatus(fmt.Sprintf("Tab %d/%d", m.activeTabIdx+1, len(m.tabs)))
+			cmd := m.setStatus(fmt.Sprintf("Tab %d/%d", m.activeTabIdx+1, len(m.tabs)))
+			return m, cmd
 		}
 		return m, nil
 
@@ -371,7 +387,8 @@ func (m Model) createTab(path string) (tea.Model, tea.Cmd) {
 	m.tabs = append(m.tabs, m.newTab(path))
 	m.activeTabIdx = len(m.tabs) - 1
 	loadCmd := m.loadDir(m.tab(), path)
-	return m, tea.Batch(loadCmd, m.setStatus(fmt.Sprintf("New tab %d", len(m.tabs))))
+	cmd := tea.Batch(loadCmd, m.setStatus(fmt.Sprintf("New tab %d", len(m.tabs))))
+	return m, cmd
 }
 
 // closeTab closes the current tab
@@ -389,7 +406,8 @@ func (m Model) closeTab() (tea.Model, tea.Cmd) {
 		m.activeTabIdx = len(m.tabs) - 1
 	}
 
-	return m, m.setStatus(fmt.Sprintf("Tab closed. %d remaining", len(m.tabs)))
+	cmd := m.setStatus(fmt.Sprintf("Tab closed. %d remaining", len(m.tabs)))
+	return m, cmd
 }
 
 // handleBookmarkMode handles key presses in bookmark mode
@@ -576,14 +594,17 @@ func (m Model) handleConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		switch m.confirmAction {
 		case "delete":
-			return m, m.executeDelete()
+			cmd := m.executeDelete()
+			return m, cmd
 		case "paste":
-			return m, m.executePaste()
+			cmd := m.executePaste()
+			return m, cmd
 		}
 
 	case "n", "N", "esc", "q":
 		m.mode = ModeNormal
-		return m, m.setStatus("Cancelled")
+		cmd := m.setStatus("Cancelled")
+		return m, cmd
 	}
 
 	return m, nil
