@@ -42,8 +42,12 @@ func (m *Model) remember(a area, y int, target string) {
 }
 
 // enter does what the Enter key does in the current mode, so a
-// double-click opens things exactly as the keyboard does
+// double-click opens things exactly as the keyboard does. In the browser,
+// where the config can remap Enter, it opens whatever the keys are.
 func (m Model) enter() (tea.Model, tea.Cmd) {
+	if m.mode == ModeNormal {
+		return m.openCursor()
+	}
 	return m.handleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
 }
 
@@ -186,7 +190,7 @@ func (m Model) moveCursorBy(delta int) (tea.Model, tea.Cmd) {
 func (m Model) clickParent(s spot) (tea.Model, tea.Cmd) {
 	tab := m.tab()
 	if s.row < 0 {
-		return m.handleKeyPress(tea.KeyMsg{Type: tea.KeyLeft})
+		return m.goParent()
 	}
 	if s.index < 0 {
 		return m, nil

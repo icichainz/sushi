@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -603,7 +604,7 @@ func TestKeyPanel(t *testing.T) {
 		if m.mode != ModeHelp && m.maxHelpScroll() > 0 {
 			t.Errorf("%s: j should scroll the panel, not close it", label)
 		}
-		for _, group := range helpGroups {
+		for _, group := range m.keys.helpGroups() {
 			for _, k := range group.keys {
 				if !strings.Contains(seen, utils.Truncate(k.key, helpKeyW)) {
 					t.Errorf("%s: key %q is unreachable", label, k.key)
@@ -612,29 +613,32 @@ func TestKeyPanel(t *testing.T) {
 		}
 	}
 
-	// Every key binding is documented in the panel
+	// With the default keys the panel reads as it always has
 	m := newTestModel(t, dir, nil)
-	documented := ""
-	for _, group := range helpGroups {
+	var labels []string
+	for _, group := range m.keys.helpGroups() {
 		for _, k := range group.keys {
-			documented += " " + k.key + " "
+			labels = append(labels, k.key)
 		}
 	}
-	for used := range m.keys.usedKeys() {
-		switch used {
-		case "up", "down", "left", "right", "home", "end", "pgup", "pgdown", "backspace", "ctrl+c":
-			continue // Alternatives to a documented key
-		case "ctrl+u", "ctrl+d":
-			used = strings.TrimPrefix(used, "ctrl+")
+	want := []string{"j k", "h l", "backspace", "g G", "ctrl+u d", "enter", "e o", "r", "n N", "d D",
+		"ctrl+z", "ctrl+x", "y V", "m R", "a X", "space", "*", "u", "c x v", "/", "p", "J K", ".", "?",
+		"f", "F", "s S", "ctrl+r", "Q", "t T", "tab", "shift+tab", "ctrl+w", "b B", "1-9", "P", "!", "q"}
+	if !slices.Equal(labels, want) {
+		t.Errorf("panel keys = %q\nwant %q", labels, want)
+	}
+
+	// Every action is in the panel by the key it is bound to: bind each in
+	// turn to a key nothing else uses, and look for that
+	for _, a := range m.keys.actions() {
+		keys, problems := loadKeyMap(map[string]config.KeyList{a.name: {"f12"}})
+		if len(problems) > 0 {
+			t.Fatalf("%s: %q", a.name, problems)
 		}
-		if len(used) == 1 && used >= "1" && used <= "9" {
-			used = "1-9"
-		}
-		if used == " " {
-			used = "space"
-		}
-		if !strings.Contains(documented, used) {
-			t.Errorf("key %q is not in the key panel", used)
+		remapped := m
+		remapped.keys = keys
+		if panel := ansi.Strip(strings.Join(remapped.helpLines(), "\n")); !strings.Contains(panel, "f12") {
+			t.Errorf("%s bound to f12 is not in the key panel:\n%s", a.name, panel)
 		}
 	}
 

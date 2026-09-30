@@ -37,6 +37,10 @@ type Config struct {
 	// External commands; scripts in PluginDir are added to these
 	Plugins []plugins.Plugin `yaml:"plugins"`
 
+	// Keys for actions by name, replacing their defaults; actions left
+	// out keep theirs
+	Keys map[string]KeyList `yaml:"keys"`
+
 	// Problems found reading the file, for the app to show at startup
 	Problems []string `yaml:"-"`
 }

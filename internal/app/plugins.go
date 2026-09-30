@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -28,15 +27,17 @@ type pluginDoneMsg struct {
 // bindPluginKeys maps plugin shortcuts to plugins. Built-in keys can't be
 // taken over, so conflicts are reported instead.
 func (m *Model) bindPluginKeys() []string {
-	used := m.keys.usedKeys()
+	// The keys as remapped in the config, so a plugin can have a key an
+	// action has given up
+	used := m.keys.keyOwners()
 	m.pluginKeys = make(map[string]int)
 
 	var warnings []string
 	for i, p := range m.plugins {
 		switch {
 		case p.Key == "":
-		case used[p.Key]:
-			warnings = append(warnings, fmt.Sprintf("plugin %s: key %q is used by sushi", p.Name, p.Key))
+		case used[p.Key] != "":
+			warnings = append(warnings, fmt.Sprintf("plugin %s: key %q is used by sushi for %s", p.Name, p.Key, used[p.Key]))
 		default:
 			if other, taken := m.pluginKeys[p.Key]; taken {
 				warnings = append(warnings, fmt.Sprintf("plugin %s: key %q is already used by %s", p.Name, p.Key, m.plugins[other].Name))
@@ -46,24 +47,6 @@ func (m *Model) bindPluginKeys() []string {
 		}
 	}
 	return warnings
-}
-
-// usedKeys returns every key bound to a built-in action in normal mode
-func (k KeyMap) usedKeys() map[string]bool {
-	used := make(map[string]bool)
-	v := reflect.ValueOf(k)
-	for i := 0; i < v.NumField(); i++ {
-		if b, ok := v.Field(i).Interface().(key.Binding); ok {
-			for _, s := range b.Keys() {
-				used[s] = true
-			}
-		}
-	}
-	// Digits jump to bookmarks
-	for r := '1'; r <= '9'; r++ {
-		used[string(r)] = true
-	}
-	return used
 }
 
 // runPlugin runs p on the selection, or the file under the cursor
