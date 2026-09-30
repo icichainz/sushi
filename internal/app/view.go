@@ -87,6 +87,8 @@ func (m Model) View() string {
 		lines = m.withDialog(lines, m.bookmarksBox())
 	case ModePlugins:
 		lines = m.withDialog(lines, m.runBox())
+	case ModeSort:
+		lines = m.withDialog(lines, m.sortBox())
 	case ModeFind:
 		lines = m.withDialog(lines, m.findBox())
 	case ModeHelp:
@@ -189,14 +191,14 @@ func (m Model) renderTabBar() string {
 func (m Model) sortLabel() string {
 	g := currentGlyphs()
 	// Size and modified list the largest and newest first
-	descending := m.config.SortBy == "size" || m.config.SortBy == "modified"
-	if m.config.SortReverse {
+	descending := m.sortBy == "size" || m.sortBy == "modified"
+	if m.sortReverse {
 		descending = !descending
 	}
 	if descending {
-		return m.config.SortBy + " " + g.down
+		return m.sortBy + " " + g.down
 	}
-	return m.config.SortBy + " " + g.up
+	return m.sortBy + " " + g.up
 }
 
 // pathSegments splits a path for the breadcrumb, with the home directory as "~"
@@ -379,14 +381,14 @@ func (m Model) renderFileList(width, height int, divider bool) []string {
 
 	// Heading, with an arrow on the sorted column
 	arrow := func(col string) string {
-		by := m.config.SortBy
+		by := m.sortBy
 		if by == col || (col == "name" && by == "type") {
 			return " " + strings.TrimPrefix(m.sortLabel(), by+" ")
 		}
 		return ""
 	}
 	nameHead := "Name"
-	if m.config.SortBy == "type" {
+	if m.sortBy == "type" {
 		nameHead = "Name (by type)"
 	}
 	head := strings.Repeat(" ", 3+c.iconW+2) + utils.Fit(nameHead+arrow("name"), c.nameW)
@@ -627,6 +629,8 @@ func (m Model) modeBadge() (string, lipgloss.Color) {
 		return "BOOKMARKS", t.Accent
 	case ModePlugins:
 		return "RUN", t.Accent
+	case ModeSort:
+		return "SORT", t.Accent
 	case ModeFind:
 		return "FIND", t.Accent
 	case ModeHelp:
@@ -751,6 +755,8 @@ func (m Model) renderBottomRow() string {
 		return m.renderHints([]hint{{"1-9", "jump"}, {"enter", "go"}, {"d", "remove"}, {"esc", "close"}})
 	case ModePlugins:
 		return m.renderHints([]hint{{"enter", "run"}, {"tab", "switch between command and plugins"}, {"esc", "close"}})
+	case ModeSort:
+		return m.renderHints([]hint{{"n s m t", "sort by"}, {"enter", "choose"}, {"S", "reverse"}, {"esc", "close"}})
 	case ModeFind:
 		return m.renderHints(m.findHints())
 	case ModeHelp:
@@ -972,7 +978,7 @@ var helpGroups = []struct {
 	{"Files", []hint{{"enter", "open"}, {"e o", "edit, default app"}, {"r", "rename"}, {"n N", "new file, folder"}, {"d", "delete"}}},
 	{"Select", []hint{{"space", "toggle"}, {"*", "invert"}, {"u", "clear"}, {"c x v", "copy, cut, paste"}}},
 	{"View", []hint{{"/", "search"}, {"p", "preview"}, {".", "hidden files"}, {"?", "this panel"}}},
-	{"Find", []hint{{"f", "find by name"}, {"F", "find in files"}}},
+	{"Find", []hint{{"f", "find by name"}, {"F", "find in files"}, {"s S", "sort by, reverse"}}},
 	{"Tabs", []hint{{"t T", "new here, home"}, {"tab", "next"}, {"shift+tab", "previous"}, {"ctrl+w", "close"}}},
 	{"Go", []hint{{"b B", "bookmarks, add"}, {"1-9", "jump to bookmark"}, {"P", "plugins"}, {"!", "shell command"}, {"q", "quit"}}},
 }

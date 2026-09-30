@@ -83,6 +83,11 @@ type Model struct {
 	config     *config.Config
 	showHidden bool // Starts from config, toggled at runtime
 
+	// Sort order; starts from config, changed at runtime with s and S
+	sortBy      string
+	sortReverse bool
+	sortCursor  int // Row of the sort menu
+
 	find finder      // Recursive search palette (f, F)
 	jump previewJump // Preview line to show once a search result's file loads
 }
@@ -106,8 +111,8 @@ func (m *Model) tabByID(id int) *Tab {
 func (m *Model) scanOptions() fs.ScanOptions {
 	return fs.ScanOptions{
 		ShowHidden:  m.showHidden,
-		SortBy:      m.config.SortBy,
-		SortReverse: m.config.SortReverse,
+		SortBy:      m.sortBy,
+		SortReverse: m.sortReverse,
 	}
 }
 
@@ -144,6 +149,7 @@ const (
 	ModeConfirm
 	ModeBookmarks
 	ModePlugins
+	ModeSort
 	ModeFind
 )
 
@@ -187,6 +193,8 @@ type KeyMap struct {
 	NextTab     key.Binding
 	PrevTab     key.Binding
 	CloseTab    key.Binding
+	Sort        key.Binding
+	Reverse     key.Binding
 	Find        key.Binding
 	Grep        key.Binding
 }
@@ -346,6 +354,14 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("ctrl+w"),
 			key.WithHelp("ctrl+w", "close tab"),
 		),
+		Sort: key.NewBinding(
+			key.WithKeys("s"),
+			key.WithHelp("s", "sort by"),
+		),
+		Reverse: key.NewBinding(
+			key.WithKeys("S"),
+			key.WithHelp("S", "reverse sort"),
+		),
 		Find: key.NewBinding(
 			key.WithKeys("f"),
 			key.WithHelp("f", "find by name"),
@@ -385,12 +401,14 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	}
 
 	m := Model{
-		theme:      theme,
-		keys:       DefaultKeyMap(),
-		mode:       ModeNormal,
-		bookmarks:  config.LoadBookmarks(),
-		config:     cfg,
-		showHidden: cfg.ShowHidden,
+		theme:       theme,
+		keys:        DefaultKeyMap(),
+		mode:        ModeNormal,
+		bookmarks:   config.LoadBookmarks(),
+		config:      cfg,
+		showHidden:  cfg.ShowHidden,
+		sortBy:      cfg.SortBy,
+		sortReverse: cfg.SortReverse,
 	}
 
 	// Create initial tab with config settings

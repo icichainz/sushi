@@ -212,7 +212,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePluginMode(msg)
 	}
 
-	// Handle the recursive search palette
+	// Handle the sort menu and the recursive search palette
+	if m.mode == ModeSort {
+		return m.handleSortMode(msg)
+	}
 	if m.mode == ModeFind {
 		return m.handleFindMode(msg)
 	}
@@ -227,6 +230,12 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
+
+	case key.Matches(msg, m.keys.Sort):
+		return m.openSortMenu()
+
+	case key.Matches(msg, m.keys.Reverse):
+		return m.reverseSort()
 
 	case key.Matches(msg, m.keys.Find):
 		return m.openFind(false)

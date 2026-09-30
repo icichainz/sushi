@@ -303,7 +303,7 @@ func TestEveryScreenFillsTheTerminal(t *testing.T) {
 		assertFills(t, label+" long status", long)
 
 		for _, keys := range []string{"/" + strings.Repeat("query", 20), "/a", " j ", "r" + strings.Repeat("name", 30), "nnew", "d", "b", "P", "!" + strings.Repeat("echo ", 30), "?",
-			"f" + strings.Repeat("query", 30), "F" + strings.Repeat("text", 30)} {
+			"s", "f" + strings.Repeat("query", 30), "F" + strings.Repeat("text", 30)} {
 			screen := m
 			for _, r := range keys {
 				screen, _ = press(t, screen, string(r))
