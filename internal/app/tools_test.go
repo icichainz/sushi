@@ -393,6 +393,56 @@ func TestProgressShowsWhileRunning(t *testing.T) {
 	}
 }
 
+func TestStatusBarKeepsTheMessageAndProgress(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	writeTestFile(t, filepath.Join(src, "a.txt"), "")
+
+	m := newTestModel(t, src, nil)
+	m, _ = press(t, m, "c")
+	m.tab().CurrentPath = dst
+	m, _ = press(t, m, "v") // Started, but its command isn't run
+	updated, _ := m.Update(jobProgressMsg{id: m.job.id, progress: fs.Progress{Files: 3, TotalFiles: 120, Bytes: 45, TotalBytes: 100}})
+	m = updated.(Model)
+	m, _ = press(t, m, "d") // Refused while busy
+
+	// At 80 columns both are whole, and the counts and clipboard give way
+	busy := resize(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	status := ansi.Strip(busy.renderStatusBar())
+	for _, want := range []string{"NORMAL", "Still copying: wait, or ctrl+x to cancel", "Copying 3/120 45%"} {
+		if !strings.Contains(status, want) {
+			t.Errorf("80 columns: status lacks %q: %q", want, status)
+		}
+	}
+	if strings.Index(status, "Still") > strings.Index(status, "Copying") {
+		t.Errorf("80 columns: the message should come first: %q", status)
+	}
+	// With room, the progress keeps its bar and the rest shows too
+	wide := resize(m, tea.WindowSizeMsg{Width: 140, Height: 24})
+	status = ansi.Strip(wide.renderStatusBar())
+	for _, want := range []string{"Still copying", "Copying 3/120 files 45% ████░░░░░░", "clipboard: copy 1"} {
+		if !strings.Contains(status, want) {
+			t.Errorf("140 columns: status lacks %q: %q", want, status)
+		}
+	}
+
+	// A long message cut short still leaves the progress its room
+	busy.statusMsg = "Error: " + strings.Repeat("something went wrong ", 10)
+	status = ansi.Strip(busy.renderStatusBar())
+	if !strings.Contains(status, "Error: something") || !strings.Contains(status, "Copying 3/120 45%") {
+		t.Errorf("long message: %q", status)
+	}
+
+	// Without a job, a message survives where the counts don't
+	idle := resize(newTestModel(t, src, nil), tea.WindowSizeMsg{Width: 80, Height: 24})
+	idle.statusMsg = "Can't paste: " + strings.Repeat("x", 50)
+	if status := ansi.Strip(idle.renderStatusBar()); !strings.Contains(status, "Can't paste: xxxx") {
+		t.Errorf("idle: %q", status)
+	}
+	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 40, Height: 10}, {Width: 20, Height: 10}} {
+		assertFills(t, fmt.Sprintf("%dx%d busy with a message", size.Width, size.Height), resize(busy, size))
+	}
+}
+
 func TestProgressUpdatesArriveThenTheResult(t *testing.T) {
 	progressInterval = 0
 	t.Cleanup(func() { progressInterval = time.Hour })

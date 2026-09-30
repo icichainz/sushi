@@ -109,11 +109,12 @@ func (m Model) Shutdown(wait time.Duration) error {
 	}
 }
 
-// stillBusy says that something has to wait for the running job
+// stillBusy says that something has to wait for the running job. It is
+// short, so it fits beside the job's progress in an 80-column status bar.
 func (m *Model) stillBusy() tea.Cmd {
 	wait := "wait for it to finish"
 	if cancel := keysLabel(" ", m.keys.Cancel); cancel != "" {
-		wait += ", or press " + cancel + " to cancel it"
+		wait = "wait, or " + cancel + " to cancel"
 	}
 	return m.setStatus(fmt.Sprintf("Still %s: %s", strings.ToLower(m.job.doing), wait))
 }
@@ -213,6 +214,24 @@ func (m Model) whileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return m, cmd, true
 	}
 	return m, nil, false
+}
+
+// shortStatus describes the running job in fewer cells than status, as in
+// "Copying 3/120 45%", for a status bar short of room
+func (j *job) shortStatus() string {
+	g := currentGlyphs()
+	p := j.progress
+	switch {
+	case j.cancelled:
+		return j.doing + ", cancelling" + g.more
+	case p.Counting:
+		return j.doing + ": counting" + g.more
+	case p.TotalFiles > 0:
+		return fmt.Sprintf("%s %d/%d %d%%", j.doing, p.Files, p.TotalFiles, p.Percent())
+	case p.Files == 0 && p.TotalBytes == 0:
+		return j.doing + g.more
+	}
+	return fmt.Sprintf("%s %d%%", j.doing, p.Percent())
 }
 
 // status describes the running job for the status bar, as in
