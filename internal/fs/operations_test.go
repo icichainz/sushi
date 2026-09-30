@@ -174,6 +174,61 @@ func TestDeleteDanglingSymlink(t *testing.T) {
 	}
 }
 
+// symlink makes a symlink, skipping the test where that needs privileges
+func symlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("can't make symlinks here: %v", err)
+	}
+}
+
+func TestTrailingSlashNamesTheLinkNotItsTarget(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	os.Mkdir(target, 0755)
+	precious := filepath.Join(target, "precious.txt")
+	writeFile(t, precious, "keep")
+	link := filepath.Join(root, "link")
+	slash := link + string(filepath.Separator)
+	intact := func(what string) {
+		t.Helper()
+		if readFile(t, precious) != "keep" || !Exists(target) {
+			t.Fatalf("%s touched the link's target", what)
+		}
+	}
+
+	symlink(t, target, link)
+	if err := background().Delete(slash); err != nil || Exists(link) {
+		t.Fatalf("Delete: %v", err)
+	}
+	intact("Delete")
+
+	symlink(t, target, link)
+	if err := DeletePath(slash); err != nil || Exists(link) {
+		t.Fatalf("DeletePath: %v", err)
+	}
+	intact("DeletePath")
+
+	symlink(t, target, link)
+	moved := filepath.Join(root, "moved")
+	if err := MovePath(slash, moved); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(moved); err != nil || info.Mode()&os.ModeSymlink == 0 || Exists(link) {
+		t.Fatalf("Move moved more than the link: %v", err)
+	}
+	intact("Move")
+
+	copied := filepath.Join(root, "copied")
+	if err := CopyPath(moved+string(filepath.Separator), copied); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(copied); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("Copy copied the target rather than the link: %v", err)
+	}
+	intact("Copy")
+}
+
 func TestDeleteSymlinkKeepsTarget(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "dir")

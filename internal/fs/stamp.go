@@ -18,6 +18,7 @@ type Stamp struct {
 // TakeStamp summarises path without following symlinks
 func TakeStamp(path string) (Stamp, error) {
 	var s Stamp
+	path = filepath.Clean(path)
 	root, err := os.Lstat(path)
 	if err != nil {
 		return s, err

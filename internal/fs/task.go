@@ -95,7 +95,7 @@ func (t *Task) count(bytes bool, paths []string) error {
 	t.p.Counting = true
 	defer func() { t.p.Counting = false }()
 	for _, root := range paths {
-		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		err := filepath.WalkDir(filepath.Clean(root), func(path string, d os.DirEntry, err error) error {
 			if cerr := t.ctx.Err(); cerr != nil {
 				return cerr
 			}
@@ -124,6 +124,7 @@ func (t *Task) count(bytes bool, paths []string) error {
 // cancelled, the file being copied is removed, files already copied stay,
 // and the error is the context's.
 func (t *Task) Copy(src, dst string) error {
+	src, dst = filepath.Clean(src), filepath.Clean(dst)
 	if err := CheckTransfer(src, dst); err != nil {
 		return err
 	}
@@ -288,6 +289,7 @@ func copySymlink(src, dst string) error {
 // and src is left as it was. Deleting src can't be cancelled, so a move
 // never stops with the files only half in either place.
 func (t *Task) Move(src, dst string) error {
+	src, dst = filepath.Clean(src), filepath.Clean(dst)
 	if err := CheckTransfer(src, dst); err != nil {
 		return err
 	}
@@ -338,6 +340,9 @@ func (t *Task) Delete(path string) error {
 	if err := t.ctx.Err(); err != nil {
 		return err
 	}
+	// Lstat follows a link named with a trailing slash, as in "link/", which
+	// would delete what is in its target
+	path = filepath.Clean(path)
 	info, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("cannot access %s: %w", path, err)
@@ -382,6 +387,7 @@ func inTheWay(path string) error {
 // Restore moves from back to to, where it came from, refusing to replace
 // anything that is at to now. Missing parent directories are recreated.
 func (t *Task) Restore(from, to string) error {
+	from, to = filepath.Clean(from), filepath.Clean(to)
 	src, err := os.Lstat(from)
 	if err != nil {
 		return fmt.Errorf("%s is no longer at %s", filepath.Base(to), from)

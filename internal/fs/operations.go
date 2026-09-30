@@ -16,8 +16,10 @@ var (
 )
 
 // DeletePath deletes a file or directory (recursively if directory).
-// Symlinks are removed without touching their target.
+// Symlinks are removed without touching their target, even when named with
+// a trailing slash, which Lstat would follow.
 func DeletePath(path string) error {
+	path = filepath.Clean(path)
 	info, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("cannot access %s: %w", path, err)
@@ -32,6 +34,7 @@ func DeletePath(path string) error {
 // CheckTransfer reports whether src can be copied or moved to dst.
 // It rejects copying a file onto itself and copying a directory into itself.
 func CheckTransfer(src, dst string) error {
+	src, dst = filepath.Clean(src), filepath.Clean(dst)
 	srcEntry, err := os.Lstat(src)
 	if err != nil {
 		return fmt.Errorf("cannot access source: %w", err)

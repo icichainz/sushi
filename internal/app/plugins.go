@@ -2,6 +2,7 @@ package app
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -116,10 +117,13 @@ func (m Model) handlePluginDone(msg pluginDoneMsg) (tea.Model, tea.Cmd) {
 			continue
 		}
 
+		// Cleaned, since "link/" would name what a symlink points to: deleting
+		// it would empty the target rather than remove the link
 		path := in.Arg
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(msg.dir, path)
 		}
+		path = filepath.Clean(path)
 		switch in.Action {
 		case "cd":
 			info, err := os.Stat(path)
@@ -134,6 +138,11 @@ func (m Model) handlePluginDone(msg pluginDoneMsg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, m.loadDir(tab, path))
 		case "select":
+			// Only what exists, so a delete never starts on a mistyped path
+			if _, err := os.Lstat(path); err != nil {
+				warnings = append(warnings, "can't select "+in.Arg+": "+errText(err))
+				continue
+			}
 			tab.Selected[path] = true
 		}
 	}
@@ -146,6 +155,16 @@ func (m Model) handlePluginDone(msg pluginDoneMsg) (tea.Model, tea.Cmd) {
 	}
 	cmd := tea.Batch(cmds...)
 	return m, cmd
+}
+
+// errText returns what went wrong, without the operation and path that an
+// *os.PathError repeats
+func errText(err error) string {
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		return pe.Err.Error()
+	}
+	return err.Error()
 }
 
 // lastLine returns the last non-empty line of output

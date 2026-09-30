@@ -12,13 +12,18 @@ import (
 )
 
 // targets returns the paths an operation applies to: the selection if there
-// is one, otherwise the file under the cursor
+// is one, otherwise the file under the cursor. Paths are cleaned, as one
+// with a trailing slash, as in "link/", names what a symlink points to.
 func (m *Model) targets() []string {
 	tab := m.tab()
 	if len(tab.Selected) > 0 {
 		paths := make([]string, 0, len(tab.Selected))
+		seen := make(map[string]bool, len(tab.Selected))
 		for path := range tab.Selected {
-			paths = append(paths, path)
+			if path = filepath.Clean(path); !seen[path] {
+				seen[path] = true
+				paths = append(paths, path)
+			}
 		}
 		sort.Strings(paths)
 		return paths
