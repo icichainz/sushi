@@ -19,6 +19,9 @@ go.work
 /bin/
 /dist/
 *.pkg
+*.dmg
+/macos/.build/
+/macos/.cache/
 
 # IDE
 .vscode/

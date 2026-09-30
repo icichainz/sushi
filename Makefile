@@ -1,4 +1,4 @@
-.PHONY: build run clean install test fmt vet
+.PHONY: build run clean install test fmt vet check build-all dev dev-tools app pkg dmg macos
 
 # Binary name
 BINARY_NAME=sushi
@@ -51,25 +51,21 @@ dev-tools:
 	go install github.com/cosmtrek/air@latest
 
 
-# macOS PKG installer
-PKG_NAME = $(BINARY_NAME).pkg
-INSTALL_PATH = /usr/local/bin
+# macOS app, installer and disk image (needs Xcode). See macos/scripts/build.sh.
+VERSION ?= 0.1.0
 
-build-darwin-universal:
-	GOOS=darwin GOARCH=amd64 go build -o bin/$(BINARY_NAME)-amd64 main.go
-	GOOS=darwin GOARCH=arm64 go build -o bin/$(BINARY_NAME)-arm64 main.go
-	lipo -create -output bin/$(BINARY_NAME) bin/$(BINARY_NAME)-amd64 bin/$(BINARY_NAME)-arm64
-	rm -f bin/$(BINARY_NAME)-amd64 bin/$(BINARY_NAME)-arm64
+# Sushi.app: a window around sushi, with its own icon and font
+app:
+	VERSION=$(VERSION) macos/scripts/build.sh app
 
-pkg: build-darwin-universal
-	@mkdir -p pkg-root$(INSTALL_PATH)
-	cp bin/$(BINARY_NAME) pkg-root$(INSTALL_PATH)/$(BINARY_NAME)
-	chmod +x pkg-root$(INSTALL_PATH)/$(BINARY_NAME)
-	pkgbuild \
-		--identifier "com.icichainz.$(BINARY_NAME)" \
-		--version "0.0.1" \
-		--root pkg-root \
-		--install-location "/" \
-		$(PKG_NAME)
-	@rm -rf pkg-root
-	@echo "✅ PKG installer created: $(PKG_NAME)"
+# Installer that puts Sushi.app in /Applications and sushi in /usr/local/bin
+pkg:
+	VERSION=$(VERSION) macos/scripts/build.sh pkg
+
+# Disk image to drag Sushi.app to Applications from
+dmg:
+	VERSION=$(VERSION) macos/scripts/build.sh dmg
+
+# All three, into dist/
+macos:
+	VERSION=$(VERSION) macos/scripts/build.sh all

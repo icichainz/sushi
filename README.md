@@ -33,6 +33,28 @@ go build -o sushi main.go
 go install github.com/icichainz/sushi@latest
 ```
 
+### macOS App
+
+On a Mac, sushi is also available as an app with its own window and Dock icon, so it can be opened without a terminal. The app bundles the JetBrainsMono Nerd Font, so file icons work without installing a font.
+
+Building it needs Xcode as well as Go:
+
+```bash
+make macos    # builds all three into dist/
+```
+
+| File | What it is |
+|------|------------|
+| `dist/Sushi.app` | The app. Double-click to run it. |
+| `dist/Sushi-0.1.0.pkg` | Installer: puts Sushi in Applications and the `sushi` command in `/usr/local/bin` |
+| `dist/Sushi-0.1.0.dmg` | Disk image: drag Sushi to Applications |
+
+`make app`, `make pkg` and `make dmg` build them one at a time, and `VERSION=1.2.3 make macos` sets the version.
+
+The app opens in your home folder and runs sushi through your login shell, so plugins and `$EDITOR` work as they do in a terminal. `Cmd` `+` and `Cmd` `-` change the text size. Quitting sushi with `q` closes the app.
+
+The builds are signed ad hoc, which is enough for the Mac that built them. On another Mac, macOS will refuse to open them until they are allowed under System Settings, Privacy & Security. Distributing without that warning needs an Apple Developer ID: build with `SIGN_IDENTITY="Developer ID Application: ..."` and notarize the result.
+
 ## Usage
 
 ```bash
@@ -273,6 +295,7 @@ sushi/
 │   ├── plugins/     # Plugin loading and running
 │   ├── ui/          # Icons, themes, styles and UI components
 │   └── utils/       # Formatting helpers
+├── macos/           # The macOS app: Swift window, icon and build script
 ├── docs/            # Plugin guide
 ├── examples/plugins # Example plugin scripts
 └── main.go          # Entry point and command line flags

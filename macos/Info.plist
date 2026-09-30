@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Sushi</string>
+	<key>CFBundleDisplayName</key>
+	<string>Sushi</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.icichainz.sushi</string>
+	<key>CFBundleExecutable</key>
+	<string>Sushi</string>
+	<key>CFBundleIconFile</key>
+	<string>Sushi</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__VERSION__</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>ATSApplicationFontsPath</key>
+	<string>Fonts</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>MIT License</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Sushi is a file manager. It needs access to browse your Desktop folder.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Sushi is a file manager. It needs access to browse your Documents folder.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Sushi is a file manager. It needs access to browse your Downloads folder.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Sushi is a file manager. It needs access to browse external drives.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Sushi is a file manager. It needs access to browse network drives.</string>
+</dict>
+</plist>
