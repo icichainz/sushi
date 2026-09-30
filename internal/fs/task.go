@@ -493,18 +493,33 @@ func sameVersion(now, was os.FileInfo) bool {
 // a copy cut short is never left under dst's name. If it fails, the
 // hidden directory is removed.
 func (t *Task) copyAside(src, dst string, info os.FileInfo) error {
-	tmp, err := os.MkdirTemp(filepath.Dir(dst), partialPrefix+"*")
+	tmp, err := t.copyToTemp(src, filepath.Dir(dst), info)
 	if err != nil {
-		return fmt.Errorf("cannot create destination directory: %w", err)
+		return err
 	}
-	err = t.copyInto(src, tmp, info, true)
-	if err == nil {
-		err = place(tmp, dst, false)
-	}
-	if err != nil {
+	if err := place(tmp, dst, false); err != nil {
 		os.RemoveAll(tmp)
+		return err
 	}
-	return err
+	return nil
+}
+
+// copyToTemp copies src, which info describes, to a new hidden name in
+// dir and returns it. If the copy fails, nothing is left.
+func (t *Task) copyToTemp(src, dir string, info os.FileInfo) (string, error) {
+	if !info.IsDir() {
+		tmp := tempName(dir, partialPrefix)
+		return tmp, t.copyEntry(src, tmp, info, false)
+	}
+	tmp, err := os.MkdirTemp(dir, partialPrefix+"*")
+	if err != nil {
+		return "", fmt.Errorf("cannot create destination directory: %w", err)
+	}
+	if err := t.copyInto(src, tmp, info, true); err != nil {
+		os.RemoveAll(tmp)
+		return "", err
+	}
+	return tmp, nil
 }
 
 // isCrossDevice reports whether a rename failed because the paths are on

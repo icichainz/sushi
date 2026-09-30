@@ -375,7 +375,7 @@ While sushi uses the mouse, terminals select text only with a key held: `Shift` 
 | Linux and BSD | The freedesktop.org trash in `$XDG_DATA_HOME/Trash`, or `~/.local/share/Trash`, so desktop file managers can show and restore what sushi trashed |
 | Windows | Sushi's own trash in `%AppData%\sushi\Trash`. The Recycle Bin doesn't show it: restore with `Ctrl+z`, or by moving files out of its `files` folder |
 
-Nothing in the trash is ever replaced: a name that is taken gets a number, as in `notes 2.txt`. Files on another drive are copied into the trash and then deleted, which takes longer. The Finder's Put Back doesn't know where files trashed by sushi came from; use `Ctrl+z` instead.
+Nothing in the trash is ever replaced or merged into: a name that is taken gets a number, as in `notes 2.txt`, even when another program trashes something of the same name at the same moment. Files on another drive are copied into the trash and then deleted, which takes longer; only what was copied is deleted, so files added meanwhile stay where they were. The Finder's Put Back doesn't know where files trashed by sushi came from; use `Ctrl+z` instead.
 
 `Ctrl+z` undoes the last of up to 20 operations: trash, rename, move, copy, new file or folder, duplicate, symlink paste, permissions, bulk rename, compress and extract. Undo history lasts until sushi quits.
 

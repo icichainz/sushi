@@ -2,10 +2,12 @@ package fs
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 )
@@ -230,6 +232,83 @@ func TestMoveAcrossFilesystemsKeepsWhatChangesMeanwhile(t *testing.T) {
 	}
 	if readFile(t, filepath.Join(dst, "b.txt")) != "b.txt" || readFile(t, filepath.Join(dst, "sub", "c.txt")) != filepath.Join("sub", "c.txt") {
 		t.Fatal("the copy is incomplete")
+	}
+}
+
+func TestConcurrentTrashingKeepsEveryItem(t *testing.T) {
+	const n = 40
+	for _, c := range []struct {
+		name              string
+		freedesktop, dirs bool
+		acrossFilesystems bool
+	}{
+		{name: "macOS files"},
+		{name: "macOS folders", dirs: true},
+		{name: "macOS folders across filesystems", dirs: true, acrossFilesystems: true},
+		{name: "freedesktop folders", freedesktop: true, dirs: true},
+		{name: "freedesktop files across filesystems", freedesktop: true, acrossFilesystems: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if c.acrossFilesystems {
+				acrossFilesystems(t)
+			}
+			tr := &Trash{Files: filepath.Join(t.TempDir(), ".Trash")}
+			if c.freedesktop {
+				tr = testTrash(t)
+			}
+			// Items of the same name, as when two sushis, or sushi and the
+			// Finder, trash "notes.txt" at once
+			paths := make([]string, n)
+			for i := range paths {
+				dir := t.TempDir()
+				if c.dirs {
+					paths[i] = filepath.Join(dir, "photos")
+					os.Mkdir(paths[i], 0755)
+					writeFile(t, filepath.Join(paths[i], fmt.Sprintf("%d.jpg", i)), fmt.Sprint(i))
+				} else {
+					paths[i] = filepath.Join(dir, "notes.txt")
+					writeFile(t, paths[i], fmt.Sprint(i))
+				}
+			}
+
+			start := make(chan struct{})
+			errs := make(chan error, n)
+			var wg sync.WaitGroup
+			for _, p := range paths {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					_, err := tr.Put(background(), p)
+					errs <- err
+				}()
+			}
+			close(start)
+			wg.Wait()
+			close(errs)
+			for err := range errs {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// Every item is in the trash, on its own
+			found := map[string]bool{}
+			for _, name := range dirEntries(t, tr.Files) {
+				item := filepath.Join(tr.Files, name)
+				if c.dirs {
+					inside := dirEntries(t, item)
+					if len(inside) != 1 {
+						t.Fatalf("%s holds %v: folders were merged", name, inside)
+					}
+					item = filepath.Join(item, inside[0])
+				}
+				found[readFile(t, item)] = true
+			}
+			if len(found) != n {
+				t.Fatalf("the trash holds %d of the %d items: %v", len(found), n, dirEntries(t, tr.Files))
+			}
+		})
 	}
 }
 
