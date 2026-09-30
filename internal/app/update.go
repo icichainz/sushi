@@ -58,6 +58,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		oldCursor := tab.Cursor
 		tab.setFiles(msg.files)
+		tab.ParentFiles = msg.parent
 		tab.CurrentPath = msg.path
 		tab.Cursor = 0
 		if samePath {
@@ -79,7 +80,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		tab := m.tabByID(msg.tabID)
 		// Drop previews that arrive after the cursor has moved on
 		if tab != nil && len(tab.Files) > 0 && tab.Files[tab.Cursor].Path == msg.preview.Path {
+			// A reload of the same file keeps its scroll position
+			if tab.Preview.Path != msg.preview.Path {
+				tab.PreviewScroll = 0
+			}
 			tab.Preview = msg.preview
+			tab.PreviewScroll = min(tab.PreviewScroll, tab.Preview.MaxScroll(m.previewRows()))
 		}
 		return m, nil
 
@@ -159,18 +165,25 @@ func previewConfig(syntax string) components.PreviewConfig {
 
 // handleKeyPress processes keyboard input
 func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Handle help mode separately: j/k scroll, any other key closes
+	// The key panel: j/k scroll it when it doesn't fit, esc closes it, and
+	// any other key closes it and does what the panel says it does
 	if m.mode == ModeHelp {
-		switch msg.String() {
-		case "j", "down":
+		scrolls := m.maxHelpScroll() > 0
+		switch s := msg.String(); {
+		case scrolls && (s == "j" || s == "down"):
 			m.helpScroll = min(m.helpScroll+1, m.maxHelpScroll())
-		case "k", "up":
+			return m, nil
+		case scrolls && (s == "k" || s == "up"):
 			m.helpScroll = max(m.helpScroll-1, 0)
-		default:
-			m.mode = ModeNormal
-			m.helpScroll = 0
+			return m, nil
 		}
-		return m, nil
+		m.mode = ModeNormal
+		m.helpScroll = 0
+		switch msg.String() {
+		case "esc", "?", "q":
+			return m, nil
+		}
+		return m.handleKeyPress(msg)
 	}
 
 	// Handle confirmation mode
@@ -214,12 +227,18 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Plugins):
-		m.mode = ModePlugins
-		m.pluginCursor = 0
-		return m, nil
+		return m.openRun(false)
 
 	case key.Matches(msg, m.keys.Shell):
-		return m.openPrompt(prompt{action: promptShell, label: "Shell:"})
+		return m.openRun(true)
+
+	case key.Matches(msg, m.keys.PreviewDown):
+		tab.PreviewScroll = min(tab.PreviewScroll+m.previewStep(), tab.Preview.MaxScroll(m.previewRows()))
+		return m, nil
+
+	case key.Matches(msg, m.keys.PreviewUp):
+		tab.PreviewScroll = max(tab.PreviewScroll-m.previewStep(), 0)
+		return m, nil
 
 	case key.Matches(msg, m.keys.Preview):
 		tab.PreviewEnabled = !tab.PreviewEnabled
@@ -256,7 +275,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.PageUp):
 		if len(tab.Files) > 0 {
-			pageSize := m.contentHeight()
+			pageSize := m.listRows()
 			tab.Cursor -= pageSize
 			if tab.Cursor < 0 {
 				tab.Cursor = 0
@@ -266,7 +285,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.PageDown):
 		if len(tab.Files) > 0 {
-			pageSize := m.contentHeight()
+			pageSize := m.listRows()
 			tab.Cursor += pageSize
 			if tab.Cursor >= len(tab.Files) {
 				tab.Cursor = len(tab.Files) - 1
@@ -590,6 +609,27 @@ func (m *Model) navigateSearchResults(direction int) {
 	tab.Cursor = tab.SearchResults[newIdx]
 }
 
+// fuzzyPositions returns the character positions in target that a fuzzy
+// match of query uses, or nil if it doesn't match
+func fuzzyPositions(query, target string) map[int]bool {
+	q := []rune(query)
+	if len(q) == 0 {
+		return nil
+	}
+	positions := make(map[int]bool, len(q))
+	i := 0
+	for pos, r := range []rune(target) {
+		if r == q[i] {
+			positions[pos] = true
+			i++
+			if i == len(q) {
+				return positions
+			}
+		}
+	}
+	return nil
+}
+
 // fuzzyMatch checks if query characters appear in target in order.
 // It compares runes, not bytes, so accented letters only match themselves.
 func fuzzyMatch(query, target string) bool {
@@ -637,11 +677,31 @@ func (m Model) handleConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // dirLoadedMsg is sent when a directory has been loaded
 type dirLoadedMsg struct {
-	tabID int
-	seq   int
-	path  string
-	files []fs.FileInfo
-	err   error
+	tabID  int
+	seq    int
+	path   string
+	files  []fs.FileInfo
+	parent []fs.FileInfo
+	err    error
+}
+
+// scanParent lists the directory above path for the parent pane. It is
+// extra context, so problems reading it just leave the pane empty.
+func scanParent(path string, opts fs.ScanOptions) []fs.FileInfo {
+	parent := filepath.Dir(path)
+	if parent == path {
+		return nil
+	}
+	files, err := fs.ScanDirectory(parent, opts)
+	if err != nil {
+		return nil
+	}
+	return files
+}
+
+// previewStep is how many lines J and K scroll the preview: half a pane
+func (m Model) previewStep() int {
+	return max((m.previewRows()-1)/2, 1)
 }
 
 // previewLoadedMsg is sent when preview content has been loaded
@@ -666,13 +726,11 @@ type clearStatusMsg struct {
 func loadDirectory(tabID, seq int, path string, opts fs.ScanOptions) tea.Cmd {
 	return func() tea.Msg {
 		files, err := fs.ScanDirectory(path, opts)
-		return dirLoadedMsg{
-			tabID: tabID,
-			seq:   seq,
-			path:  path,
-			files: files,
-			err:   err,
+		msg := dirLoadedMsg{tabID: tabID, seq: seq, path: path, files: files, err: err}
+		if err == nil {
+			msg.parent = scanParent(path, opts)
 		}
+		return msg
 	}
 }
 

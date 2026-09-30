@@ -13,10 +13,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/fs"
 	"github.com/icichainz/sushi/internal/plugins"
 	"github.com/icichainz/sushi/internal/ui/components"
+	"github.com/icichainz/sushi/internal/utils"
 )
 
 func TestMain(m *testing.M) {
@@ -236,32 +238,34 @@ func TestNewTabUsesConfig(t *testing.T) {
 	}
 }
 
-// assertFits checks the layout fits the terminal and that the header and
-// status bar both survived, i.e. nothing was pushed off screen. It checks
-// the unclipped layout so View's final clip can't hide an oversized pane.
-func assertFits(t *testing.T, label string, m Model, wantLast string) {
-	t.Helper()
-	lines := strings.Split(m.renderMainView(), "\n")
-	if len(lines) > m.height {
-		t.Errorf("%s: %d lines, terminal has %d", label, len(lines), m.height)
-	}
-	for i, l := range lines {
-		if w := lipgloss.Width(l); w > m.width {
-			t.Errorf("%s: line %d is %d wide, terminal has %d", label, i, w, m.width)
-		}
-		if !utf8.ValidString(l) {
-			t.Errorf("%s: line %d is not valid UTF-8: %q", label, i, l)
-		}
-	}
-	if !strings.Contains(lines[0], "📁") {
-		t.Errorf("%s: header missing, first line = %q", label, lines[0])
-	}
-	if last := lines[len(lines)-1]; !strings.Contains(last, wantLast) {
-		t.Errorf("%s: last line = %q, want it to contain %q", label, last, wantLast)
-	}
+// plain returns a rendered screen as lines without color codes
+func plain(view string) []string {
+	return strings.Split(ansi.Strip(view), "\n")
 }
 
-func TestViewFitsTerminal(t *testing.T) {
+// assertFills checks that a screen is exactly the size of the terminal, so
+// nothing is pushed off screen and nothing of the last frame shows through
+func assertFills(t *testing.T, label string, m Model) []string {
+	t.Helper()
+	// mainLines is checked unclipped, so View's final clip can't hide overflow
+	for name, view := range map[string]string{"main": m.renderMainView(), "view": m.View()} {
+		lines := strings.Split(view, "\n")
+		if len(lines) != m.height {
+			t.Errorf("%s %s: %d lines, terminal has %d", label, name, len(lines), m.height)
+		}
+		for i, l := range lines {
+			if w := lipgloss.Width(l); w != m.width {
+				t.Errorf("%s %s: line %d is %d wide, terminal is %d: %q", label, name, i, w, m.width, ansi.Strip(l))
+			}
+			if !utf8.ValidString(l) {
+				t.Errorf("%s %s: line %d is not valid UTF-8: %q", label, name, i, l)
+			}
+		}
+	}
+	return plain(m.View())
+}
+
+func TestEveryScreenFillsTheTerminal(t *testing.T) {
 	root := t.TempDir()
 	deep := filepath.Join(root, strings.Repeat("very-long-directory-name-", 6))
 	os.MkdirAll(deep, 0755)
@@ -269,62 +273,103 @@ func TestViewFitsTerminal(t *testing.T) {
 	writeTestFile(t, filepath.Join(deep, "a.go"), strings.Repeat(longLine, 200))
 	writeTestFile(t, filepath.Join(deep, "réservé-élève-"+strings.Repeat("é", 80)+".txt"), "x")
 	writeTestFile(t, filepath.Join(deep, "日本語のとても長いファイル名"+strings.Repeat("字", 40)+".txt"), "x")
+	os.Mkdir(filepath.Join(deep, "folder"), 0755)
 
-	for _, size := range []tea.WindowSizeMsg{{Width: 100, Height: 24}, {Width: 60, Height: 15}, {Width: 30, Height: 10}} {
-		m := newTestModel(t, deep, nil)
+	cfg := config.DefaultConfig()
+	cfg.Plugins = []plugins.Plugin{{Name: "a-plugin-with-a-long-name", Key: "ctrl+g", Command: "true", Description: strings.Repeat("described ", 20)}}
+
+	sizes := []tea.WindowSizeMsg{{Width: 140, Height: 40}, {Width: 100, Height: 24}, {Width: 80, Height: 24}, {Width: 60, Height: 15}, {Width: 30, Height: 10}}
+	for _, size := range sizes {
+		m := newTestModel(t, deep, cfg)
+		m.bookmarks.Add("deep", deep)
 		updated, _ := m.Update(size)
 		m = updated.(Model)
 		label := fmt.Sprintf("%dx%d", size.Width, size.Height)
 
-		assertFits(t, label+" preview on", m, "files |")
+		lines := assertFills(t, label+" browse", m)
+		if !strings.Contains(lines[0], " 1 ") {
+			t.Errorf("%s: tabs missing, first line = %q", label, lines[0])
+		}
+		if !strings.Contains(lines[len(lines)-2], "NORMAL") {
+			t.Errorf("%s: status bar missing, got %q", label, lines[len(lines)-2])
+		}
 
 		m.tab().PreviewEnabled = false
-		assertFits(t, label+" preview off", m, "files |")
+		assertFills(t, label+" preview off", m)
 		m.tab().PreviewEnabled = true
 
-		m.statusMsg = strings.Repeat("a long status message ", 10)
-		assertFits(t, label+" long status", m, "files |")
+		long := m
+		long.statusMsg = strings.Repeat("a long status message ", 10)
+		assertFills(t, label+" long status", long)
 
-		searching, _ := press(t, m, "/")
-		for _, r := range strings.Repeat("query", 20) {
-			searching, _ = press(t, searching, string(r))
+		for _, keys := range []string{"/" + strings.Repeat("query", 20), "/a", " j ", "r" + strings.Repeat("name", 30), "nnew", "d", "b", "P", "!" + strings.Repeat("echo ", 30), "?"} {
+			screen := m
+			for _, r := range keys {
+				screen, _ = press(t, screen, string(r))
+			}
+			assertFills(t, label+" after "+keys[:1], screen)
 		}
-		assertFits(t, label+" search", searching, "[")
 
 		withTabs := m
 		for i := 0; i < 12; i++ {
 			updated, _ := withTabs.createTab(deep)
 			withTabs = updated.(Model)
 		}
-		assertFits(t, label+" many tabs", withTabs, "files |")
+		lines = assertFills(t, label+" many tabs", withTabs)
+		if !strings.Contains(lines[0], " 13 ") {
+			t.Errorf("%s: active tab 13 not visible in %q", label, lines[0])
+		}
 	}
 }
 
-func TestHelpFitsTerminal(t *testing.T) {
-	for _, size := range []tea.WindowSizeMsg{{Width: 100, Height: 24}, {Width: 60, Height: 15}, {Width: 200, Height: 60}} {
-		m := newTestModel(t, t.TempDir(), nil)
-		updated, _ := m.Update(size)
-		m, _ = press(t, updated.(Model), "?")
+func TestPanesFollowTerminalWidth(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "current")
+	os.Mkdir(dir, 0755)
+	os.Mkdir(filepath.Join(root, "sibling"), 0755)
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "hello preview")
 
-		// Check the unclipped layout, so View's final clip can't hide overflow
-		help := m.renderHelpView()
-		if lines := strings.Split(help, "\n"); len(lines) > m.height {
-			t.Errorf("%dx%d: help is %d lines", size.Width, size.Height, len(lines))
-		}
-		if !strings.Contains(help, "Keyboard Shortcuts") || !strings.Contains(help, "close") {
-			t.Errorf("%dx%d: title or footer cut off", size.Width, size.Height)
-		}
+	for _, c := range []struct {
+		width           int
+		parent, preview bool
+	}{{140, true, true}, {100, true, true}, {99, false, true}, {72, false, true}, {71, false, false}} {
+		m := newTestModel(t, dir, nil)
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: c.width, Height: 24})
+		m = updated.(Model)
 
-		// Scrolling reaches the last shortcut
-		for i := 0; i < len(helpItems); i++ {
-			m, _ = press(t, m, "j")
+		l := m.layout()
+		if (l.parentW > 0) != c.parent || (l.previewW > 0) != c.preview {
+			t.Errorf("width %d: parent=%d preview=%d, want parent=%v preview=%v", c.width, l.parentW, l.previewW, c.parent, c.preview)
 		}
-		if !strings.Contains(m.renderHelpView(), "Show this help") {
-			t.Errorf("%dx%d: last shortcut unreachable", size.Width, size.Height)
+		if l.parentW+l.listW+l.previewW != c.width {
+			t.Errorf("width %d: panes add up to %d", c.width, l.parentW+l.listW+l.previewW)
 		}
-		if m, _ = press(t, m, "x"); m.mode != ModeNormal {
-			t.Errorf("%dx%d: other keys should close help", size.Width, size.Height)
+		view := strings.Join(plain(m.View()), "\n")
+		if strings.Contains(view, "sibling") != c.parent {
+			t.Errorf("width %d: parent pane shown=%v, want %v", c.width, !c.parent, c.parent)
 		}
+		if strings.Contains(view, "hello preview") != c.preview {
+			t.Errorf("width %d: preview shown=%v, want %v", c.width, !c.preview, c.preview)
+		}
+	}
+}
+
+func TestParentPaneFollowsNavigation(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "a", "inner"), 0755)
+	os.Mkdir(filepath.Join(root, "b"), 0755)
+
+	m := newTestModel(t, filepath.Join(root, "a"), nil)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m = updated.(Model)
+	if len(m.tab().ParentFiles) != 2 {
+		t.Fatalf("parent pane has %d entries, want a and b", len(m.tab().ParentFiles))
+	}
+
+	m, cmd := press(t, m, "l")
+	m = drain(t, m, cmd)
+	if names := m.tab().ParentFiles; len(names) != 1 || names[0].Name != "inner" {
+		t.Fatalf("after entering inner, parent pane = %v", names)
 	}
 }
 
@@ -335,12 +380,264 @@ func TestPreviewWidthIsPreviewShare(t *testing.T) {
 	cfg.PreviewWidth = 70
 
 	m := newTestModel(t, dir, cfg)
-	list := m.renderFileList(m.width - m.width*70/100)
-	if w := lipgloss.Width(list); w != 30 {
-		t.Fatalf("file list is %d wide, want 30 (preview_width: 70)", w)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 24})
+	if l := updated.(Model).layout(); l.previewW != 63 || l.listW != 27 {
+		t.Fatalf("preview=%d list=%d, want 63 and 27 (preview_width: 70)", l.previewW, l.listW)
 	}
-	if w := lipgloss.Width(m.renderSplitView()); w != m.width {
-		t.Fatalf("split view is %d wide, want %d", w, m.width)
+}
+
+func TestBreadcrumbShortensHome(t *testing.T) {
+	m := newTestModel(t, t.TempDir(), nil)
+	home, _ := os.UserHomeDir()
+	project := filepath.Join(home, "code", "sushi")
+	os.MkdirAll(project, 0755)
+	m.tab().CurrentPath = project
+
+	if got := strings.TrimSpace(ansi.Strip(m.renderHeader())); !strings.HasPrefix(got, "~ / code / sushi") || !strings.Contains(got, "sort name") {
+		t.Fatalf("breadcrumb = %q", got)
+	}
+	// A narrow terminal keeps the current directory
+	m.width = 20
+	if got := ansi.Strip(m.renderHeader()); !strings.Contains(got, "sushi") || lipgloss.Width(got) != 20 {
+		t.Fatalf("narrow breadcrumb = %q", got)
+	}
+}
+
+func TestStatusBarShowsMode(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "")
+	writeTestFile(t, filepath.Join(dir, "b.txt"), "")
+
+	m := newTestModel(t, dir, nil)
+	for _, c := range []struct{ keys, badge, hint string }{
+		{"", "NORMAL", "rename"},
+		{" ", "SELECT", "invert"},
+		{"/", "SEARCH", "esc cancel"},
+		{"r", "RENAME", "save"},
+		{"n", "NEW", "New file:"},
+		{"d", "CONFIRM", "keep"},
+		{"b", "BOOKMARKS", "close"},
+		{"P", "RUN", "run"},
+		{"?", "KEYS", "close"},
+	} {
+		screen := m
+		for _, r := range c.keys {
+			screen, _ = press(t, screen, string(r))
+		}
+		lines := plain(screen.View())
+		status, bottom := lines[len(lines)-2], lines[len(lines)-1]
+		if !strings.Contains(status, c.badge) || !strings.Contains(bottom, c.hint) {
+			t.Errorf("after %q: status %q and bottom row %q, want %s and %q", c.keys, strings.TrimSpace(status), strings.TrimSpace(bottom), c.badge, c.hint)
+		}
+	}
+
+	m, _ = press(t, m, "c")
+	if status := ansi.Strip(m.renderStatusBar()); !strings.Contains(status, "2 items") || !strings.Contains(status, "clipboard: copy 1") {
+		t.Fatalf("status = %q", status)
+	}
+}
+
+func TestSearchHidesOtherFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"main.go", "Makefile", "README.md", "go.sum"} {
+		writeTestFile(t, filepath.Join(dir, name), "")
+	}
+
+	m := typeQuery(t, newTestModel(t, dir, nil), "ma")
+	view := strings.Join(plain(m.View()), "\n")
+	for _, name := range []string{"main.go", "Makefile"} {
+		if !strings.Contains(view, name) {
+			t.Errorf("%s matches but is not listed", name)
+		}
+	}
+	list := strings.Join(plain(strings.Join(m.renderFileList(60, 10, false), "\n")), "\n")
+	for _, name := range []string{"README.md", "go.sum"} {
+		if strings.Contains(list, name) {
+			t.Errorf("%s doesn't match but is still listed", name)
+		}
+	}
+	if !strings.Contains(view, "2 of 4 match") || !strings.Contains(view, "/ ma") {
+		t.Errorf("status or query missing:\n%s", view)
+	}
+
+	// The matched letters are the ones underlined
+	if got := fuzzyPositions("ma", "main.go"); !got[0] || !got[1] || len(got) != 2 {
+		t.Fatalf("positions in main.go = %v, want 0 and 1", got)
+	}
+	if fuzzyPositions("zz", "main.go") != nil {
+		t.Fatal("no match should give no positions")
+	}
+
+	// Enter keeps the cursor on the match and shows everything again
+	m, _ = press(t, m, "enter")
+	if name := m.tab().Files[m.tab().Cursor].Name; name != "Makefile" && name != "main.go" {
+		t.Fatalf("cursor on %s", name)
+	}
+	if !strings.Contains(strings.Join(plain(m.View()), "\n"), "go.sum") {
+		t.Fatal("list still filtered after the search ended")
+	}
+}
+
+func TestRenameHappensInTheRow(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "draft.txt"), "")
+	writeTestFile(t, filepath.Join(dir, "other.txt"), "")
+
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "r")
+	m = typeText(t, m, "-v2")
+	lines := plain(m.View())
+	row := ""
+	for _, l := range lines[2 : len(lines)-2] {
+		if strings.Contains(l, "draft-v2") {
+			row = l
+		}
+	}
+	if row == "" || !strings.Contains(row, "draft-v2") || !strings.Contains(row, ".txt") {
+		t.Fatalf("the row being renamed should show the new name:\n%s", strings.Join(lines, "\n"))
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "other.txt") {
+		t.Fatal("other files should stay visible while renaming")
+	}
+}
+
+func TestPreviewScrollKeys(t *testing.T) {
+	dir := t.TempDir()
+	var b strings.Builder
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&b, "line number %d\n", i)
+	}
+	writeTestFile(t, filepath.Join(dir, "a.txt"), b.String())
+	writeTestFile(t, filepath.Join(dir, "b.txt"), "short")
+
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "J")
+	if m.tab().PreviewScroll == 0 {
+		t.Fatal("J did not scroll the preview")
+	}
+	if view := strings.Join(plain(m.View()), "\n"); strings.Contains(view, "line number 1\n") || !strings.Contains(view, "of 100") {
+		t.Fatalf("preview did not move:\n%s", view)
+	}
+	for i := 0; i < 50; i++ {
+		m, _ = press(t, m, "J")
+	}
+	if want := m.tab().Preview.MaxScroll(m.previewRows()); m.tab().PreviewScroll != want {
+		t.Fatalf("scroll = %d, want it to stop at %d", m.tab().PreviewScroll, want)
+	}
+	m, _ = press(t, m, "K")
+	if m.tab().PreviewScroll >= m.tab().Preview.MaxScroll(m.previewRows()) {
+		t.Fatal("K did not scroll back")
+	}
+
+	// Another file starts from the top
+	m, cmd := press(t, m, "j")
+	m = drain(t, m, cmd)
+	if m.tab().PreviewScroll != 0 {
+		t.Fatalf("scroll = %d after moving to another file", m.tab().PreviewScroll)
+	}
+}
+
+func TestSelectionIsSummarisedInPreview(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "12345")
+	writeTestFile(t, filepath.Join(dir, "b.txt"), "12345")
+	writeTestFile(t, filepath.Join(dir, "c.txt"), "unselected content")
+
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, " ")
+	m, _ = press(t, m, " ")
+	view := strings.Join(plain(m.View()), "\n")
+	if !strings.Contains(view, "2 selected") || !strings.Contains(view, "10 B in 2 here") {
+		t.Fatalf("selection summary missing:\n%s", view)
+	}
+}
+
+func TestDialogsKeepTheBrowserVisible(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "doomed.txt"), "")
+	writeTestFile(t, filepath.Join(dir, "zz-bystander.txt"), "")
+
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "d")
+	view := strings.Join(plain(m.View()), "\n")
+	for _, want := range []string{"Confirm delete", "Delete file 'doomed.txt'?", "There is no undo", "zz-bystander.txt", "CONFIRM"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("confirm screen is missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestKeyPanel(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "")
+	writeTestFile(t, filepath.Join(dir, "b.txt"), "")
+
+	for _, size := range []tea.WindowSizeMsg{{Width: 200, Height: 60}, {Width: 100, Height: 24}, {Width: 60, Height: 15}, {Width: 30, Height: 10}} {
+		m := newTestModel(t, dir, nil)
+		updated, _ := m.Update(size)
+		m, _ = press(t, updated.(Model), "?")
+		label := fmt.Sprintf("%dx%d", size.Width, size.Height)
+
+		// The panel covers the full width on every row, so nothing behind
+		// it shows through
+		for i, l := range strings.Split(m.renderHelpView(), "\n") {
+			if w := lipgloss.Width(l); w != m.width {
+				t.Errorf("%s: panel row %d is %d wide, want %d", label, i, w, m.width)
+			}
+		}
+
+		// Every shortcut can be reached, by scrolling if need be
+		seen := ""
+		for i := 0; i <= m.maxHelpScroll(); i++ {
+			seen += ansi.Strip(m.renderHelpView()) + "\n"
+			m, _ = press(t, m, "j")
+		}
+		if m.mode != ModeHelp && m.maxHelpScroll() > 0 {
+			t.Errorf("%s: j should scroll the panel, not close it", label)
+		}
+		for _, group := range helpGroups {
+			for _, k := range group.keys {
+				if !strings.Contains(seen, utils.Truncate(k.key, helpKeyW)) {
+					t.Errorf("%s: key %q is unreachable", label, k.key)
+				}
+			}
+		}
+	}
+
+	// Every key binding is documented in the panel
+	m := newTestModel(t, dir, nil)
+	documented := ""
+	for _, group := range helpGroups {
+		for _, k := range group.keys {
+			documented += " " + k.key + " "
+		}
+	}
+	for used := range m.keys.usedKeys() {
+		switch used {
+		case "up", "down", "left", "right", "home", "end", "pgup", "pgdown", "backspace", "ctrl+c":
+			continue // Alternatives to a documented key
+		case "ctrl+u", "ctrl+d":
+			used = strings.TrimPrefix(used, "ctrl+")
+		}
+		if len(used) == 1 && used >= "1" && used <= "9" {
+			used = "1-9"
+		}
+		if used == " " {
+			used = "space"
+		}
+		if !strings.Contains(documented, used) {
+			t.Errorf("key %q is not in the key panel", used)
+		}
+	}
+
+	// Esc closes the panel; any other key closes it and does its job
+	m, _ = press(t, m, "?")
+	if m, _ = press(t, m, "esc"); m.mode != ModeNormal || m.tab().Cursor != 0 {
+		t.Fatalf("esc: mode=%v cursor=%d", m.mode, m.tab().Cursor)
+	}
+	m, _ = press(t, m, "?")
+	if m, _ = press(t, m, "j"); m.mode != ModeNormal || m.tab().Cursor != 1 {
+		t.Fatalf("j from the panel: mode=%v cursor=%d, want the cursor moved down", m.mode, m.tab().Cursor)
 	}
 }
 
@@ -493,7 +790,7 @@ func TestThemeFromConfig(t *testing.T) {
 	cfg.Colors = map[string]string{"directory": "33"}
 
 	m := newTestModel(t, t.TempDir(), cfg)
-	if m.theme.Name != "light" || m.theme.Directory != "33" || m.theme.Syntax != "github" {
+	if m.theme.Name != "light" || m.theme.Directory != "33" || m.theme.Syntax != "sushi-light" {
 		t.Fatalf("theme = %s directory=%s syntax=%s", m.theme.Name, m.theme.Directory, m.theme.Syntax)
 	}
 	if m.statusMsg != "" {
@@ -543,7 +840,7 @@ func TestSelectCopyPasteMultipleFiles(t *testing.T) {
 	if len(m.tab().Selected) != 2 {
 		t.Fatalf("selected %d files, want 2", len(m.tab().Selected))
 	}
-	if line := m.renderFileLine(m.tab().Files[0], false, true, 80); !strings.Contains(line, "*") {
+	if line := m.renderFileLine(m.tab().Files[0], false, nil, listColumns(80, m.tab().Files)); !strings.Contains(line, "●") {
 		t.Fatalf("selected file has no marker: %q", line)
 	}
 	if !strings.Contains(m.renderStatusBar(), "2 selected") {
@@ -597,7 +894,7 @@ func TestDeleteSelection(t *testing.T) {
 	m, _ = press(t, m, " ")
 	m, _ = press(t, m, " ")
 	m, _ = press(t, m, "d")
-	if m.mode != ModeConfirm || !strings.Contains(m.renderConfirmDialog(), "Delete 2 items?") {
+	if m.mode != ModeConfirm || !strings.Contains(ansi.Strip(m.renderConfirmDialog()), "Delete 2 items?") {
 		t.Fatalf("mode=%v dialog:\n%s", m.mode, m.renderConfirmDialog())
 	}
 	m, cmd := press(t, m, "y")
@@ -621,7 +918,7 @@ func TestPasteAsksOnceForAllConflicts(t *testing.T) {
 	m, _ = press(t, m, "c")
 	m.tab().CurrentPath = dst
 	m, _ = press(t, m, "v")
-	if m.mode != ModeConfirm || !strings.Contains(m.renderConfirmDialog(), "2 items already exist") {
+	if m.mode != ModeConfirm || !strings.Contains(ansi.Strip(m.renderConfirmDialog()), "2 items already exist") {
 		t.Fatalf("dialog:\n%s", m.renderConfirmDialog())
 	}
 	m, cmd := press(t, m, "y")
@@ -756,8 +1053,8 @@ func TestRenameErrorKeepsPromptOpen(t *testing.T) {
 	if m.mode != ModeInput || !strings.Contains(m.prompt.err, "already exists") {
 		t.Fatalf("mode=%v err=%q", m.mode, m.prompt.err)
 	}
-	if !strings.Contains(m.renderMainView(), "already exists") {
-		t.Fatal("error not shown in the prompt bar")
+	if !strings.Contains(ansi.Strip(m.renderMainView()), "already exists") {
+		t.Fatal("error not shown beside the name")
 	}
 	m, _ = press(t, m, "esc")
 	if m.mode != ModeNormal {
@@ -1019,8 +1316,11 @@ func TestScriptPluginsAreDiscovered(t *testing.T) {
 
 	// Run it from the plugin menu
 	m, _ = press(t, m, "P")
-	if !strings.Contains(m.View(), "greet [ctrl+g]") || !strings.Contains(m.View(), "Says hi") {
-		t.Fatalf("menu:\n%s", m.View())
+	menu := ansi.Strip(m.View())
+	for _, want := range []string{"ctrl+g", "greet", "Says hi", "background"} {
+		if !strings.Contains(menu, want) {
+			t.Fatalf("menu is missing %q:\n%s", want, menu)
+		}
 	}
 	m, cmd := press(t, m, "enter")
 	m = drain(t, m, cmd)
@@ -1032,26 +1332,50 @@ func TestScriptPluginsAreDiscovered(t *testing.T) {
 func TestEmptyPluginMenuExplainsSetup(t *testing.T) {
 	m := newTestModel(t, t.TempDir(), nil)
 	m, _ = press(t, m, "P")
-	if !strings.Contains(m.View(), "No plugins yet") {
-		t.Fatalf("menu:\n%s", m.View())
+	if !strings.Contains(ansi.Strip(m.View()), "No plugins yet") {
+		t.Fatalf("menu:\n%s", ansi.Strip(m.View()))
 	}
 	if m, _ = press(t, m, "esc"); m.mode != ModeNormal {
 		t.Fatal("Esc did not close the menu")
 	}
 }
 
-func TestShellPromptRunsCommand(t *testing.T) {
-	m := newTestModel(t, t.TempDir(), nil)
+func TestRunPaletteTakesShellCommands(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Plugins = []plugins.Plugin{{Name: "first", Command: "true"}, {Name: "second", Command: "true"}}
+
+	// ! starts on the command line, where every key is text
+	m := newTestModel(t, t.TempDir(), cfg)
 	m, _ = press(t, m, "!")
-	if m.mode != ModeInput || m.prompt.label != "Shell:" {
-		t.Fatalf("mode=%v label=%q", m.mode, m.prompt.label)
+	m = typeText(t, m, "jq . | kq")
+	if m.mode != ModePlugins || m.runInput.Value() != "jq . | kq" {
+		t.Fatalf("mode=%v typed=%q", m.mode, m.runInput.Value())
 	}
-	m = typeText(t, m, "ls")
-	m, cmd := press(t, m, "enter")
+	if !strings.Contains(ansi.Strip(m.View()), "! jq . | kq") {
+		t.Fatalf("command not shown:\n%s", ansi.Strip(m.View()))
+	}
 	// The command runs in the terminal via tea.Exec, which needs a real
 	// program; check it was handed over
+	m, cmd := press(t, m, "enter")
 	if m.mode != ModeNormal || cmd == nil {
 		t.Fatalf("mode=%v cmd=%v", m.mode, cmd)
+	}
+
+	// P starts on the plugin list, where j and k move
+	m, _ = press(t, m, "P")
+	m, _ = press(t, m, "j")
+	if m.runInput.Value() != "" || m.pluginCursor != 1 {
+		t.Fatalf("typed=%q cursor=%d, want j to move to the second plugin", m.runInput.Value(), m.pluginCursor)
+	}
+	// Tab moves to the command line and back
+	m, _ = press(t, m, "tab")
+	m = typeText(t, m, "ls")
+	if m.runInput.Value() != "ls" {
+		t.Fatalf("typed=%q after tab", m.runInput.Value())
+	}
+	m, _ = press(t, m, "esc")
+	if m.mode != ModeNormal {
+		t.Fatal("esc did not close the palette")
 	}
 }
 

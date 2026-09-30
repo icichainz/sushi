@@ -43,3 +43,22 @@ func TestHumanizeSize(t *testing.T) {
 		}
 	}
 }
+
+func TestFitAndCellsGiveExactWidths(t *testing.T) {
+	colored := "\x1b[31mréservé 日本語\x1b[0m plain"
+	for _, s := range []string{"", "short", colored, strings.Repeat("字", 30)} {
+		for w := 0; w <= 24; w++ {
+			for name, got := range map[string]string{"Fit": Fit(s, w), "FitRight": FitRight(s, w), "Cells": Cells(s, 0, w), "Cells mid": Cells(s, 3, 3+w)} {
+				if Width(got) != w {
+					t.Fatalf("%s(%q, %d) = %q, %d wide", name, s, w, got, Width(got))
+				}
+			}
+		}
+	}
+	if got := FitRight("42", 5); got != "   42" {
+		t.Fatalf("FitRight = %q", got)
+	}
+	if got := Cells("abcdefgh", 2, 5); got != "cde" {
+		t.Fatalf("Cells = %q", got)
+	}
+}

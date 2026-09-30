@@ -28,10 +28,13 @@ func TestBuiltInThemesAreComplete(t *testing.T) {
 	}
 }
 
-func TestDefaultThemeKeepsOriginalColors(t *testing.T) {
-	theme, _ := ui.LoadTheme("", nil)
-	if theme.Name != "default" || theme.HeaderBg != "62" || theme.CursorBg != "13" || theme.Syntax != "monokai" {
-		t.Fatalf("default theme changed: %+v", theme)
+func TestClassicThemeKeepsOriginalColors(t *testing.T) {
+	theme, warnings := ui.LoadTheme("classic", nil)
+	if len(warnings) > 0 || theme.Accent != "62" || theme.CursorBg != "13" || theme.Syntax != "monokai" {
+		t.Fatalf("classic theme changed: %+v (%v)", theme, warnings)
+	}
+	if theme, _ := ui.LoadTheme("", nil); theme.Name != "default" || theme.Syntax != "sushi" {
+		t.Fatalf("no name should mean the default theme, got %+v", theme)
 	}
 }
 

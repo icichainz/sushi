@@ -22,9 +22,11 @@ type Tab struct {
 	focusPath       string // File to put the cursor on after the next load
 	CurrentPath     string
 	Files           []fs.FileInfo
+	ParentFiles     []fs.FileInfo // Contents of the parent directory, for the parent pane
 	Cursor          int
 	Selected        map[string]bool // Paths marked for multi-file operations
 	Preview         components.PreviewContent
+	PreviewScroll   int // First visible line of the preview
 	PreviewEnabled  bool
 	PreviewWidth    int
 	SearchQuery     string
@@ -46,7 +48,6 @@ type Model struct {
 	width   int
 	height  int
 	theme   ui.Theme
-	styles  ui.Styles
 	initCmd tea.Cmd // Returned from Init, e.g. to clear startup warnings
 
 	// Key bindings
@@ -55,7 +56,7 @@ type Model struct {
 	// Mode
 	mode       Mode
 	prompt     prompt // Text input for ModeInput
-	helpScroll int    // First visible row of the help screen
+	helpScroll int    // First visible row of the key panel
 
 	// Status message
 	statusMsg string
@@ -75,6 +76,8 @@ type Model struct {
 	plugins      []plugins.Plugin
 	pluginKeys   map[string]int // Shortcut to index in plugins
 	pluginCursor int
+	runInput     components.TextInput // Shell command typed in the Run palette
+	runTyping    bool                 // Whether keys go to runInput or the plugin list
 
 	// Configuration
 	config     *config.Config
@@ -169,6 +172,8 @@ type KeyMap struct {
 	AddBookmark key.Binding
 	Quit        key.Binding
 	Help        key.Binding
+	PreviewUp   key.Binding
+	PreviewDown key.Binding
 	Plugins     key.Binding
 	Shell       key.Binding
 	Preview     key.Binding
@@ -291,6 +296,14 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("?"),
 			key.WithHelp("?", "help"),
 		),
+		PreviewUp: key.NewBinding(
+			key.WithKeys("K"),
+			key.WithHelp("K", "scroll preview up"),
+		),
+		PreviewDown: key.NewBinding(
+			key.WithKeys("J"),
+			key.WithHelp("J", "scroll preview down"),
+		),
 		Plugins: key.NewBinding(
 			key.WithKeys("P"),
 			key.WithHelp("P", "plugins"),
@@ -359,7 +372,6 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 
 	m := Model{
 		theme:      theme,
-		styles:     ui.NewStyles(theme),
 		keys:       DefaultKeyMap(),
 		mode:       ModeNormal,
 		bookmarks:  config.LoadBookmarks(),
@@ -375,6 +387,7 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	} else {
 		initialTab.setFiles(files)
 	}
+	initialTab.ParentFiles = scanParent(path, m.scanOptions())
 
 	// Load initial preview
 	if len(initialTab.Files) > 0 && initialTab.PreviewEnabled {

@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/plugins"
+	"github.com/icichainz/sushi/internal/ui/components"
 )
 
 // pluginDoneMsg is sent when a plugin finishes
@@ -205,19 +206,55 @@ func (w *waitCommand) Run() error {
 	return err
 }
 
-// handlePluginMode handles key presses in the plugin menu
+// openRun opens the Run palette, ready to type a shell command or to pick
+// a plugin
+func (m Model) openRun(typing bool) (tea.Model, tea.Cmd) {
+	m.mode = ModePlugins
+	m.pluginCursor = 0
+	m.runInput = components.NewTextInput("")
+	m.runTyping = typing
+	return m, nil
+}
+
+// handlePluginMode handles key presses in the Run palette. Tab switches
+// between typing a shell command and the plugin list.
 func (m Model) handlePluginMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.mode = ModeNormal
+		return m, nil
+	case tea.KeyTab, tea.KeyShiftTab:
+		m.runTyping = !m.runTyping
+		return m, nil
+	case tea.KeyEnter:
+		command := strings.TrimSpace(m.runInput.Value())
+		switch {
+		case m.runTyping && command == "":
+			return m, nil
+		case m.runTyping:
+			// A shell command is an unnamed plugin: it gets the same
+			// arguments and environment, and waits so its output can be read
+			m.mode = ModeNormal
+			return m.runPlugin(plugins.Plugin{Name: "shell", Command: command, Mode: plugins.ModeWait})
+		case m.pluginCursor < len(m.plugins):
+			m.mode = ModeNormal
+			return m.runPlugin(m.plugins[m.pluginCursor])
+		}
+		return m, nil
+	}
+
+	if m.runTyping {
+		m.runInput.Update(msg)
+		return m, nil
+	}
 	switch {
 	case key.Matches(msg, m.keys.Up):
 		m.pluginCursor = max(m.pluginCursor-1, 0)
 	case key.Matches(msg, m.keys.Down):
 		m.pluginCursor = min(m.pluginCursor+1, max(len(m.plugins)-1, 0))
-	case msg.Type == tea.KeyEnter:
-		m.mode = ModeNormal
-		if m.pluginCursor < len(m.plugins) {
-			return m.runPlugin(m.plugins[m.pluginCursor])
-		}
-	case msg.Type == tea.KeyEsc, msg.String() == "q":
+	case key.Matches(msg, m.keys.Shell):
+		m.runTyping = true
+	case msg.String() == "q":
 		m.mode = ModeNormal
 	}
 	return m, nil
