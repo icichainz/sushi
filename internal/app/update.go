@@ -177,24 +177,27 @@ func previewConfig(syntax string) components.PreviewConfig {
 
 // handleKeyPress processes keyboard input
 func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// The key panel: j/k scroll it when it doesn't fit, esc closes it, and
-	// any other key closes it and does what the panel says it does
+	// The key panel: the down and up keys scroll it when it doesn't fit,
+	// and esc and the help key close it. So does the quit key it shows (q),
+	// as people press it to leave the panel, not sushi. Any other key
+	// closes it and does what the panel says it does.
 	if m.mode == ModeHelp {
 		scrolls := m.maxHelpScroll() > 0
+		quit := shownKey(m.keys.Quit)
 		switch s := msg.String(); {
-		case scrolls && (s == "j" || s == "down"):
+		case s == "esc", key.Matches(msg, m.keys.Help), quit != "" && keyName(s) == quit:
+			m.mode = ModeNormal
+			m.helpScroll = 0
+			return m, nil
+		case scrolls && key.Matches(msg, m.keys.Down):
 			m.helpScroll = min(m.helpScroll+1, m.maxHelpScroll())
 			return m, nil
-		case scrolls && (s == "k" || s == "up"):
+		case scrolls && key.Matches(msg, m.keys.Up):
 			m.helpScroll = max(m.helpScroll-1, 0)
 			return m, nil
 		}
 		m.mode = ModeNormal
 		m.helpScroll = 0
-		switch msg.String() {
-		case "esc", "?", "q":
-			return m, nil
-		}
 		return m.handleKeyPress(msg)
 	}
 
@@ -352,12 +355,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case key.Matches(msg, m.keys.Right), key.Matches(msg, m.keys.Enter):
-		if len(tab.Files) > 0 {
-			if file := tab.Files[tab.Cursor]; !file.IsDir {
-				return m.openFile(file)
-			}
-			return m, m.loadDir(tab, tab.Files[tab.Cursor].Path)
-		}
+		return m.openCursor()
 
 	case key.Matches(msg, m.keys.Edit):
 		return m.edit(m.targets())
@@ -366,12 +364,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openWithSystem(m.targets())
 
 	case key.Matches(msg, m.keys.Left), key.Matches(msg, m.keys.Back):
-		parentPath := filepath.Dir(tab.CurrentPath)
-		if parentPath != tab.CurrentPath {
-			return m, m.loadDir(tab, parentPath)
-		}
-		cmd := m.setStatus("Already at root directory")
-		return m, cmd
+		return m.goParent()
 
 	case key.Matches(msg, m.keys.Delete):
 		return m.startDelete()
@@ -461,8 +454,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.closeTab()
 	}
 
-	// Handle number keys 1-9 for quick bookmark access
-	if len(msg.Runes) == 1 {
+	// Handle number keys 1-9 for quick bookmark access, unless the config
+	// has given the digit to an action
+	if len(msg.Runes) == 1 && m.keys.actionFor(msg.String()) == "" {
 		r := msg.Runes[0]
 		if r >= '1' && r <= '9' {
 			idx := int(r - '1')
@@ -473,6 +467,29 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// openCursor opens the file under the cursor, or enters the directory
+func (m Model) openCursor() (tea.Model, tea.Cmd) {
+	tab := m.tab()
+	if len(tab.Files) == 0 {
+		return m, nil
+	}
+	if file := tab.Files[tab.Cursor]; !file.IsDir {
+		return m.openFile(file)
+	}
+	return m, m.loadDir(tab, tab.Files[tab.Cursor].Path)
+}
+
+// goParent goes up to the parent directory
+func (m Model) goParent() (tea.Model, tea.Cmd) {
+	tab := m.tab()
+	parentPath := filepath.Dir(tab.CurrentPath)
+	if parentPath != tab.CurrentPath {
+		return m, m.loadDir(tab, parentPath)
+	}
+	cmd := m.setStatus("Already at root directory")
+	return m, cmd
 }
 
 // createTab creates a new tab at the specified path
@@ -505,22 +522,12 @@ func (m Model) closeTab() (tea.Model, tea.Cmd) {
 
 // handleBookmarkMode handles key presses in bookmark mode
 func (m Model) handleBookmarkMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Same movement keys as the file list, so j/k work as well as arrows
-	if key.Matches(msg, m.keys.Up) {
-		m.bookmarkCursor = max(m.bookmarkCursor-1, 0)
-		return m, nil
-	}
-	if key.Matches(msg, m.keys.Down) {
-		m.bookmarkCursor = min(m.bookmarkCursor+1, max(m.bookmarks.Len()-1, 0))
-		return m, nil
-	}
-
-	switch msg.Type {
-	case tea.KeyEsc:
+	switch {
+	case msg.Type == tea.KeyEsc:
 		m.mode = ModeNormal
 		return m, nil
 
-	case tea.KeyEnter:
+	case msg.Type == tea.KeyEnter:
 		// Go to selected bookmark
 		if bm := m.bookmarks.Get(m.bookmarkCursor); bm != nil {
 			m.mode = ModeNormal
@@ -528,25 +535,33 @@ func (m Model) handleBookmarkMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyRunes:
-		if len(msg.Runes) == 1 && msg.Runes[0] == 'd' {
-			// Delete selected bookmark
-			var cmd tea.Cmd
-			if err := m.bookmarks.Remove(m.bookmarkCursor); err != nil {
-				cmd = m.setStatus(fmt.Sprintf("Error: %v", err))
-			} else {
-				cmd = m.setStatus("Bookmark removed")
-				// Adjust cursor if needed
-				if m.bookmarkCursor >= m.bookmarks.Len() && m.bookmarkCursor > 0 {
-					m.bookmarkCursor--
-				}
+	// The same keys as in the file list move, so j/k work as well as the
+	// arrows, and the delete key removes a bookmark
+	case key.Matches(msg, m.keys.Up):
+		m.bookmarkCursor = max(m.bookmarkCursor-1, 0)
+		return m, nil
+
+	case key.Matches(msg, m.keys.Down):
+		m.bookmarkCursor = min(m.bookmarkCursor+1, max(m.bookmarks.Len()-1, 0))
+		return m, nil
+
+	case key.Matches(msg, m.keys.Delete):
+		// Delete selected bookmark
+		var cmd tea.Cmd
+		if err := m.bookmarks.Remove(m.bookmarkCursor); err != nil {
+			cmd = m.setStatus(fmt.Sprintf("Error: %v", err))
+		} else {
+			cmd = m.setStatus("Bookmark removed")
+			// Adjust cursor if needed
+			if m.bookmarkCursor >= m.bookmarks.Len() && m.bookmarkCursor > 0 {
+				m.bookmarkCursor--
 			}
-			// Exit if no bookmarks left
-			if m.bookmarks.Len() == 0 {
-				m.mode = ModeNormal
-			}
-			return m, cmd
 		}
+		// Exit if no bookmarks left
+		if m.bookmarks.Len() == 0 {
+			m.mode = ModeNormal
+		}
+		return m, cmd
 	}
 
 	return m, nil

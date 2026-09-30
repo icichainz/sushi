@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -72,5 +73,26 @@ func TestBookmarksRoundTrip(t *testing.T) {
 	reloaded.Remove(0)
 	if again := LoadBookmarks(); again.Len() != 1 || again.Get(0).Path != "/tmp/docs" {
 		t.Fatalf("after remove: %+v", again.Bookmarks)
+	}
+}
+
+func TestConfigProblemsAreKept(t *testing.T) {
+	dir := useTempHome(t)
+
+	// A value of the wrong kind keeps its default, and the rest is read
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("show_hidden: true\npreview_width: wide\n"), 0644)
+	cfg := LoadConfig()
+	if !cfg.ShowHidden || cfg.PreviewWidth != DefaultConfig().PreviewWidth {
+		t.Fatalf("show_hidden=%v preview_width=%d", cfg.ShowHidden, cfg.PreviewWidth)
+	}
+	if len(cfg.Problems) != 1 || !strings.Contains(cfg.Problems[0], "config.yaml: line 2") {
+		t.Fatalf("problems = %q", cfg.Problems)
+	}
+
+	// YAML that can't be read at all leaves the defaults, and says so
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("show_hidden: true\n  sort_by: [\n"), 0644)
+	cfg = LoadConfig()
+	if cfg.ShowHidden || len(cfg.Problems) != 1 || !strings.Contains(cfg.Problems[0], "config.yaml") {
+		t.Fatalf("show_hidden=%v problems=%q", cfg.ShowHidden, cfg.Problems)
 	}
 }

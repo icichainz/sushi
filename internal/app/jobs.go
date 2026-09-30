@@ -154,12 +154,16 @@ func (m Model) whileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		}
 		m.job.cancel()
 		m.changeJob(func(j *job) { j.cancelled, j.quit = true, true })
-		cmd := m.setStatus(fmt.Sprintf("Stopping %s before quitting; press q again to quit now", doing))
+		cmd := m.setStatus(fmt.Sprintf("Stopping %s before quitting; press %s again to quit now", doing, keyName(msg.String())))
 		return m, cmd, true
 
 	case key.Matches(msg, k.Delete, k.HardDelete, k.Paste, k.PasteLink, k.Rename, k.BulkRename,
 		k.NewFile, k.NewDir, k.Duplicate, k.Chmod, k.Archive, k.Extract, k.Undo):
-		cmd := m.setStatus(fmt.Sprintf("Still %s: wait for it to finish, or press ctrl+x to cancel it", doing))
+		wait := "wait for it to finish"
+		if cancel := keysLabel(" ", k.Cancel); cancel != "" {
+			wait += ", or press " + cancel + " to cancel it"
+		}
+		cmd := m.setStatus(fmt.Sprintf("Still %s: %s", doing, wait))
 		return m, cmd, true
 	}
 	return m, nil, false

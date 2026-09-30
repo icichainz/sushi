@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -16,6 +17,15 @@ var sortFields = []struct{ key, by, desc string }{
 	{"s", "size", "largest first"},
 	{"m", "modified", "newest first"},
 	{"t", "type", "by extension"},
+}
+
+// sortLetters lists the letters of the sort menu, as "n s m t"
+func sortLetters() string {
+	letters := make([]string, len(sortFields))
+	for i, f := range sortFields {
+		letters[i] = f.key
+	}
+	return strings.Join(letters, " ")
 }
 
 // resortDelay is how often tabs that were loading when the order changed
@@ -41,31 +51,34 @@ func (m Model) openSortMenu() (tea.Model, tea.Cmd) {
 }
 
 // handleSortMode handles keys in the sort menu: a field's letter, or
-// moving to it and pressing Enter, sorts by it; S reverses the order
+// moving to it and pressing Enter, sorts by it; the reverse key (S)
+// reverses the order. The menu's own keys come first, as it shows them;
+// q closes it unless an action there has taken q.
 func (m Model) handleSortMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	s := msg.String()
+	switch s {
+	case "esc":
+		m.mode = ModeNormal
+		return m, nil
+	case "enter":
+		return m.chooseSort(sortFields[m.sortCursor].by)
+	}
+	for _, f := range sortFields {
+		if s == f.key {
+			return m.chooseSort(f.by)
+		}
+	}
+
 	switch {
 	case key.Matches(msg, m.keys.Up):
 		m.sortCursor = max(m.sortCursor-1, 0)
-		return m, nil
 	case key.Matches(msg, m.keys.Down):
 		m.sortCursor = min(m.sortCursor+1, len(sortFields)-1)
-		return m, nil
-	}
-
-	switch s := msg.String(); s {
-	case "esc", "q":
-		m.mode = ModeNormal
-	case "enter":
-		return m.chooseSort(sortFields[m.sortCursor].by)
-	case "S":
+	case key.Matches(msg, m.keys.Reverse):
 		m.mode = ModeNormal
 		return m.reverseSort()
-	default:
-		for _, f := range sortFields {
-			if s == f.key {
-				return m.chooseSort(f.by)
-			}
-		}
+	case s == "q":
+		m.mode = ModeNormal
 	}
 	return m, nil
 }

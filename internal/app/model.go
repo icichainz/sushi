@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -163,7 +164,8 @@ const (
 	ModeFind
 )
 
-// KeyMap defines all key bindings
+// KeyMap defines all key bindings. Each field is an action that keys: in
+// the config file can remap, by its name in snake_case; see keys.go.
 type KeyMap struct {
 	Up          key.Binding
 	Down        key.Binding
@@ -458,6 +460,7 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 
 	// Problems are shown in the status bar rather than stopping startup
 	theme, problems := ui.LoadTheme(cfg.Theme, cfg.Colors)
+	problems = append(slices.Clone(cfg.Problems), problems...)
 	if cfg.SyntaxTheme != "" {
 		if components.HasSyntaxTheme(cfg.SyntaxTheme) {
 			theme.Syntax = cfg.SyntaxTheme
@@ -465,10 +468,12 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 			problems = append(problems, fmt.Sprintf("unknown syntax_theme %q", cfg.SyntaxTheme))
 		}
 	}
+	keys, keyProblems := loadKeyMap(cfg.Keys)
+	problems = append(problems, keyProblems...)
 
 	m := Model{
 		theme:       theme,
-		keys:        DefaultKeyMap(),
+		keys:        keys,
 		mode:        ModeNormal,
 		bookmarks:   config.LoadBookmarks(),
 		config:      cfg,

@@ -147,7 +147,7 @@ func undoWork(t *fs.Task, e undoEntry, useTrash bool) jobDoneMsg {
 	op.operation = "undo"
 	switch {
 	case t.Err() != nil:
-		op.message = fmt.Sprintf("Cancelled undoing %s; ctrl+z carries on", e.label)
+		op.message = fmt.Sprintf("Cancelled undoing %s; undoing again carries on", e.label)
 	case firstErr != nil && failures == len(e.steps):
 		op.err = fmt.Errorf("can't undo %s: %w", e.label, firstErr)
 	case firstErr != nil:

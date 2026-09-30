@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -608,7 +609,7 @@ func (m Model) modeBadge() (string, lipgloss.Color) {
 
 // isProblem reports whether a status message describes a failure
 func isProblem(msg string) bool {
-	for _, word := range []string{"Error", "failed", "Can't", "unknown", "invalid"} {
+	for _, word := range []string{"Error", "failed", "Can't", "unknown", "invalid", "conflict"} {
 		if strings.Contains(msg, word) {
 			return true
 		}
@@ -686,12 +687,16 @@ func (m Model) renderStatusBar() string {
 
 type hint struct{ key, label string }
 
-// renderHints renders as many key hints as fit on one line
+// renderHints renders as many key hints as fit on one line, leaving out
+// actions that have no key
 func (m Model) renderHints(hints []hint) string {
 	t := m.theme
 	var b strings.Builder
 	used := 1
 	for _, h := range hints {
+		if h.key == "" {
+			continue
+		}
 		w := utils.Width(h.key) + 1 + utils.Width(h.label) + 3
 		if used+w > m.width {
 			break
@@ -703,8 +708,10 @@ func (m Model) renderHints(hints []hint) string {
 }
 
 // renderBottomRow renders the last line: key hints for the current mode,
-// or the text being typed
+// or the text being typed. Keys from the key map are shown as bound; the
+// rest are the modes' own.
 func (m Model) renderBottomRow() string {
+	k := m.keys
 	switch m.mode {
 	case ModeSearch:
 		return m.renderSearchBar()
@@ -720,29 +727,31 @@ func (m Model) renderBottomRow() string {
 		}
 		return m.renderHints([]hint{{"y", verb}, {"n", "keep"}, {"esc", "cancel"}})
 	case ModeBookmarks:
-		return m.renderHints([]hint{{"1-9", "jump"}, {"enter", "go"}, {"d", "remove"}, {"esc", "close"}})
+		return m.renderHints([]hint{{"1-9", "jump"}, {"enter", "go"}, keyHint("remove", k.Delete), {"esc", "close"}})
 	case ModePlugins:
 		return m.renderHints([]hint{{"enter", "run"}, {"tab", "switch between command and plugins"}, {"esc", "close"}})
 	case ModeSort:
-		return m.renderHints([]hint{{"n s m t", "sort by"}, {"enter", "choose"}, {"S", "reverse"}, {"esc", "close"}})
+		return m.renderHints([]hint{{sortLetters(), "sort by"}, {"enter", "choose"}, keyHint("reverse", k.Reverse), {"esc", "close"}})
 	case ModeFind:
 		return m.renderHints(m.findHints())
 	case ModeHelp:
 		if m.maxHelpScroll() > 0 {
-			return m.renderHints([]hint{{"esc", "close"}, {"j/k", "scroll"}, {"any other key", "does what it says"}})
+			return m.renderHints([]hint{{"esc", "close"}, {keysLabel("/", k.Down, k.Up), "scroll"}, {"any other key", "does what it says"}})
 		}
 		return m.renderHints([]hint{{"esc", "close"}, {"any other key", "does what it says"}})
 	}
 	if m.job != nil {
-		return m.renderHints([]hint{{"ctrl+x", "cancel " + strings.ToLower(m.job.doing)}, {"enter", "open"}, {"space", "select"},
-			{"c", "copy"}, {"x", "cut"}, {"/", "search"}, {"?", "all keys"}})
+		return m.renderHints([]hint{keyHint("cancel "+strings.ToLower(m.job.doing), k.Cancel), keyHint("open", k.Enter),
+			keyHint("select", k.Select), keyHint("copy", k.Copy), keyHint("cut", k.Cut), keyHint("search", k.Search), keyHint("all keys", k.Help)})
 	}
 	if len(m.tabs[m.activeTabIdx].Selected) > 0 {
-		return m.renderHints([]hint{{"space", "toggle"}, {"*", "invert"}, {"u", "clear"}, {"c", "copy"}, {"x", "cut"},
-			{"d", "delete"}, {"e", "edit"}, {"o", "open"}, {"!", "shell"}, {"?", "all keys"}})
+		return m.renderHints([]hint{keyHint("toggle", k.Select), keyHint("invert", k.Invert), keyHint("clear", k.Unselect),
+			keyHint("copy", k.Copy), keyHint("cut", k.Cut), keyHint("delete", k.Delete), keyHint("edit", k.Edit),
+			keyHint("open", k.Open), keyHint("shell", k.Shell), keyHint("all keys", k.Help)})
 	}
-	return m.renderHints([]hint{{"enter", "open"}, {"space", "select"}, {"c", "copy"}, {"x", "cut"}, {"v", "paste"},
-		{"r", "rename"}, {"n", "new"}, {"d", "delete"}, {"/", "search"}, {"?", "all keys"}})
+	return m.renderHints([]hint{keyHint("open", k.Enter), keyHint("select", k.Select), keyHint("copy", k.Copy), keyHint("cut", k.Cut),
+		keyHint("paste", k.Paste), keyHint("rename", k.Rename), keyHint("new", k.NewFile), keyHint("delete", k.Delete),
+		keyHint("search", k.Search), keyHint("all keys", k.Help)})
 }
 
 // renderSearchBar renders the search query being typed
@@ -882,8 +891,10 @@ func (m Model) bookmarksBox() []string {
 
 	var body []string
 	if m.bookmarks.Len() == 0 {
-		body = append(body, " "+m.fg(t.Text).Render("No bookmarks yet"), "",
-			" "+m.fg(t.Muted).Render("Press B to bookmark the current directory"))
+		body = append(body, " "+m.fg(t.Text).Render("No bookmarks yet"))
+		if add := keysLabel(" ", m.keys.AddBookmark); add != "" {
+			body = append(body, "", " "+m.fg(t.Muted).Render("Press "+add+" to bookmark the current directory"))
+		}
 	}
 	for i := 0; i < m.bookmarks.Len(); i++ {
 		bm := m.bookmarks.Get(i)
@@ -937,29 +948,59 @@ func (m Model) runBox() []string {
 	return m.dialog("Run", t.Accent, body, width)
 }
 
-// helpGroups lists the keyboard shortcuts shown in the key panel
-var helpGroups = []struct {
+// helpGroup is a column of the key panel
+type helpGroup struct {
 	title string
 	keys  []hint
-}{
-	{"Move", []hint{{"j k", "down, up"}, {"h l", "parent, open"}, {"g G", "first, last"}, {"ctrl+u d", "page up, down"}, {"J K", "scroll preview"}}},
-	{"Files", []hint{{"enter", "open"}, {"e o", "edit, default app"}, {"r", "rename"}, {"n N", "new file, folder"}, {"d D", "trash, delete"}}},
-	{"Tools", []hint{{"ctrl+z", "undo"}, {"ctrl+x", "cancel operation"}, {"y V", "duplicate, paste link"}, {"m R", "chmod, bulk rename"}, {"a X", "zip, extract"}}},
-	{"Select", []hint{{"space", "toggle"}, {"*", "invert"}, {"u", "clear"}, {"c x v", "copy, cut, paste"}}},
-	{"View", []hint{{"/", "search"}, {"p", "preview"}, {".", "hidden files"}, {"?", "this panel"}}},
-	{"Find", []hint{{"f", "find by name"}, {"F", "find in files"}, {"s S", "sort by, reverse"}, {"ctrl+r", "refresh"}, {"Q", "quit without cd"}}},
-	{"Tabs", []hint{{"t T", "new here, home"}, {"tab", "next"}, {"shift+tab", "previous"}, {"ctrl+w", "close"}}},
-	{"Go", []hint{{"b B", "bookmarks, add"}, {"1-9", "jump to bookmark"}, {"P", "plugins"}, {"!", "shell command"}, {"q", "quit"}}},
+}
+
+// helpGroups lists the keyboard shortcuts shown in the key panel, each
+// labelled with the keys it is bound to. Every action of the key map is
+// here, and those left without a key are left out.
+func (k KeyMap) helpGroups() []helpGroup {
+	groups := []helpGroup{
+		{"Move", []hint{keyHint("down, up", k.Down, k.Up), keyHint("parent, open", k.Left, k.Right), keyHint("parent", k.Back),
+			keyHint("first, last", k.Home, k.End), keyHint("page up, down", k.PageUp, k.PageDown)}},
+		{"Files", []hint{keyHint("open", k.Enter), keyHint("edit, default app", k.Edit, k.Open), keyHint("rename", k.Rename),
+			keyHint("new file, folder", k.NewFile, k.NewDir), keyHint("trash, delete", k.Delete, k.HardDelete)}},
+		{"Tools", []hint{keyHint("undo", k.Undo), keyHint("cancel operation", k.Cancel), keyHint("duplicate, paste link", k.Duplicate, k.PasteLink),
+			keyHint("chmod, bulk rename", k.Chmod, k.BulkRename), keyHint("zip, extract", k.Archive, k.Extract)}},
+		{"Select", []hint{keyHint("toggle", k.Select), keyHint("invert", k.Invert), keyHint("clear", k.Unselect),
+			keyHint("copy, cut, paste", k.Copy, k.Cut, k.Paste)}},
+		{"View", []hint{keyHint("search", k.Search), keyHint("preview", k.Preview), keyHint("scroll preview", k.PreviewDown, k.PreviewUp),
+			keyHint("hidden files", k.Hidden), keyHint("this panel", k.Help)}},
+		{"Find", []hint{keyHint("find by name", k.Find), keyHint("find in files", k.Grep), keyHint("sort by, reverse", k.Sort, k.Reverse),
+			keyHint("refresh", k.Refresh), keyHint("quit without cd", k.QuitNoCd)}},
+		{"Tabs", []hint{keyHint("new here, home", k.NewTab, k.NewTabHome), keyHint("next", k.NextTab), keyHint("previous", k.PrevTab),
+			keyHint("close", k.CloseTab)}},
+		{"Go", []hint{keyHint("bookmarks, add", k.Bookmark, k.AddBookmark), {"1-9", "jump to bookmark"}, keyHint("plugins", k.Plugins),
+			keyHint("shell command", k.Shell), keyHint("quit", k.Quit)}},
+	}
+	for i := range groups {
+		groups[i].keys = slices.DeleteFunc(groups[i].keys, func(h hint) bool { return h.key == "" })
+	}
+	return groups
 }
 
 const (
-	helpKeyW = 10
+	helpKeyW = 10 // Narrowest key column
 	helpColW = 30
 )
+
+// keyWidth returns the width of a group's key column: helpKeyW, or more
+// for long remapped keys, up to half the column
+func (g helpGroup) keyWidth(colW int) int {
+	w := helpKeyW
+	for _, h := range g.keys {
+		w = max(w, utils.Width(h.key)+1)
+	}
+	return min(w, max(colW/2, helpKeyW))
+}
 
 // helpLines lays the key groups out in as many columns as fit the width
 func (m Model) helpLines() []string {
 	t := m.theme
+	helpGroups := m.keys.helpGroups()
 	cols := max(min(m.width/helpColW, len(helpGroups)), 1)
 	colW := m.width / cols
 
@@ -983,8 +1024,9 @@ func (m Model) helpLines() []string {
 					cell = " " + m.fg(t.Faint).Render(group.title)
 				case i <= len(group.keys):
 					k := group.keys[i-1]
-					cell = " " + m.fg(t.Highlight).Bold(true).Render(utils.Fit(k.key, helpKeyW)) +
-						m.fg(t.Text).Render(utils.Truncate(k.label, colW-helpKeyW-2))
+					keyW := group.keyWidth(colW)
+					cell = " " + m.fg(t.Highlight).Bold(true).Render(utils.Fit(k.key, keyW)) +
+						m.fg(t.Text).Render(utils.Truncate(k.label, colW-keyW-2))
 				}
 				b.WriteString(utils.Fit(cell, colW))
 			}
@@ -1013,7 +1055,10 @@ func (m Model) renderHelpView() string {
 
 	rule := strings.Repeat(g.hline, m.width)
 	if len(all) > rows {
-		label := fmt.Sprintf(" j/k to scroll, %d-%d of %d ", offset+1, offset+rows, len(all))
+		label := fmt.Sprintf(" %d-%d of %d ", offset+1, offset+rows, len(all))
+		if keys := keysLabel("/", m.keys.Down, m.keys.Up); keys != "" {
+			label = fmt.Sprintf(" %s to scroll,%s", keys, label)
+		}
 		rule = utils.Cells(strings.Repeat(g.hline, 2)+label+rule, 0, m.width)
 	}
 	lines := []string{m.fg(m.theme.Accent).Render(rule)}

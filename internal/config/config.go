@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -34,6 +36,13 @@ type Config struct {
 
 	// External commands; scripts in PluginDir are added to these
 	Plugins []plugins.Plugin `yaml:"plugins"`
+
+	// Keys for actions by name, replacing their defaults; actions left
+	// out keep theirs. sushi --list-keys prints the names.
+	Keys map[string]KeyList `yaml:"keys"`
+
+	// Problems found reading the file, for the app to show at startup
+	Problems []string `yaml:"-"`
 }
 
 // DefaultConfig returns a config with sensible defaults
@@ -81,8 +90,18 @@ func LoadConfig() *Config {
 
 	// Parse YAML, keep defaults for any missing fields
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		// Return defaults on parse error
-		return DefaultConfig()
+		name := filepath.Base(configPath)
+		var typeErr *yaml.TypeError
+		if !errors.As(err, &typeErr) {
+			// Unreadable: use the defaults, and say why
+			cfg = DefaultConfig()
+			cfg.Problems = []string{fmt.Sprintf("%s: %v", name, err)}
+			return cfg
+		}
+		// A value of the wrong kind keeps its default; the rest still counts
+		for _, e := range typeErr.Errors {
+			cfg.Problems = append(cfg.Problems, name+": "+e)
+		}
 	}
 
 	// Validate and clamp values
