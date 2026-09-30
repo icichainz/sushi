@@ -377,6 +377,30 @@ func TestReloadLeavesPromptsAndSearchAlone(t *testing.T) {
 	}
 }
 
+func TestReloadDuringSearchKeepsTheCursorOnAMatch(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.txt", "b-match.txt", "c.txt", "d.txt", "e-match.txt"} {
+		writeTestFile(t, filepath.Join(dir, name), "")
+	}
+	m := newTestModel(t, dir, noWatch())
+	m = typeQuery(t, m, "match")
+	if cursorName(m) != "b-match.txt" {
+		t.Fatalf("cursor on %s, want the first match", cursorName(m))
+	}
+
+	// The match under the cursor goes: the cursor stays at its position,
+	// on c.txt, which the search hides, so it moves to the nearest match
+	os.Remove(filepath.Join(dir, "b-match.txt"))
+	m = changeDirs(t, m, dir)
+	tab := m.tab()
+	if cursorName(m) != "e-match.txt" || tab.SearchResultIdx != 0 || tab.Preview.Path != filepath.Join(dir, "e-match.txt") {
+		t.Fatalf("cursor on %s (result %d), preview of %s; want the remaining match", cursorName(m), tab.SearchResultIdx, filepath.Base(tab.Preview.Path))
+	}
+	if status := ansi.Strip(m.renderStatusBar()); !strings.Contains(status, "1 of 4 match") || !strings.HasSuffix(strings.TrimSpace(status), "1/1") {
+		t.Fatalf("status = %q", status)
+	}
+}
+
 func TestReloadKeepsThePreviewOfAnUnchangedFile(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "notes.txt")

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -81,6 +82,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.mode == ModeSearch && tab.ID == m.tab().ID {
 			m.updateSearchResults()
+			m.cursorToMatch()
 		}
 		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt)
 		return m, cmd
@@ -720,6 +722,27 @@ func (m *Model) updateSearchResults() {
 			tab.SearchMatchSet[i] = struct{}{}
 		}
 	}
+}
+
+// cursorToMatch puts the cursor on the nearest match when a reload has
+// left it on a file the search hides, such as the one after a match that
+// was deleted
+func (m *Model) cursorToMatch() {
+	tab := m.tab()
+	res := tab.SearchResults
+	if tab.SearchQuery == "" || len(res) == 0 {
+		return
+	}
+	if _, ok := tab.SearchMatchSet[tab.Cursor]; ok {
+		return
+	}
+	// Results are in list order: the first below the cursor, or the one
+	// above if that is as near
+	i, _ := slices.BinarySearch(res, tab.Cursor)
+	if i == len(res) || i > 0 && tab.Cursor-res[i-1] <= res[i]-tab.Cursor {
+		i--
+	}
+	tab.Cursor, tab.SearchResultIdx = res[i], i
 }
 
 // navigateSearchResults moves cursor through search results (O(1) using tracked index)
