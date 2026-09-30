@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,6 +73,25 @@ func press(t *testing.T, m Model, k string) (Model, tea.Cmd) {
 	}
 	updated, cmd := m.Update(msg)
 	return updated.(Model), cmd
+}
+
+// detach returns a copy of m that shares no tab or file state with it, so
+// keys pressed on the copy leave m as it was. A plain copy shares the tabs
+// slice, and with it every tab's lists and maps.
+func detach(m Model) Model {
+	m.tabs = slices.Clone(m.tabs)
+	for i := range m.tabs {
+		tab := &m.tabs[i]
+		tab.Files = slices.Clone(tab.Files)
+		tab.ParentFiles = slices.Clone(tab.ParentFiles)
+		tab.Selected = maps.Clone(tab.Selected)
+		tab.SearchResults = slices.Clone(tab.SearchResults)
+		tab.SearchMatchSet = maps.Clone(tab.SearchMatchSet)
+	}
+	m.clipboard = slices.Clone(m.clipboard)
+	m.pending = slices.Clone(m.pending)
+	m.undo = slices.Clone(m.undo)
+	return m
 }
 
 func writeTestFile(t *testing.T, path, content string) {

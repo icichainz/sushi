@@ -470,3 +470,85 @@ func TestWriteKeys(t *testing.T) {
 		t.Errorf("%d actions listed, want %d", len(parsed.Keys), len(again.actions()))
 	}
 }
+
+func TestCtrlCAlwaysQuits(t *testing.T) {
+	dir := threeFiles(t)
+
+	// From every mode, whatever the mode does with other keys
+	m := newTestModel(t, dir, nil)
+	m.bookmarks.Add("a", dir)
+	for _, keys := range []string{"", "/a", "r", "n", "D", "b", "P", "!", "s", "f", "Fx", "?"} {
+		screen := typeText(t, detach(m), keys)
+		if _, cmd := ctrl(t, screen, tea.KeyCtrlC); !quits(cmd) {
+			t.Errorf("ctrl+c after %q (mode %v) doesn't quit", keys, screen.mode)
+		}
+	}
+
+	// Quit on another key: ctrl+c still quits, and that is no problem
+	m = withKeys(t, dir, map[string]config.KeyList{"quit": {"ctrl+q"}})
+	if m.statusMsg != "" {
+		t.Fatalf("unexpected problems: %s", m.statusMsg)
+	}
+	for _, k := range []tea.KeyType{tea.KeyCtrlQ, tea.KeyCtrlC} {
+		if _, cmd := ctrl(t, m, k); !quits(cmd) {
+			t.Errorf("%v doesn't quit", k)
+		}
+	}
+
+	// No quit key at all is a problem, at startup and for --list-keys, but
+	// ctrl+c still quits
+	none := map[string]config.KeyList{"quit": {}, "quit_no_cd": {}, "close_tab": {}}
+	m = withKeys(t, dir, none)
+	wantProblems(t, m, "keys: invalid: quit has no key; only ctrl+c quits")
+	if !isProblem(m.statusMsg) {
+		t.Error("a missing quit key should be shown as a problem")
+	}
+	if _, cmd := ctrl(t, m, tea.KeyCtrlC); !quits(cmd) {
+		t.Error("ctrl+c doesn't quit without a quit key")
+	}
+	cfg := config.DefaultConfig()
+	cfg.Keys = none
+	var out strings.Builder
+	if problems, _ := WriteKeys(&out, cfg); len(problems) != 1 || !strings.Contains(problems[0], "quit has no key") {
+		t.Errorf("--list-keys problems = %q", problems)
+	}
+	if !strings.Contains(out.String(), "ctrl+c always quits") {
+		t.Errorf("--list-keys doesn't say ctrl+c always quits:\n%s", out.String())
+	}
+
+	// Another action can't take ctrl+c
+	m = withKeys(t, dir, map[string]config.KeyList{"copy": {"ctrl+c", "C"}})
+	wantProblems(t, m, `keys: conflict: "ctrl+c" for copy is ignored, as it always quits`)
+	if !slices.Equal(m.keys.Copy.Keys(), []string{"C"}) {
+		t.Errorf("copy = %q", m.keys.Copy.Keys())
+	}
+	if _, cmd := ctrl(t, m, tea.KeyCtrlC); !quits(cmd) {
+		t.Error("ctrl+c copies rather than quitting")
+	}
+
+	// Listed first, ctrl+c isn't the quit key the panel shows and closes
+	// with: q is. ctrl+c quits from the panel.
+	m = withKeys(t, dir, map[string]config.KeyList{"quit": {"ctrl+c", "q"}})
+	if h := keyHint("quit", m.keys.Quit); h.key != "q" {
+		t.Errorf("quit is labelled %q, want q", h.key)
+	}
+	m, _ = press(t, m, "?")
+	if closed, cmd := press(t, m, "q"); closed.mode != ModeNormal || cmd != nil {
+		t.Error("q should close the panel, and only that")
+	}
+	if _, cmd := ctrl(t, m, tea.KeyCtrlC); !quits(cmd) {
+		t.Error("ctrl+c should quit from the panel")
+	}
+
+	// While a job runs, ctrl+c does what the quit key does, in the browser
+	// and in a dialog: the job is stopped first
+	m = newTestModel(t, dir, nil)
+	m, _ = press(t, m, "d") // Started, but its command isn't run
+	viaQ, qCmd := press(t, detach(m), "q")
+	for _, keys := range []string{"", "s", "?"} {
+		viaC, cCmd := ctrl(t, typeText(t, detach(m), keys), tea.KeyCtrlC)
+		if quits(cCmd) != quits(qCmd) || (viaC.job == nil) != (viaQ.job == nil) || viaC.job != nil && viaC.job.quit != viaQ.job.quit {
+			t.Errorf("busy, after %q: ctrl+c quits=%v job=%+v; q quits=%v job=%+v", keys, quits(cCmd), viaC.job, quits(qCmd), viaQ.job)
+		}
+	}
+}

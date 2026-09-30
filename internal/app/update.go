@@ -177,13 +177,26 @@ func previewConfig(syntax string) components.PreviewConfig {
 
 // handleKeyPress processes keyboard input
 func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// ctrl+c quits from every mode, prompts and dialogs included, whatever
+	// the config binds. It is always a quit key (see loadKeyMap), so a
+	// running job is stopped first, as with the quit key.
+	if msg.String() == alwaysQuit {
+		if m.job != nil {
+			if model, cmd, handled := m.whileBusy(msg); handled {
+				return model, cmd
+			}
+		}
+		return m, tea.Quit
+	}
+
 	// The key panel: the down and up keys scroll it when it doesn't fit,
 	// and esc and the help key close it. So does the quit key it shows (q),
-	// as people press it to leave the panel, not sushi. Any other key
-	// closes it and does what the panel says it does.
+	// as people press it to leave the panel, not sushi; ctrl+c, handled
+	// above, still quits. Any other key closes it and does what the panel
+	// says it does.
 	if m.mode == ModeHelp {
 		scrolls := m.maxHelpScroll() > 0
-		quit := shownKey(m.keys.Quit)
+		quit := shownKey(m.keys.Quit) // Never ctrl+c while quit has another key
 		switch s := msg.String(); {
 		case s == "esc", key.Matches(msg, m.keys.Help), quit != "" && keyName(s) == quit:
 			m.mode = ModeNormal
