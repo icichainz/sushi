@@ -66,7 +66,7 @@ func (l *archiveListing) add(name string, dir bool, size int64) {
 	l.count++
 	l.unpacked += size
 	if len(l.entries) < maxArchiveEntries {
-		l.entries = append(l.entries, Entry{Name: cleanText(name), IsDir: dir, Size: size})
+		l.entries = append(l.entries, Entry{Name: utils.Printable(name), IsDir: dir, Size: size})
 	}
 }
 

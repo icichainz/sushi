@@ -44,6 +44,28 @@ func TestHumanizeSize(t *testing.T) {
 	}
 }
 
+func TestPrintableReplacesControlsRuneForRune(t *testing.T) {
+	for in, want := range map[string]string{
+		"plain-name.txt": "plain-name.txt",
+		"réservé 日本語 🍣 a\u200db \ufffd": "réservé 日本語 🍣 a\u200db \ufffd", // A real U+FFFD is kept
+		"two\nlines.txt":                "two?lines.txt",
+		"esc\x1b[2Jclear.txt":           "esc?[2Jclear.txt",
+		"tab\tcr\rbell\anul\x00":        "tab?cr?bell?nul?",
+		"del\x7f c1\u009b31m nel\u0085": "del? c1?31m nel?",
+		"line\u2028para\u2029end":       "line?para?end",
+		"bad\xff\xfeutf8\xc3":           "bad??utf8?",
+	} {
+		got := Printable(in)
+		if got != want {
+			t.Errorf("Printable(%q) = %q, want %q", in, got, want)
+		}
+		// Rune for rune, as []rune counts them, so positions still hold
+		if !utf8.ValidString(got) || len([]rune(got)) != len([]rune(in)) {
+			t.Errorf("Printable(%q) = %q: %d runes for %d", in, got, len([]rune(got)), len([]rune(in)))
+		}
+	}
+}
+
 func TestFitAndCellsGiveExactWidths(t *testing.T) {
 	colored := "\x1b[31mréservé 日本語\x1b[0m plain"
 	for _, s := range []string{"", "short", colored, strings.Repeat("字", 30)} {

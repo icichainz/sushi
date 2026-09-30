@@ -6,11 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -348,6 +350,74 @@ func TestEveryScreenFillsTheTerminal(t *testing.T) {
 		if !strings.Contains(lines[0], " 13 ") {
 			t.Errorf("%s: active tab 13 not visible in %q", label, lines[0])
 		}
+	}
+}
+
+// sgr matches the color codes the interface draws with; nothing else may
+// reach the terminal as an escape code
+var sgr = regexp.MustCompile("\x1b\\[[0-9;:]*m")
+
+// assertNoControls fails if a screen holds a control character outside a
+// color code: an escape code from a file name, a newline within a line
+func assertNoControls(t *testing.T, label, view string) {
+	t.Helper()
+	for i, line := range strings.Split(view, "\n") {
+		for _, r := range sgr.ReplaceAllString(line, "") {
+			if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || r == utf8.RuneError {
+				t.Errorf("%s: line %d carries %U: %q", label, i, r, line)
+				break
+			}
+		}
+	}
+}
+
+func TestHostileNamesCantBreakTheScreen(t *testing.T) {
+	root := t.TempDir()
+	here := filepath.Join(root, "dir\x1b[2J\nwith\tcontrols")
+	sub := filepath.Join(here, "sub\rdir\x1b]0;title\x07")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Skipf("this file system refuses control characters in names: %v", err)
+	}
+	writeTestFile(t, filepath.Join(sub, "in\nside\x1b[31m.txt"), "")
+	writeTestFile(t, filepath.Join(root, "sibling\x1b[2J\n.txt"), "")
+	writeTestFile(t, filepath.Join(here, "esc\x1b[2Jclear.txt"), "match \x1b[2J\x1b]0;x\x07 here\n")
+	for _, name := range []string{"two\nlines.txt", "c1\u009b31m.txt", "sep\u2028line\u2029para.txt", "bell\a\x7f.txt", "bad\xff.txt"} {
+		// Some file systems refuse invalid UTF-8; the rest are enough
+		os.WriteFile(filepath.Join(here, name), []byte("x"), 0644)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Plugins = []plugins.Plugin{{Name: "plug\x1b[2J\nin", Key: "ctrl+g", Command: "true", Description: "does\nthings\x1b[31m"}}
+	var keys strings.Builder
+	WriteKeys(&keys, cfg)
+	assertNoControls(t, "--list-keys", keys.String())
+
+	for _, size := range []tea.WindowSizeMsg{{Width: 140, Height: 40}, {Width: 100, Height: 24}, {Width: 80, Height: 24}, {Width: 60, Height: 15}} {
+		m := resize(newTestModel(t, here, cfg), size)
+		m.bookmarks.Add("mark\x1b[2J\n", here)
+		m.statusMsg = "Error: open two\nlines.txt: \x1b[2Jdenied"
+		label := fmt.Sprintf("%dx%d", size.Width, size.Height)
+		check := func(what string, m Model) {
+			t.Helper()
+			assertFills(t, label+" "+what, m)
+			assertNoControls(t, label+" "+what, m.View())
+			assertNoControls(t, label+" "+what+" unclipped", m.renderMainView())
+		}
+		check("browse", m)
+
+		// Every file under the cursor: the directory's preview lists its
+		// entries, the text file's shows its contents
+		for i, f := range m.tab().Files {
+			screen := detach(m)
+			screen.tab().Cursor = i
+			screen = drain(t, screen, screen.previewCmd(screen.tab()))
+			check(fmt.Sprintf("on %q", f.Name), screen)
+		}
+		for _, keys := range []string{"r", "/e", "b", "P", "?", "D"} {
+			check("after "+keys, typeText(t, detach(m), keys))
+		}
+		check("find", find(t, detach(m), "f", "t"))
+		check("grep", find(t, detach(m), "F", "match"))
 	}
 }
 

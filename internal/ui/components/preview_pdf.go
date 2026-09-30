@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/icichainz/sushi/internal/utils"
 )
 
 // Poppler's tools, run to preview PDFs. Variables so tests can use
@@ -133,7 +135,7 @@ func pdfLines(out []byte, maxLines int) []string {
 			lines = append(lines, "", fmt.Sprintf("--- page %d ---", i+1), "")
 		}
 		for _, line := range strings.Split(text, "\n") {
-			lines = append(lines, cleanText(strings.ReplaceAll(line, "\t", "    ")))
+			lines = append(lines, utils.Printable(strings.ReplaceAll(line, "\t", "    ")))
 		}
 		if len(lines) >= maxLines {
 			return lines[:maxLines]

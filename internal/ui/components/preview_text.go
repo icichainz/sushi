@@ -7,8 +7,9 @@ import (
 	"io"
 	"os"
 	"strings"
-	"unicode"
 	"unicode/utf8"
+
+	"github.com/icichainz/sushi/internal/utils"
 )
 
 // maxLineBytes caps each previewed line: the pane never shows that much,
@@ -74,7 +75,9 @@ func textLine(b []byte, cut bool) string {
 		}
 	}
 	s := strings.ReplaceAll(string(b), "\r", "")
-	return strings.ReplaceAll(s, "\t", "    ")
+	// Other control characters could move the cursor or change colors, as
+	// highlighting leaves them in place
+	return utils.Printable(strings.ReplaceAll(s, "\t", "    "))
 }
 
 // countLines counts the lines left in r, including a last one without a
@@ -100,18 +103,6 @@ func countLines(r io.Reader) (int, error) {
 		n++
 	}
 	return n, nil
-}
-
-// cleanText makes text from inside a file safe to print: control
-// characters could move the cursor or change colors, so they become "?"
-func cleanText(s string) string {
-	s = strings.ToValidUTF8(s, "?")
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return '?'
-		}
-		return r
-	}, s)
 }
 
 // withLines sets the lines of a preview that isn't a file's text

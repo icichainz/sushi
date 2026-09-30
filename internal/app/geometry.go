@@ -72,7 +72,7 @@ type tabSpan struct {
 func (m Model) tabSpans() []tabSpan {
 	labels := make([]string, len(m.tabs))
 	for i, tab := range m.tabs {
-		name := filepath.Base(tab.CurrentPath)
+		name := utils.Printable(filepath.Base(tab.CurrentPath))
 		labels[i] = fmt.Sprintf(" %d %s ", i+1, utils.Truncate(name, 15))
 	}
 

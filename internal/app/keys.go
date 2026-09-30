@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/plugins"
+	"github.com/icichainz/sushi/internal/utils"
 )
 
 // Keys are remapped under keys: in the config file, by action. Actions are
@@ -409,7 +410,7 @@ keys:
 	var pluginLines []string
 	for i, p := range m.plugins {
 		if j, ok := m.pluginKeys[p.Key]; ok && j == i {
-			pluginLines = append(pluginLines, fmt.Sprintf("#   %s  %s", yamlKey(p.Key), p.Name))
+			pluginLines = append(pluginLines, fmt.Sprintf("#   %s  %s", yamlKey(p.Key), utils.Printable(p.Name)))
 		}
 	}
 	if len(pluginLines) > 0 {

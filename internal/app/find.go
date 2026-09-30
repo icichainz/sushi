@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -383,7 +382,7 @@ func (m Model) findBox() []string {
 			if f.err != nil {
 				style = m.fg(t.Danger)
 			}
-			body = append(body, " "+style.Render(utils.Truncate(m.findEmpty(), inner-2)))
+			body = append(body, " "+style.Render(utils.Truncate(utils.Printable(m.findEmpty()), inner-2)))
 		default:
 			body = append(body, "")
 		}
@@ -461,7 +460,7 @@ func (m Model) findRow(r search.Result, chosen bool, width int) string {
 		text, muted, faint, accent = sel.Bold(r.IsDir), sel, sel, sel
 	}
 
-	rel := []rune(printable(filepath.ToSlash(r.Rel)))
+	rel := []rune(utils.Printable(filepath.ToSlash(r.Rel)))
 	var row string
 	if r.Line == 0 {
 		icon := ui.GetFileIcon(fs.FileInfo{Name: filepath.Base(r.Path), IsDir: r.IsDir})
@@ -500,7 +499,7 @@ func (m Model) findRow(r search.Result, chosen bool, width int) string {
 		room := width - utils.Width(row) - 1
 
 		// Keep the match in view on long lines
-		line := []rune(r.Text)
+		line := []rune(utils.Printable(r.Text))
 		size := utf8.RuneCountInString(m.find.input.Value())
 		from, ellipsis := 0, ""
 		if utils.Width(string(line[:min(r.Col+size, len(line))])) > room {
@@ -517,17 +516,6 @@ func (m Model) findRow(r search.Result, chosen bool, width int) string {
 
 	pad := max(width-utils.Width(row), 0)
 	return utils.Cells(row+muted.Render(strings.Repeat(" ", pad)), 0, width)
-}
-
-// printable replaces control characters, which would break the layout or
-// draw over it, one for one so positions in the text still hold
-func printable(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return '?'
-		}
-		return r
-	}, s)
 }
 
 // paint draws runes, which start at position offset of the whole text,
