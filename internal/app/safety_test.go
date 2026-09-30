@@ -393,6 +393,36 @@ func TestUndoChmodDoesNotFollowALinkPutInItsPlace(t *testing.T) {
 	}
 }
 
+func TestDeleteConfirmationShowsItemsInOtherFolders(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "here.txt"), "")
+	other := filepath.Join(t.TempDir(), "elsewhere")
+	os.Mkdir(other, 0755)
+	thesis := filepath.Join(other, "thesis.tex")
+	writeTestFile(t, thesis, "")
+
+	// A plugin selects a file here and one in another folder: the dialog
+	// used to list both by name alone, as if both were here
+	m := withPlugin(t, dir, `printf 'select here.txt\nselect %s\n' "`+thesis+`" > "$SUSHI_CMD_FILE"`)
+	m, cmd := press(t, m, "Z")
+	m = drain(t, m, cmd)
+	m, _ = press(t, m, "D")
+	dialog := strings.Join(plain(m.renderConfirmDialog()), "\n")
+	if !strings.Contains(dialog, "Delete 2 items?") || !strings.Contains(dialog, "elsewhere/thesis.tex") ||
+		!strings.Contains(dialog, "1 of them is in another folder") {
+		t.Fatalf("dialog:\n%s", dialog)
+	}
+
+	// One item, elsewhere
+	m, _ = press(t, m, "n")
+	m.tab().Selected = map[string]bool{thesis: true}
+	m, _ = press(t, m, "D")
+	dialog = strings.Join(plain(m.renderConfirmDialog()), "\n")
+	if !strings.Contains(dialog, "Delete file 'thesis.tex'?") || !strings.Contains(dialog, "It is in another folder") || !strings.Contains(dialog, "elsewhere/thesis.tex") {
+		t.Fatalf("dialog:\n%s", dialog)
+	}
+}
+
 func TestTargetsAreCleaned(t *testing.T) {
 	dir := t.TempDir()
 	m := newTestModel(t, dir, nil)

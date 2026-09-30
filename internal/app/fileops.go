@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/utils"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
@@ -310,22 +311,66 @@ func (m *Model) pruneClipboard() {
 	}
 }
 
-// deleteMessage describes what the pending delete will remove
+// deleteMessage describes what the pending delete will remove. Items
+// outside the current folder, which a plugin can select, are shown by
+// their full path and counted, so nothing is deleted unseen.
 func (m Model) deleteMessage() string {
+	dir := m.tab().CurrentPath
 	if len(m.pending) == 1 {
 		path := m.pending[0]
 		name := filepath.Base(path)
+		where := ""
+		if filepath.Dir(path) != dir {
+			where = "\n\nIt is in another folder:\n" + utils.TruncateLeft(path, pathWidth)
+		}
 		info, err := os.Lstat(path)
 		switch {
 		case err == nil && info.Mode()&os.ModeSymlink != 0:
-			return fmt.Sprintf("Delete symlink '%s'? Its target is not touched.", name)
+			return fmt.Sprintf("Delete symlink '%s'? Its target is not touched.", name) + where
 		case err == nil && info.IsDir():
-			return fmt.Sprintf("Delete directory '%s' and all its contents?", name)
+			return fmt.Sprintf("Delete directory '%s' and all its contents?", name) + where
 		default:
-			return fmt.Sprintf("Delete file '%s'?", name)
+			return fmt.Sprintf("Delete file '%s'?", name) + where
 		}
 	}
-	return fmt.Sprintf("Delete %d items?\n\n%s", len(m.pending), listNames(m.pending, 5))
+
+	msg := fmt.Sprintf("Delete %d items?\n\n%s", len(m.pending), listPaths(m.pending, dir, 5))
+	elsewhere := 0
+	for _, p := range m.pending {
+		if filepath.Dir(p) != dir {
+			elsewhere++
+		}
+	}
+	switch {
+	case elsewhere == len(m.pending):
+		msg += "\n\nNone of them is in this folder."
+	case elsewhere == 1:
+		msg += "\n\n1 of them is in another folder."
+	case elsewhere > 1:
+		msg += fmt.Sprintf("\n\n%d of them are in other folders.", elsewhere)
+	}
+	return msg
+}
+
+// pathWidth is how much of a full path fits on a line of the confirmation
+const pathWidth = 56
+
+// listPaths lists up to limit paths, one per line: those in dir by name,
+// others in full, shortened from the start so their names show
+func listPaths(paths []string, dir string, limit int) string {
+	lines := make([]string, 0, limit+1)
+	for i, p := range paths {
+		if i == limit {
+			lines = append(lines, fmt.Sprintf("…and %d more", len(paths)-limit))
+			break
+		}
+		if filepath.Dir(p) == dir {
+			lines = append(lines, filepath.Base(p))
+		} else {
+			lines = append(lines, utils.TruncateLeft(p, pathWidth))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // pasteMessage describes what the pending paste will overwrite
