@@ -131,9 +131,10 @@ func cachedImage(key imageKey) (*ImagePreview, error) {
 }
 
 // loadImagePreview draws an image in the pane, or shows its details when
-// the terminal can't draw it or it is too large
-func loadImagePreview(p PreviewContent, config PreviewConfig) PreviewContent {
-	p.Kind = getFileType(strings.ToLower(filepath.Ext(p.FileInfo.Name)))
+// the terminal can't draw it or it is too large. The name, the file's or
+// its link target's, gives the kind until the image says what it is.
+func loadImagePreview(p PreviewContent, name string, config PreviewConfig) PreviewContent {
+	p.Kind = getFileType(strings.ToLower(filepath.Ext(name)))
 	info, err := os.Stat(p.Path)
 	if err != nil {
 		p.Error = err
