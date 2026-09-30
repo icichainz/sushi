@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/icichainz/sushi/internal/search"
 )
 
 const (
@@ -15,7 +16,9 @@ const (
 	wheelStep = 3
 )
 
-// clock tells the time of a click; tests replace it to control double-clicks
+// clock tells the time of a click; tests replace it to control double-clicks.
+// Bubble Tea doesn't timestamp mouse events, so a click is timed when it
+// is handled: one handled late, behind slow work, can pair with the next.
 var clock = time.Now
 
 // click is the last left click, kept to recognise a double-click
@@ -75,6 +78,10 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.mouseBookmarks(msg)
 	case ModePlugins:
 		return m.mouseRun(msg)
+	case ModeSort:
+		return m.mouseSort(msg)
+	case ModeFind:
+		return m.mouseFind(msg)
 	case ModeHelp:
 		return m.mouseHelp(msg)
 	}
@@ -273,6 +280,71 @@ func (m Model) mouseRun(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	m.pluginCursor = i
 	m.remember(areaDialog, msg.Y, target)
 	return m, nil
+}
+
+// mouseSort handles the mouse over the sort menu: the wheel moves, a click
+// on an order sorts by it, and clicking outside closes the menu, as Esc does
+func (m Model) mouseSort(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if delta := wheelDelta(msg, 1); delta != 0 {
+		m.sortCursor = max(min(m.sortCursor+delta, len(sortFields)-1), 0)
+		return m, nil
+	}
+	if msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+	r, inside := m.dialogRowAt(m.sortBox(), msg.X, msg.Y)
+	if !inside {
+		m.mode = ModeNormal
+		return m, nil
+	}
+	if i := r - dialogBodyRow; i >= 0 && i < len(sortFields) {
+		return m.chooseSort(sortFields[i].by)
+	}
+	return m, nil
+}
+
+// mouseFind handles the mouse over the search palette: the wheel moves
+// through the results, a click picks one and a double-click goes to it,
+// and clicking outside closes the palette, as Esc does
+func (m Model) mouseFind(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	f := &m.find
+	if delta := wheelDelta(msg, 1); delta != 0 {
+		m.moveFindCursor(delta)
+		return m, nil
+	}
+	if msg.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+	r, inside := m.dialogRowAt(m.findBox(), msg.X, msg.Y)
+	if !inside {
+		m.stopFind()
+		m.mode = ModeNormal
+		return m, nil
+	}
+	// The body is the query, a rule if there is room, then the results
+	rows, roomy := m.findRows()
+	row := r - dialogBodyRow - 1
+	if roomy {
+		row--
+	}
+	i := window(f.cursor, len(f.results), rows) + row
+	if row < 0 || row >= rows || i >= len(f.results) {
+		return m, nil
+	}
+	// The list may have scrolled to follow the first click, so what counts
+	// is the same row and the result that click picked
+	if m.isDouble(areaDialog, msg.Y, findTarget(f.results[f.cursor])) {
+		m.lastClick = click{}
+		return m.openFindResult()
+	}
+	f.cursor = i
+	m.remember(areaDialog, msg.Y, findTarget(f.results[i]))
+	return m, nil
+}
+
+// findTarget identifies a search result for isDouble
+func findTarget(r search.Result) string {
+	return r.Path + ":" + strconv.Itoa(r.Line)
 }
 
 // mouseHelp handles the mouse over the key panel: the wheel scrolls it and
