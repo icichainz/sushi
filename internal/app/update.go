@@ -82,7 +82,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == ModeSearch && tab.ID == m.tab().ID {
 			m.updateSearchResults()
 		}
-		cmd := tea.Batch(m.previewCmd(tab), m.reloadIfWanted(tab), prompt)
+		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt)
 		return m, cmd
 
 	case previewLoadedMsg:
@@ -188,6 +188,20 @@ func (m *Model) previewCmd(tab *Tab) tea.Cmd {
 		cfg.MaxLines = max(cfg.MaxLines, len(p.Lines))
 	}
 	return loadPreviewWith(tab.ID, file, cfg)
+}
+
+// refreshPreview loads the preview again once a directory load is in,
+// unless it already shows the file under the cursor as it is: the watcher
+// reloads every couple of seconds while files change nearby, and each
+// preview could run pdftotext, read an archive or highlight a file again
+func (m *Model) refreshPreview(tab *Tab) tea.Cmd {
+	if len(tab.Files) > 0 {
+		file := tab.Files[tab.Cursor]
+		if previewShows(tab.Preview, file) && !m.jumpingTo(tab, file.Path) {
+			return nil
+		}
+	}
+	return m.previewCmd(tab)
 }
 
 // jumpingTo reports whether a search result's line is waiting to be shown
@@ -821,6 +835,15 @@ func scanParent(path string, opts fs.ScanOptions) []fs.FileInfo {
 // previewStep is how many lines J and K scroll the preview: half a pane
 func (m Model) previewStep() int {
 	return max((m.previewRows()-1)/2, 1)
+}
+
+// previewShows reports whether p is a preview of file as it is now: the
+// same size, modification time and permissions (shown in the heading), and
+// complete
+func previewShows(p components.PreviewContent, file fs.FileInfo) bool {
+	f := p.FileInfo
+	return p.Path == file.Path && !p.Pending && p.Error == nil && f.Size == file.Size &&
+		f.ModTime.Equal(file.ModTime) && f.Perms == file.Perms && f.IsDir == file.IsDir && f.IsSymlink == file.IsSymlink
 }
 
 // previewLoadedMsg is sent when preview content has been loaded

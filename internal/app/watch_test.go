@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -372,6 +373,35 @@ func TestReloadLeavesPromptsAndSearchAlone(t *testing.T) {
 		screen = changeDirs(t, screen, dir)
 		if screen.mode != mode {
 			t.Errorf("after %q: mode %v became %v", keys, mode, screen.mode)
+		}
+	}
+}
+
+func TestReloadKeepsThePreviewOfAnUnchangedFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "notes.txt")
+	writeTestFile(t, file, "first\n")
+	writeTestFile(t, filepath.Join(dir, "other.txt"), "")
+	m := newTestModel(t, dir, noWatch())
+
+	// A mark the preview would lose if it were loaded again
+	m.tab().Preview.Content = "kept"
+	writeTestFile(t, filepath.Join(dir, "new.txt"), "")
+	if m = changeDirs(t, m, dir); cursorName(m) != "notes.txt" || m.tab().Preview.Content != "kept" {
+		t.Fatalf("on %s, preview %q: the unchanged file's preview was loaded again", cursorName(m), m.tab().Preview.Content)
+	}
+
+	// A change to the file itself does reload it: its content, or its
+	// permissions, which the heading shows
+	os.WriteFile(file, []byte("first\nsecond\n"), 0644)
+	if m = changeDirs(t, m, dir); !strings.Contains(m.tab().Preview.Content, "second") {
+		t.Fatalf("preview = %q after the file changed", m.tab().Preview.Content)
+	}
+	if runtime.GOOS != "windows" {
+		m.tab().Preview.Content = "kept"
+		os.Chmod(file, 0600)
+		if m = changeDirs(t, m, dir); m.tab().Preview.Content == "kept" {
+			t.Fatal("the preview wasn't loaded again after a chmod")
 		}
 	}
 }
