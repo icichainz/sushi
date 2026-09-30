@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -285,6 +286,110 @@ func TestCancelledUndoCarriesOnWhereItStopped(t *testing.T) {
 	}
 	if len(dirNames(t, src)) != 3 {
 		t.Fatal("the original was touched")
+	}
+}
+
+// modeOf returns the permission bits of path, following links
+func modeOf(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Mode().Perm()
+}
+
+func TestChmodLeavesSymlinksAndWhatTheyPointTo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no Unix permissions")
+	}
+	dir := t.TempDir()
+	keys := t.TempDir()
+	key := filepath.Join(keys, "id_ed25519")
+	writeTestFile(t, key, "secret")
+	os.Chmod(key, 0600)
+	symlinkOrSkip(t, key, filepath.Join(dir, "key-link"))
+
+	// On the link alone: chmod used to follow it and open up the key
+	m := cursorTo(t, newTestModel(t, dir, nil), "key-link")
+	m, _ = press(t, m, "m")
+	if m.mode != ModeNormal || !strings.Contains(m.statusMsg, "Symlinks have no permissions") {
+		t.Fatalf("mode = %v, statusMsg = %q", m.mode, m.statusMsg)
+	}
+
+	// With files: the link is left out, and says so
+	writeTestFile(t, filepath.Join(dir, "a.sh"), "")
+	os.Chmod(filepath.Join(dir, "a.sh"), 0644)
+	m = newTestModel(t, dir, nil)
+	m, _ = press(t, m, "*")
+	m, _ = press(t, m, "m")
+	if !strings.Contains(m.prompt.label, "1 symlink left as it is") || m.prompt.input.Value() != "644" {
+		t.Fatalf("label = %q, value = %q", m.prompt.label, m.prompt.input.Value())
+	}
+	m, _ = press(t, m, "ctrl+u")
+	m = typeText(t, m, "777")
+	m = submit(t, m)
+	if modeOf(t, key) != 0600 || modeOf(t, filepath.Join(dir, "a.sh")) != 0777 {
+		t.Fatalf("key is %v, a.sh %v: %q", modeOf(t, key), modeOf(t, filepath.Join(dir, "a.sh")), m.statusMsg)
+	}
+}
+
+func TestChmodOfSeveralSaysTheyAllGetTheMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no Unix permissions")
+	}
+	dir := t.TempDir()
+	public, private := filepath.Join(dir, "a.txt"), filepath.Join(dir, "b.key")
+	writeTestFile(t, public, "")
+	writeTestFile(t, private, "")
+	os.Chmod(public, 0644)
+	os.Chmod(private, 0600)
+
+	// Different modes: the prompt used to start from the first one's, so
+	// pressing Enter made the private file 644 as well
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "*")
+	m, _ = press(t, m, "m")
+	if m.prompt.input.Value() != "" || !strings.Contains(m.prompt.label, "Set all 2 items, now 644, 600, to") {
+		t.Fatalf("label = %q, value = %q", m.prompt.label, m.prompt.input.Value())
+	}
+	m, _ = press(t, m, "enter")
+	if m.mode != ModeInput || modeOf(t, private) != 0600 {
+		t.Fatal("an empty mode was accepted")
+	}
+
+	// The same mode: offered, and the label still says it applies to all
+	os.Chmod(private, 0644)
+	m = newTestModel(t, dir, nil)
+	m, _ = press(t, m, "*")
+	m, _ = press(t, m, "m")
+	if m.prompt.input.Value() != "644" || !strings.Contains(m.prompt.label, "Set all 2 items, now 644, to") {
+		t.Fatalf("label = %q, value = %q", m.prompt.label, m.prompt.input.Value())
+	}
+}
+
+func TestUndoChmodDoesNotFollowALinkPutInItsPlace(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no Unix permissions")
+	}
+	dir := t.TempDir()
+	f := filepath.Join(dir, "a.sh")
+	writeTestFile(t, f, "")
+	os.Chmod(f, 0755)
+	key := filepath.Join(t.TempDir(), "key")
+	writeTestFile(t, key, "secret")
+	os.Chmod(key, 0600)
+
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "m")
+	m, _ = press(t, m, "ctrl+u")
+	m = typeText(t, m, "700")
+	m = submit(t, m)
+	os.Remove(f)
+	symlinkOrSkip(t, key, f)
+	m = undoNow(t, m)
+	if modeOf(t, key) != 0600 || !strings.Contains(m.statusMsg, "symlink") {
+		t.Fatalf("key is %v: %q", modeOf(t, key), m.statusMsg)
 	}
 }
 

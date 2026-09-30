@@ -211,6 +211,12 @@ func (s undoStep) undo(t *fs.Task, useTrash bool) ([]fs.RenamePair, error) {
 		return nil, removeCreated(t, s, useTrash)
 
 	case stepChmod:
+		// A link put there since would be followed to whatever it points to
+		if info, err := os.Lstat(s.path); err != nil {
+			return nil, err
+		} else if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("%s is a symlink now, so it was left as it is", filepath.Base(s.path))
+		}
 		return nil, os.Chmod(s.path, s.mode)
 
 	case stepRenames:

@@ -268,7 +268,7 @@ Keys that act on files use the selection when there is one, and the file under t
 | `Ctrl+x` | Cancel the operation running in the background |
 | `y` | Duplicate beside the original, as `name copy.ext`, then `name copy 2.ext` |
 | `V` | Paste the clipboard as symbolic links to its files. Never replaces anything |
-| `m` | Change permissions (not recursively): a prompt shows the current mode, such as `644`; type 3 or 4 octal digits. Not available on Windows |
+| `m` | Change permissions (not recursively): a prompt shows the current mode, such as `644`; type 3 or 4 octal digits. Several items all get the mode typed, and the prompt starts empty when theirs differ. Symlinks are left as they are, as is what they point to. Not available on Windows |
 | `R` | Bulk rename the selection in `$VISUAL` / `$EDITOR`. Without a selection, the same as `r` |
 | `a` | Compress into a new `.zip`, asking for its name |
 | `X` | Extract `.zip`, `.tar`, `.tar.gz` and `.tgz` archives, each into a new folder named after it |

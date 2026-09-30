@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -149,27 +150,68 @@ func (m Model) pasteLinks() (tea.Model, tea.Cmd) {
 	return m.Update(msg)
 }
 
-// startChmod asks for a new mode for the targets, starting from the first
-// one's. Windows files have no Unix permissions, so there it only says so.
+// startChmod asks for a new mode for the targets. Symlinks are left out:
+// chmod follows them, so it would change what they point to, which may be
+// anywhere, and on most systems a link has no mode of its own. With one
+// item, or several of the same mode, the prompt starts from that mode; with
+// several of different modes it starts empty, as they all get the one
+// typed. Windows files have no Unix permissions, so there it only says so.
 func (m Model) startChmod() (tea.Model, tea.Cmd) {
-	paths := m.targets()
-	if len(paths) == 0 {
+	targets := m.targets()
+	if len(targets) == 0 {
 		return m, nil
 	}
 	if goos == "windows" {
 		cmd := m.setStatus("Permissions can't be changed on Windows")
 		return m, cmd
 	}
-	info, err := os.Stat(paths[0])
-	if err != nil {
-		cmd := m.setStatus(fmt.Sprintf("Error: %v", err))
+	var paths []string
+	var modes []string
+	for _, path := range targets {
+		info, err := os.Lstat(path)
+		if err != nil {
+			cmd := m.setStatus(fmt.Sprintf("Error: %v", err))
+			return m, cmd
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		paths = append(paths, path)
+		if mode := formatMode(info.Mode()); !slices.Contains(modes, mode) {
+			modes = append(modes, mode)
+		}
+	}
+	links := len(targets) - len(paths)
+	if len(paths) == 0 {
+		cmd := m.setStatus("Symlinks have no permissions of their own: change those of what they point to")
 		return m, cmd
 	}
+
+	// Several items all get the mode typed, which the label says
+	label := "Permissions of " + describe(paths)
+	value := modes[0]
+	switch {
+	case len(modes) > 3:
+		label = fmt.Sprintf("Set all %d items, now of %d different modes, to", len(paths), len(modes))
+		value = ""
+	case len(modes) > 1:
+		label = fmt.Sprintf("Set all %d items, now %s, to", len(paths), strings.Join(modes, ", "))
+		value = ""
+	case len(paths) > 1:
+		label = fmt.Sprintf("Set all %d items, now %s, to", len(paths), value)
+	}
+	switch {
+	case links == 1:
+		label += " (1 symlink left as it is)"
+	case links > 1:
+		label += fmt.Sprintf(" (%d symlinks left as they are)", links)
+	}
+	label += ":"
 	return m.openPrompt(prompt{
 		action: promptTool,
 		badge:  "CHMOD",
-		label:  "Permissions of " + describe(paths) + ":",
-		input:  components.NewTextInput(formatMode(info.Mode())),
+		label:  label,
+		input:  components.NewTextInput(value),
 		submit: func(m Model, value string) (tea.Model, tea.Cmd) { return m.chmod(paths, value) },
 	})
 }
@@ -185,9 +227,13 @@ func (m Model) chmod(paths []string, value string) (tea.Model, tea.Cmd) {
 
 	undo := &undoEntry{label: "permissions of " + describe(paths)}
 	msg := batchResult("chmod", "Changed permissions to "+formatMode(mode), paths, func(path string) error {
-		info, err := os.Stat(path)
+		info, err := os.Lstat(path)
 		if err != nil {
 			return err
+		}
+		// Made a link since the prompt opened: never followed
+		if info.Mode()&os.ModeSymlink != 0 {
+			return errors.New("is a symlink now, so it was left as it is")
 		}
 		if err := os.Chmod(path, mode); err != nil {
 			return err
