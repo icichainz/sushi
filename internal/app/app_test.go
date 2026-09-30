@@ -344,21 +344,21 @@ func TestEveryScreenFillsTheTerminal(t *testing.T) {
 		assertFills(t, label+" preview off", m)
 		m.tab().PreviewEnabled = true
 
-		long := m
+		long := detach(m)
 		long.statusMsg = strings.Repeat("a long status message ", 10)
 		assertFills(t, label+" long status", long)
 
 		for _, keys := range []string{"/" + strings.Repeat("query", 20), "/a", " j ", "r" + strings.Repeat("name", 30), "nnew", "d", "D", "m",
 			"a" + strings.Repeat("archive", 20), "y", "b", "P", "!" + strings.Repeat("echo ", 30), "?",
 			"s", "f" + strings.Repeat("query", 30), "F" + strings.Repeat("text", 30)} {
-			screen := m
+			screen := detach(m)
 			for _, r := range keys {
 				screen, _ = press(t, screen, string(r))
 			}
 			assertFills(t, label+" after "+keys[:1], screen)
 		}
 
-		withTabs := m
+		withTabs := detach(m)
 		for i := 0; i < 12; i++ {
 			updated, _ := withTabs.createTab(deep)
 			withTabs = updated.(Model)
@@ -536,7 +536,7 @@ func TestStatusBarShowsMode(t *testing.T) {
 		{"P", "RUN", "run"},
 		{"?", "KEYS", "close"},
 	} {
-		screen := m
+		screen := detach(m)
 		for _, r := range c.keys {
 			screen, _ = press(t, screen, string(r))
 		}
@@ -961,6 +961,16 @@ func TestConfigProblemsShownAtStartup(t *testing.T) {
 	cfg.Theme = "neon"
 	cfg.SyntaxTheme = "nope"
 	cfg.Problems = []string{"config.yaml: line 3: bad value"} // As LoadConfig reports them
+	cfg.Watch = false                                         // Its listener would keep Init's batch from draining
+
+	// Timers fire at once, with the message that clears the status
+	var shownFor time.Duration
+	old := statusTimer
+	statusTimer = func(d time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
+		shownFor = d
+		return func() tea.Msg { return fn(time.Time{}) }
+	}
+	t.Cleanup(func() { statusTimer = old })
 
 	m := newTestModel(t, t.TempDir(), cfg)
 	for _, want := range []string{"neon", "nope", "line 3: bad value"} {
@@ -968,8 +978,9 @@ func TestConfigProblemsShownAtStartup(t *testing.T) {
 			t.Fatalf("statusMsg = %q, want every problem", m.statusMsg)
 		}
 	}
-	if m.Init() == nil {
-		t.Fatal("Init should schedule clearing the startup warning")
+	// Init clears them, after long enough to read them
+	if m = drain(t, m, m.Init()); m.statusMsg != "" || shownFor != 10*time.Second {
+		t.Fatalf("after Init: status %q, shown for %v; want it cleared after 10s", m.statusMsg, shownFor)
 	}
 }
 

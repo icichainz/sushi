@@ -89,8 +89,8 @@ func TestExitDirIsTheActiveTabs(t *testing.T) {
 	}
 
 	// Closing the last tab quits like q does
-	m, _ = pressKey(t, m, tea.KeyCtrlW)
-	m, cmd = pressKey(t, m, tea.KeyCtrlW)
+	m, _ = ctrl(t, m, tea.KeyCtrlW)
+	m, cmd = ctrl(t, m, tea.KeyCtrlW)
 	if !quits(cmd) || m.ExitDir() != d1 {
 		t.Fatalf("closing the last tab: ExitDir = %q, want %s", m.ExitDir(), d1)
 	}

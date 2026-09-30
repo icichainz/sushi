@@ -156,10 +156,10 @@ func TestRemappedKeysTriggerActions(t *testing.T) {
 	if m, _ = press(t, m, "j"); m.tab().Cursor != 0 {
 		t.Fatal("j still moves down")
 	}
-	if m, _ = pressKey(t, m, tea.KeyCtrlN); m.tab().Cursor != 1 {
+	if m, _ = ctrl(t, m, tea.KeyCtrlN); m.tab().Cursor != 1 {
 		t.Fatal("ctrl+n doesn't move down")
 	}
-	if m, _ = pressKey(t, m, tea.KeyDown); m.tab().Cursor != 2 {
+	if m, _ = ctrl(t, m, tea.KeyDown); m.tab().Cursor != 2 {
 		t.Fatal("the down arrow doesn't move down")
 	}
 
@@ -173,7 +173,7 @@ func TestRemappedKeysTriggerActions(t *testing.T) {
 	if _, cmd := press(t, m, "q"); cmd != nil {
 		t.Fatal("q still quits")
 	}
-	if _, cmd := pressKey(t, m, tea.KeyCtrlQ); cmd == nil || cmd() != tea.Quit() {
+	if _, cmd := ctrl(t, m, tea.KeyCtrlQ); cmd == nil || cmd() != tea.Quit() {
 		t.Fatal("ctrl+q doesn't quit")
 	}
 
@@ -183,7 +183,7 @@ func TestRemappedKeysTriggerActions(t *testing.T) {
 	}
 	m, _ = press(t, m, "b")
 	m, _ = press(t, m, "j")
-	m, _ = pressKey(t, m, tea.KeyCtrlN)
+	m, _ = ctrl(t, m, tea.KeyCtrlN)
 	if m.bookmarkCursor != 1 {
 		t.Fatalf("bookmarkCursor = %d, want 1: j shouldn't move, ctrl+n should", m.bookmarkCursor)
 	}
@@ -338,7 +338,7 @@ func TestPanelAndHintsShowRemaps(t *testing.T) {
 	}
 
 	// ctrl+n scrolls it, j is no longer special, and the help key closes it
-	if m, _ = pressKey(t, m, tea.KeyCtrlN); m.mode != ModeHelp || m.helpScroll != 1 {
+	if m, _ = ctrl(t, m, tea.KeyCtrlN); m.mode != ModeHelp || m.helpScroll != 1 {
 		t.Fatalf("ctrl+n: mode=%v scroll=%d", m.mode, m.helpScroll)
 	}
 	if m, _ = press(t, m, "H"); m.mode != ModeNormal {
@@ -425,7 +425,7 @@ func TestQuitKeyInTheKeyPanel(t *testing.T) {
 	if closed, cmd := press(t, m, "q"); closed.mode != ModeNormal || cmd != nil {
 		t.Fatal("q should close the panel, and only that")
 	}
-	if _, cmd := pressKey(t, m, tea.KeyCtrlC); cmd == nil || cmd() != tea.Quit() {
+	if _, cmd := ctrl(t, m, tea.KeyCtrlC); cmd == nil || cmd() != tea.Quit() {
 		t.Fatal("ctrl+c should quit from the panel")
 	}
 

@@ -251,7 +251,7 @@ func TestWatchFollowsNavigationAndTabs(t *testing.T) {
 	updated, cmd := m.createTab(b)
 	m = drain(t, updated.(Model), cmd)
 	eventually(t, "the new tab's watch", func() bool { return slices.Contains(m.watch.watching(), b) })
-	m, _ = pressKey(t, m, tea.KeyCtrlW)
+	m, _ = ctrl(t, m, tea.KeyCtrlW)
 	eventually(t, "the closed tab's watch to go", func() bool { return !slices.Contains(m.watch.watching(), b) })
 }
 
@@ -316,7 +316,7 @@ func TestRefreshKeyReloadsEveryTab(t *testing.T) {
 
 	writeTestFile(t, filepath.Join(d1, "new1.txt"), "")
 	writeTestFile(t, filepath.Join(d2, "new2.txt"), "")
-	m, cmd = pressKey(t, m, tea.KeyCtrlR)
+	m, cmd = ctrl(t, m, tea.KeyCtrlR)
 	m = drain(t, m, cmd)
 	if len(m.tabs[0].Files) != 1 || len(m.tabs[1].Files) != 1 {
 		t.Fatalf("tabs list %d and %d files, want the new file in each", len(m.tabs[0].Files), len(m.tabs[1].Files))
@@ -354,13 +354,13 @@ func TestReloadLeavesPromptsAndSearchAlone(t *testing.T) {
 
 	// A search keeps its query, and moving on goes from where the cursor is
 	m = typeQuery(t, m, "c")
-	m, _ = pressKey(t, m, tea.KeyDown) // c2
+	m, _ = ctrl(t, m, tea.KeyDown) // c2
 	writeTestFile(t, filepath.Join(dir, "0c.txt"), "")
 	m = changeDirs(t, m, dir)
 	if m.mode != ModeSearch || m.tab().SearchQuery != "c" || cursorName(m) != "c2.txt" || len(m.tab().SearchResults) != 4 {
 		t.Fatalf("search: mode=%v query=%q cursor=%s results=%v", m.mode, m.tab().SearchQuery, cursorName(m), m.tab().SearchResults)
 	}
-	m, _ = pressKey(t, m, tea.KeyDown)
+	m, _ = ctrl(t, m, tea.KeyDown)
 	if cursorName(m) != "c3.txt" {
 		t.Fatalf("down after the reload went to %s, want c3.txt", cursorName(m))
 	}
