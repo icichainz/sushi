@@ -31,8 +31,7 @@ const (
 // comes with none when only the directories left unwatched changed, so the
 // breadcrumb can say so.
 type dirsChangedMsg struct {
-	dirs  []string
-	retry bool // Put off while a tab was loading, rather than sent by the watcher
+	dirs []string
 }
 
 // dirWatcher watches the directories the tabs show and reports changes in
@@ -409,8 +408,9 @@ func (m *Model) watchTabs() {
 
 // handleDirsChanged reloads the tabs showing a directory that changed. The
 // reload keeps each tab's cursor and selection, and leaves any open prompt,
-// menu or search as it is. A tab that is loading is retried shortly
-// rather than reloaded, which would cut its load short.
+// menu or search as it is. A tab that is loading is reloaded once its
+// load is in, however many changes come meanwhile, rather than now, which
+// would cut its load short.
 func (m *Model) handleDirsChanged(msg dirsChangedMsg) tea.Cmd {
 	changed := make(map[string]bool, len(msg.dirs))
 	for _, dir := range msg.dirs {
@@ -418,26 +418,18 @@ func (m *Model) handleDirsChanged(msg dirsChangedMsg) tea.Cmd {
 	}
 
 	var cmds []tea.Cmd
-	var later []string
 	for i := range m.tabs {
 		tab := &m.tabs[i]
 		if !changed[tab.CurrentPath] && !changed[filepath.Dir(tab.CurrentPath)] {
 			continue
 		}
 		if tab.Loading {
-			later = append(later, tab.CurrentPath)
+			tab.reloadWanted = true
 			continue
 		}
 		cmds = append(cmds, m.reloadTab(tab))
 	}
-	if len(later) > 0 {
-		cmds = append(cmds, tea.Tick(watchQuiet, func(time.Time) tea.Msg {
-			return dirsChangedMsg{dirs: later, retry: true}
-		}))
-	}
-	if !msg.retry {
-		cmds = append(cmds, m.watch.listen())
-	}
+	cmds = append(cmds, m.watch.listen())
 	return tea.Batch(cmds...)
 }
 
@@ -476,8 +468,11 @@ func (m Model) refresh() (tea.Model, tea.Cmd) {
 	m.watch.rewatch()
 	cmds := []tea.Cmd{m.setStatus("Refreshed")}
 	for i := range m.tabs {
-		// A tab that is loading is about to be up to date anyway
-		if tab := &m.tabs[i]; !tab.Loading {
+		// A load in flight may have read its directory before the change
+		// that prompted the refresh, so the tab reloads once it is in
+		if tab := &m.tabs[i]; tab.Loading {
+			tab.reloadWanted = true
+		} else {
 			cmds = append(cmds, m.reloadTab(tab))
 		}
 	}

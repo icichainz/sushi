@@ -390,24 +390,42 @@ func TestReloadOfDeletedDirectoryMovesUp(t *testing.T) {
 func TestReloadWaitsForALoadingTab(t *testing.T) {
 	dir := t.TempDir()
 	m := newTestModel(t, dir, noWatch())
-	m.tab().Loading = true
+	load := m.loadDir(m.tab(), dir) // In flight
 	seq := m.tab().loadSeq
 
-	updated, cmd := m.Update(dirsChangedMsg{dirs: []string{dir}})
-	m = updated.(Model)
+	// However many changes come meanwhile, nothing reloads yet, and nothing
+	// is left ticking to try again, so a load that hangs costs nothing
+	for range 5 {
+		updated, cmd := m.Update(dirsChangedMsg{dirs: []string{dir}})
+		m = updated.(Model)
+		if m.tab().loadSeq != seq {
+			t.Fatal("a reload cut the tab's load short")
+		}
+		if cmd != nil {
+			t.Fatalf("a change during a load left a command running, giving %T", cmd())
+		}
+	}
+	// A refresh meanwhile waits too, rather than being dropped
+	m, _ = ctrl(t, m, tea.KeyCtrlR)
 	if m.tab().loadSeq != seq {
-		t.Fatal("a reload cut the tab's load short")
+		t.Fatal("a refresh cut the tab's load short")
 	}
 
-	// Once the load is in, the retry reloads
-	m.tab().Loading = false
-	msg := cmd()
-	if retry, ok := msg.(dirsChangedMsg); !ok || !retry.retry {
-		t.Fatalf("got %#v, want a retry", msg)
-	}
-	updated, _ = m.Update(msg)
+	// Once the load is in, the tab reloads, once
+	updated, cmd := m.Update(load())
 	if m = updated.(Model); m.tab().loadSeq != seq+1 {
-		t.Fatal("the retry did not reload")
+		t.Fatalf("%d reloads once the load was in, want 1", m.tab().loadSeq-seq)
+	}
+	if m = drain(t, m, cmd); m.tab().loadSeq != seq+1 || m.tab().Loading {
+		t.Fatalf("the reload was followed by %d more", m.tab().loadSeq-seq-1)
+	}
+
+	// Likewise after a load that failed: the tab stays, and reloads
+	load = m.loadDir(m.tab(), filepath.Join(dir, "missing"))
+	m = changeDirs(t, m, dir)
+	updated, cmd = m.Update(load())
+	if m = drain(t, updated.(Model), cmd); m.tab().loadSeq != seq+3 || m.tab().CurrentPath != dir {
+		t.Fatalf("after a failed load: %d loads in %s, want 3 in %s", m.tab().loadSeq-seq, m.tab().CurrentPath, dir)
 	}
 }
 

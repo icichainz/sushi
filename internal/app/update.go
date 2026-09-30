@@ -44,7 +44,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		tab.Loading = false
 		if msg.err != nil {
 			// Keep showing the previous directory rather than an empty one
-			cmd := m.setStatus(fmt.Sprintf("Error: %v", msg.err))
+			cmd := tea.Batch(m.setStatus(fmt.Sprintf("Error: %v", msg.err)), m.reloadIfWanted(tab))
 			return m, cmd
 		}
 
@@ -78,7 +78,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == ModeSearch && tab.ID == m.tab().ID {
 			m.updateSearchResults()
 		}
-		return m, m.previewCmd(tab)
+		cmd := tea.Batch(m.previewCmd(tab), m.reloadIfWanted(tab))
+		return m, cmd
 
 	case previewLoadedMsg:
 		tab := m.tabByID(msg.tabID)
@@ -144,11 +145,23 @@ func (m *Model) setStatusFor(msg string, d time.Duration) tea.Cmd {
 	})
 }
 
-// loadDir starts loading path into tab, superseding any load already in flight
+// loadDir starts loading path into tab, superseding any load already in
+// flight. A load starting now sees every change so far, so no reload is
+// wanted after it.
 func (m *Model) loadDir(tab *Tab, path string) tea.Cmd {
 	tab.Loading = true
+	tab.reloadWanted = false
 	tab.loadSeq++
 	return loadDirectory(tab.ID, tab.loadSeq, path, m.scanOptions())
+}
+
+// reloadIfWanted reloads a tab whose load has just come in, once, if its
+// directory changed or a refresh was asked for while it loaded
+func (m *Model) reloadIfWanted(tab *Tab) tea.Cmd {
+	if !tab.reloadWanted {
+		return nil
+	}
+	return m.reloadTab(tab)
 }
 
 // previewCmd loads the preview for the file under the tab's cursor, if shown

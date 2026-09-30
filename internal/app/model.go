@@ -36,6 +36,7 @@ type Tab struct {
 	SearchResultIdx int              // Current position in SearchResults (avoids O(n) lookup)
 	TotalSize       int64            // Cached total size of all files
 	Loading         bool
+	reloadWanted    bool // Changed while loading: reload once the load is in
 }
 
 // Model represents the application state
