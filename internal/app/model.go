@@ -82,6 +82,9 @@ type Model struct {
 	// Configuration
 	config     *config.Config
 	showHidden bool // Starts from config, toggled at runtime
+
+	find finder      // Recursive search palette (f, F)
+	jump previewJump // Preview line to show once a search result's file loads
 }
 
 // tab returns a pointer to the active tab
@@ -141,6 +144,7 @@ const (
 	ModeConfirm
 	ModeBookmarks
 	ModePlugins
+	ModeFind
 )
 
 // KeyMap defines all key bindings
@@ -183,6 +187,8 @@ type KeyMap struct {
 	NextTab     key.Binding
 	PrevTab     key.Binding
 	CloseTab    key.Binding
+	Find        key.Binding
+	Grep        key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings
@@ -339,6 +345,14 @@ func DefaultKeyMap() KeyMap {
 		CloseTab: key.NewBinding(
 			key.WithKeys("ctrl+w"),
 			key.WithHelp("ctrl+w", "close tab"),
+		),
+		Find: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "find by name"),
+		),
+		Grep: key.NewBinding(
+			key.WithKeys("F"),
+			key.WithHelp("F", "find in files"),
 		),
 	}
 }

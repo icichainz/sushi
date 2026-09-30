@@ -20,8 +20,9 @@ const statusDuration = 3 * time.Second
 // don't wait on real timers
 var statusTimer = tea.Tick
 
-// Update handles all state updates
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+// update handles the messages of the browser itself; Update, in
+// dispatch.go, routes the rest
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKeyPress(msg)
@@ -211,6 +212,11 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePluginMode(msg)
 	}
 
+	// Handle the recursive search palette
+	if m.mode == ModeFind {
+		return m.handleFindMode(msg)
+	}
+
 	// Plugin shortcuts; bindPluginKeys keeps them clear of built-in keys
 	if i, ok := m.pluginKeys[msg.String()]; ok {
 		return m.runPlugin(m.plugins[i])
@@ -221,6 +227,12 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
+
+	case key.Matches(msg, m.keys.Find):
+		return m.openFind(false)
+
+	case key.Matches(msg, m.keys.Grep):
+		return m.openFind(true)
 
 	case key.Matches(msg, m.keys.Help):
 		m.mode = ModeHelp

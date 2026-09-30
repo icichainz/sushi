@@ -87,6 +87,8 @@ func (m Model) View() string {
 		lines = m.withDialog(lines, m.bookmarksBox())
 	case ModePlugins:
 		lines = m.withDialog(lines, m.runBox())
+	case ModeFind:
+		lines = m.withDialog(lines, m.findBox())
 	case ModeHelp:
 		lines = m.withHelp(lines)
 	}
@@ -625,6 +627,8 @@ func (m Model) modeBadge() (string, lipgloss.Color) {
 		return "BOOKMARKS", t.Accent
 	case ModePlugins:
 		return "RUN", t.Accent
+	case ModeFind:
+		return "FIND", t.Accent
 	case ModeHelp:
 		return "KEYS", t.Accent
 	}
@@ -747,6 +751,8 @@ func (m Model) renderBottomRow() string {
 		return m.renderHints([]hint{{"1-9", "jump"}, {"enter", "go"}, {"d", "remove"}, {"esc", "close"}})
 	case ModePlugins:
 		return m.renderHints([]hint{{"enter", "run"}, {"tab", "switch between command and plugins"}, {"esc", "close"}})
+	case ModeFind:
+		return m.renderHints(m.findHints())
 	case ModeHelp:
 		if m.maxHelpScroll() > 0 {
 			return m.renderHints([]hint{{"esc", "close"}, {"j/k", "scroll"}, {"any other key", "does what it says"}})
@@ -966,6 +972,7 @@ var helpGroups = []struct {
 	{"Files", []hint{{"enter", "open"}, {"e o", "edit, default app"}, {"r", "rename"}, {"n N", "new file, folder"}, {"d", "delete"}}},
 	{"Select", []hint{{"space", "toggle"}, {"*", "invert"}, {"u", "clear"}, {"c x v", "copy, cut, paste"}}},
 	{"View", []hint{{"/", "search"}, {"p", "preview"}, {".", "hidden files"}, {"?", "this panel"}}},
+	{"Find", []hint{{"f", "find by name"}, {"F", "find in files"}}},
 	{"Tabs", []hint{{"t T", "new here, home"}, {"tab", "next"}, {"shift+tab", "previous"}, {"ctrl+w", "close"}}},
 	{"Go", []hint{{"b B", "bookmarks, add"}, {"1-9", "jump to bookmark"}, {"P", "plugins"}, {"!", "shell command"}, {"q", "quit"}}},
 }
