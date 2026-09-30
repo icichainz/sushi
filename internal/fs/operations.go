@@ -13,7 +13,18 @@ var (
 	ErrSamePath = errors.New("source and destination are the same")
 	// ErrDestInsideSource is returned when copying or moving a directory into itself
 	ErrDestInsideSource = errors.New("cannot copy or move a directory into itself")
+	// ErrNotCreated matches the errors of operations that make something
+	// new, such as CopyNew and Extract, when they failed before making it:
+	// whatever is at the destination isn't theirs
+	ErrNotCreated = errors.New("nothing was created")
 )
+
+// notCreated wraps an error from before an operation made its destination
+type notCreated struct{ err error }
+
+func (e notCreated) Error() string        { return e.err.Error() }
+func (e notCreated) Unwrap() error        { return e.err }
+func (e notCreated) Is(target error) bool { return target == ErrNotCreated }
 
 // DeletePath deletes a file or directory (recursively if directory).
 // Symlinks are removed without touching their target, even when named with

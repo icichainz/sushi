@@ -201,27 +201,36 @@ func (t *Task) addToZip(zw *zip.Writer, path, name string, info os.FileInfo) err
 // cancelled, what was extracted until then stays. Modes come from the
 // archive, without special bits and masked with the umask like those of
 // any new file.
+//
+// An error from before dir was created, say because something took its
+// name, matches ErrNotCreated: then nothing at dir is the extraction's.
 func (t *Task) Extract(path, dir string) error {
+	x := newExtractor(t)
+	var err error
 	switch ArchiveKind(path) {
 	case "zip":
-		return t.extractZip(path, dir)
+		err = t.extractZip(x, path, dir)
 	case "tar":
-		return t.extractTar(path, dir, false)
+		err = t.extractTar(x, path, dir, false)
 	case "tar.gz":
-		return t.extractTar(path, dir, true)
+		err = t.extractTar(x, path, dir, true)
+	default:
+		err = fmt.Errorf("%s is not a zip, tar or tar.gz archive", filepath.Base(path))
 	}
-	return fmt.Errorf("%s is not a zip, tar or tar.gz archive", filepath.Base(path))
+	if err != nil && !x.made {
+		return notCreated{err}
+	}
+	return err
 }
 
 // extractZip unpacks a zip archive
-func (t *Task) extractZip(path, dir string) error {
+func (t *Task) extractZip(x *extractor, path, dir string) error {
 	zr, err := zip.OpenReader(path)
 	if err != nil {
 		return fmt.Errorf("cannot read %s: %w", filepath.Base(path), err)
 	}
 	defer zr.Close()
 
-	x := newExtractor(t)
 	for _, f := range zr.File {
 		mode := f.FileInfo().Mode()
 		link := mode&os.ModeSymlink != 0
@@ -290,7 +299,7 @@ func readZipLink(f *zip.File) (string, error) {
 // extractTar unpacks a tar archive, gzipped if gz is set. Progress goes by
 // how much of the archive file has been read, as the number of files isn't
 // known until the end.
-func (t *Task) extractTar(path, dir string, gz bool) error {
+func (t *Task) extractTar(x *extractor, path, dir string, gz bool) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("cannot read %s: %w", filepath.Base(path), err)
@@ -309,7 +318,6 @@ func (t *Task) extractTar(path, dir string, gz bool) error {
 		defer zr.Close()
 		r = zr
 	}
-	x := newExtractor(t)
 	if err := x.open(dir); err != nil {
 		return err
 	}
@@ -374,6 +382,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 type extractor struct {
 	t     *Task
 	root  *os.Root
+	made  bool // The folder was created
 	links []pendingLink
 	dirs  []pendingDir
 
@@ -407,6 +416,7 @@ func (x *extractor) open(dir string) error {
 	if err := os.Mkdir(dir, 0755); err != nil {
 		return err
 	}
+	x.made = true
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return err

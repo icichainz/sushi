@@ -142,6 +142,35 @@ func (t *Task) Copy(src, dst string) error {
 	return t.copyPath(src, dst)
 }
 
+// CopyNew copies src to dst, which must not exist, like Copy but never
+// merging into or replacing anything: for a copy beside the original,
+// under a name picked as free. If something has taken the name meanwhile,
+// nothing is copied and the error matches ErrNotCreated as well as
+// os.ErrExist, so the caller knows what is at dst isn't its copy.
+func (t *Task) CopyNew(src, dst string) error {
+	src, dst = filepath.Clean(src), filepath.Clean(dst)
+	if err := CheckTransfer(src, dst); err != nil {
+		return notCreated{err}
+	}
+	info, err := os.Lstat(src)
+	if err != nil {
+		return notCreated{fmt.Errorf("cannot access source: %w", err)}
+	}
+	if info.IsDir() {
+		// Writable until the contents are in, whatever the source's mode
+		if err := os.Mkdir(dst, 0700); err != nil {
+			return notCreated{fmt.Errorf("cannot create destination directory: %w", err)}
+		}
+		return t.copyInto(src, dst, info, true)
+	}
+	// A file or link is renamed into place only if the name is still free
+	err = t.copyEntry(src, dst, info, false)
+	if errors.Is(err, os.ErrExist) {
+		return notCreated{err}
+	}
+	return err
+}
+
 // copyPath does the recursive copy once CheckTransfer has passed. What is
 // at dst now may be replaced; see Copy.
 func (t *Task) copyPath(src, dst string) error {
@@ -275,6 +304,11 @@ func (t *Task) copyFile(src, dst string, info os.FileInfo, replace bool) error {
 		return fmt.Errorf("cannot create destination: %w", err)
 	}
 	err = t.copyData(tmp, in, true)
+	// On disk before it takes the place of a file, so a crash can't leave
+	// an empty file where the old one was
+	if err == nil && replace {
+		err = tmp.Sync()
+	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,6 +24,39 @@ type pluginDoneMsg struct {
 	cmdFile string
 	output  []byte // Captured output, for background plugins
 	err     error
+}
+
+// cmdFiles tracks the SUSHI_CMD_FILE of each plugin that hasn't finished,
+// so that one still running in the background when sushi quits doesn't
+// leave its file in the temporary directory. It is shared by every copy
+// of the model, as the files are.
+type cmdFiles struct {
+	mu    sync.Mutex
+	files map[string]bool
+}
+
+var pendingCmdFiles = &cmdFiles{files: map[string]bool{}}
+
+func (c *cmdFiles) add(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.files[path] = true
+}
+
+func (c *cmdFiles) done(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.files, path)
+}
+
+// removeAll removes the files of plugins that haven't finished
+func (c *cmdFiles) removeAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for path := range c.files {
+		os.Remove(path)
+		delete(c.files, path)
+	}
 }
 
 // bindPluginKeys maps plugin shortcuts to plugins. Built-in keys can't be
@@ -63,6 +97,7 @@ func (m Model) runPlugin(p plugins.Plugin) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	cmdFile.Close()
+	pendingCmdFiles.add(cmdFile.Name())
 
 	tab := m.tab()
 	ctx := plugins.Context{Dir: tab.CurrentPath, Selection: m.targets(), CmdFile: cmdFile.Name()}
@@ -97,6 +132,7 @@ func (m Model) runPlugin(p plugins.Plugin) (tea.Model, tea.Cmd) {
 func (m Model) handlePluginDone(msg pluginDoneMsg) (tea.Model, tea.Cmd) {
 	instructions, warnings, readErr := plugins.ReadInstructions(msg.cmdFile)
 	os.Remove(msg.cmdFile)
+	pendingCmdFiles.done(msg.cmdFile)
 
 	var status string
 	switch {

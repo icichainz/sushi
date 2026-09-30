@@ -527,6 +527,22 @@ func TestShutdownWaitsForTheJobToCleanUp(t *testing.T) {
 	}
 }
 
+func TestShutdownRemovesUnfinishedPluginsFiles(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	m := withPlugin(t, t.TempDir(), "sleep 1")
+	m, _ = press(t, m, "Z") // Started, still running when sushi quits
+	if left, _ := filepath.Glob(filepath.Join(tmp, "sushi-cmd-*")); len(left) != 1 {
+		t.Fatalf("instruction files: %v", left)
+	}
+	if err := m.Shutdown(time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(tmp, "sushi-cmd-*")); len(left) != 0 {
+		t.Fatalf("left behind: %v", left)
+	}
+}
+
 func TestTargetsAreCleaned(t *testing.T) {
 	dir := t.TempDir()
 	m := newTestModel(t, dir, nil)

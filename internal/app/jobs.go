@@ -83,10 +83,12 @@ func (m *Model) startJob(doing string, work func(t *fs.Task) jobDoneMsg) tea.Cmd
 // quit, however it quit: it cancels the background operation and waits up
 // to wait for it to stop, so that what it was in the middle of (a partial
 // copy, an unfinished zip) is cleaned up rather than left behind by the
-// process exiting. An operation that never started is not waited for.
-// Call it after the program has finished; the error says if the operation
-// didn't stop in time.
+// process exiting. An operation that never started is not waited for. The
+// instruction files of plugins still running are removed. Call it after
+// the program has finished; the error says if the operation didn't stop in
+// time.
 func (m Model) Shutdown(wait time.Duration) error {
+	pendingCmdFiles.removeAll()
 	j := m.job
 	if j == nil {
 		return nil

@@ -393,6 +393,95 @@ func TestCopyLeavesOutUnfinishedFiles(t *testing.T) {
 	}
 }
 
+func TestCopyNewNeverTouchesWhatTookTheName(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "notes.txt")
+	writeFile(t, file, "mine")
+	folder := filepath.Join(root, "album")
+	os.Mkdir(folder, 0755)
+	writeFile(t, filepath.Join(folder, "a.jpg"), "a")
+
+	// Duplicate picks "notes copy.txt" as free; someone takes it first
+	takenFile := filepath.Join(root, "notes copy.txt")
+	writeFile(t, takenFile, "theirs")
+	takenFolder := filepath.Join(root, "album copy")
+	os.Mkdir(takenFolder, 0755)
+	writeFile(t, filepath.Join(takenFolder, "b.jpg"), "b")
+
+	for src, dst := range map[string]string{file: takenFile, folder: takenFolder} {
+		err := background().CopyNew(src, dst)
+		if !errors.Is(err, ErrNotCreated) || !errors.Is(err, os.ErrExist) {
+			t.Errorf("%s: err = %v, want one matching ErrNotCreated and os.ErrExist", filepath.Base(src), err)
+		}
+	}
+	if readFile(t, takenFile) != "theirs" {
+		t.Fatal("the file that took the name was replaced")
+	}
+	if got := dirEntries(t, takenFolder); len(got) != 1 || got[0] != "b.jpg" {
+		t.Fatalf("the folder that took the name was merged into: %v", got)
+	}
+	if len(leftovers(t, root)) != 0 {
+		t.Fatalf("left %v", leftovers(t, root))
+	}
+
+	// A free name is copied to as by Copy
+	if err := background().CopyNew(folder, filepath.Join(root, "album copy 2")); err != nil {
+		t.Fatal(err)
+	}
+	if readFile(t, filepath.Join(root, "album copy 2", "a.jpg")) != "a" {
+		t.Fatal("the copy is incomplete")
+	}
+}
+
+func TestExtractSaysWhenItCreatedNothing(t *testing.T) {
+	root := t.TempDir()
+	good, bad := filepath.Join(root, "good.zip"), filepath.Join(root, "bad.zip")
+	writeZip(t, good, []entry{{name: "a", body: "a"}, {name: "a", body: "again"}})
+	writeZip(t, bad, []entry{{name: "../escape", body: "x"}})
+	taken := filepath.Join(root, "taken")
+	os.Mkdir(taken, 0755)
+
+	for _, c := range []struct {
+		archive, dir string
+		created      bool
+	}{
+		{good, taken, false},                   // The folder was there first
+		{bad, filepath.Join(root, "b"), false}, // Refused before anything was made
+		{good, filepath.Join(root, "g"), true}, // Failed once it had made the folder
+		{filepath.Join(root, "x.rar"), filepath.Join(root, "r"), false},
+	} {
+		err := background().Extract(c.archive, c.dir)
+		if err == nil || errors.Is(err, ErrNotCreated) == c.created {
+			t.Errorf("%s into %s: err = %v, created = %v", filepath.Base(c.archive), filepath.Base(c.dir), err, c.created)
+		}
+	}
+}
+
+func TestCopiedLinkReplacesOnlyWhenItIsPlaced(t *testing.T) {
+	root := t.TempDir()
+	link := filepath.Join(root, "link")
+	symlink(t, "target", link)
+	over := filepath.Join(root, "over")
+	writeFile(t, over, "old")
+	if err := CopyPath(link, over); err != nil {
+		t.Fatal(err)
+	}
+	if target, err := os.Readlink(over); err != nil || target != "target" {
+		t.Fatalf("over = %q, %v", target, err)
+	}
+
+	// Where it can't go, what is there stays and nothing is left over
+	folder := filepath.Join(root, "folder")
+	os.Mkdir(folder, 0755)
+	writeFile(t, filepath.Join(folder, "keep"), "k")
+	if err := CopyPath(link, folder); err == nil {
+		t.Fatal("a link can't replace a folder")
+	}
+	if readFile(t, filepath.Join(folder, "keep")) != "k" || len(leftovers(t, root)) != 0 {
+		t.Fatalf("left %v", leftovers(t, root))
+	}
+}
+
 func TestMoveKeepsWhatTurnsUpAtTheDestination(t *testing.T) {
 	for _, across := range []bool{false, true} {
 		root := t.TempDir()

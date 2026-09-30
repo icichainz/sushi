@@ -48,9 +48,17 @@ func Rename(path, newName string) (string, error) {
 		if srcErr != nil || !os.SameFile(srcInfo, dstInfo) {
 			return "", fmt.Errorf("%s already exists", newName)
 		}
+		// Only the case changes, where the filesystem ignores it
+		if err := os.Rename(path, dst); err != nil {
+			return "", err
+		}
+		return dst, nil
 	}
 
-	if err := os.Rename(path, dst); err != nil {
+	// Something that takes the name meanwhile is kept
+	if err := renameNoReplace(path, dst); errors.Is(err, os.ErrExist) {
+		return "", fmt.Errorf("%s already exists", newName)
+	} else if err != nil {
 		return "", err
 	}
 	return dst, nil

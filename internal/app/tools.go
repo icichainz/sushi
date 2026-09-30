@@ -109,10 +109,15 @@ func (m Model) startDuplicate() (tea.Model, tea.Cmd) {
 		undo := &undoEntry{label: "duplicate " + describe(paths)}
 		focus := ""
 		op, _ := runBatch(t, "duplicate", "Duplicated", paths, func(path string) error {
+			// The name was free a moment ago: a copy never goes into, or
+			// over, something that has taken it since
 			dst := filepath.Join(filepath.Dir(path), fs.CopyName(path))
-			err := t.Copy(path, dst)
-			// Even a partial copy is recorded, so undo can clear it away
-			undo.addCopied(dst, path)
+			err := t.CopyNew(path, dst)
+			// Even a partial copy is recorded, so undo can clear it away,
+			// but not what was there before it
+			if !errors.Is(err, fs.ErrNotCreated) {
+				undo.addCopied(dst, path)
+			}
 			if err == nil && focus == "" {
 				focus = dst
 			}
@@ -476,8 +481,11 @@ func (m Model) startExtract() (tea.Model, tea.Cmd) {
 			stem, _ := fs.SplitExt(filepath.Base(archive))
 			dir := filepath.Join(parent, fs.FreeName(parent, stem, ""))
 			err := t.Extract(archive, dir)
-			// Even a partial extraction is recorded, so undo can clear it away
-			undo.addCreated(dir)
+			// Even a partial extraction is recorded, so undo can clear it
+			// away, but not a folder that something else made first
+			if !errors.Is(err, fs.ErrNotCreated) {
+				undo.addCreated(dir)
+			}
 			if err == nil && focus == "" {
 				focus = dir
 			}
