@@ -1,9 +1,11 @@
 package app
 
 import (
+	"archive/zip"
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -461,7 +463,7 @@ func TestBusyRefusesChangesButNotMoving(t *testing.T) {
 	m := newTestModel(t, dir, nil)
 	m, _ = press(t, m, "d")
 	running := m.job.id
-	for _, k := range []string{"d", "D", "r", "n", "N", "v"} {
+	for _, k := range []string{"d", "D", "r", "n", "N", "v", "V", "R", "y", "m", "a", "X"} {
 		m.statusMsg = ""
 		m, _ = press(t, m, k)
 		if m.mode != ModeNormal || m.job.id != running || !strings.Contains(m.statusMsg, "Still moving to trash") {
@@ -512,5 +514,331 @@ func TestQuitStopsTheRunningJobFirst(t *testing.T) {
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatal("second q should quit")
+	}
+}
+
+func TestDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "content")
+	os.Mkdir(filepath.Join(dir, "folder.d"), 0755)
+	writeTestFile(t, filepath.Join(dir, "folder.d", "inside"), "x")
+
+	m := cursorTo(t, newTestModel(t, dir, nil), "a.txt")
+	m, cmd := press(t, m, "y")
+	m = drain(t, m, cmd)
+	if readTestFile(t, filepath.Join(dir, "a copy.txt")) != "content" || m.tab().Files[m.tab().Cursor].Name != "a copy.txt" {
+		t.Fatalf("files = %v, statusMsg = %q", dirNames(t, dir), m.statusMsg)
+	}
+	m = cursorTo(t, m, "a.txt")
+	m, cmd = press(t, m, "y")
+	m = drain(t, m, cmd)
+	if !fs.Exists(filepath.Join(dir, "a copy 2.txt")) {
+		t.Fatalf("files = %v", dirNames(t, dir))
+	}
+
+	m = cursorTo(t, m, "folder.d")
+	m, cmd = press(t, m, "y")
+	m = drain(t, m, cmd)
+	if readTestFile(t, filepath.Join(dir, "folder.d copy", "inside")) != "x" {
+		t.Fatalf("folder not duplicated: %v", dirNames(t, dir))
+	}
+
+	m = undoNow(t, m)
+	m = undoNow(t, m)
+	if fs.Exists(filepath.Join(dir, "folder.d copy")) || fs.Exists(filepath.Join(dir, "a copy 2.txt")) || !fs.Exists(filepath.Join(dir, "a copy.txt")) {
+		t.Fatalf("after two undos: %v", dirNames(t, dir))
+	}
+}
+
+func TestPasteAsSymlink(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	target := filepath.Join(src, "target.txt")
+	writeTestFile(t, target, "linked")
+
+	m := newTestModel(t, src, nil)
+	m, _ = press(t, m, "c")
+	m.tab().CurrentPath = dst
+	m, cmd := press(t, m, "V")
+	m = drain(t, m, cmd)
+	link := filepath.Join(dst, "target.txt")
+	if got, err := os.Readlink(link); err != nil || got != target {
+		t.Fatalf("link = %q, %v", got, err)
+	}
+	if len(m.clipboard) != 1 || m.statusMsg != "Linked: target.txt" {
+		t.Fatalf("clipboard = %v, statusMsg = %q", m.clipboard, m.statusMsg)
+	}
+
+	m, cmd = press(t, m, "V")
+	m = drain(t, m, cmd)
+	if !strings.Contains(m.statusMsg, "already exists here") {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+
+	m = undoNow(t, m)
+	if fs.Exists(link) || readTestFile(t, target) != "linked" {
+		t.Fatal("undo should remove the link and only the link")
+	}
+	if len(dirNames(t, trashDir(t))) != 0 {
+		t.Fatal("a link is deleted, not trashed")
+	}
+}
+
+func TestChmod(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "a.sh")
+	writeTestFile(t, f, "")
+	os.Chmod(f, 0644)
+	mode := func() os.FileMode {
+		info, _ := os.Stat(f)
+		return info.Mode().Perm()
+	}
+
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "m")
+	if m.mode != ModeInput || m.prompt.input.Value() != "644" {
+		t.Fatalf("mode=%v value=%q", m.mode, m.prompt.input.Value())
+	}
+	if lines := plain(m.View()); !strings.Contains(lines[len(lines)-2], "CHMOD") || !strings.Contains(lines[len(lines)-1], "Permissions of a.sh:") {
+		t.Fatalf("screen:\n%s", strings.Join(lines, "\n"))
+	}
+	for _, bad := range []string{"999", "75", "12345", "rwx"} {
+		screen, _ := press(t, m, "ctrl+u")
+		screen = typeText(t, screen, bad)
+		screen, _ = press(t, screen, "enter")
+		if screen.mode != ModeInput || !strings.Contains(screen.prompt.err, "octal") {
+			t.Errorf("%q accepted: mode=%v err=%q", bad, screen.mode, screen.prompt.err)
+		}
+	}
+
+	m, _ = press(t, m, "ctrl+u")
+	m = typeText(t, m, "750")
+	m = submit(t, m)
+	if mode() != 0750 || m.mode != ModeNormal || m.statusMsg != "Changed permissions to 750: a.sh" {
+		t.Fatalf("mode %v, statusMsg %q", mode(), m.statusMsg)
+	}
+	m = undoNow(t, m)
+	if mode() != 0644 {
+		t.Fatalf("undo left mode %v", mode())
+	}
+
+	real := goos
+	goos = "windows"
+	t.Cleanup(func() { goos = real })
+	m, _ = press(t, m, "m")
+	if m.mode != ModeNormal || !strings.Contains(m.statusMsg, "Windows") {
+		t.Fatalf("on Windows: mode=%v statusMsg=%q", m.mode, m.statusMsg)
+	}
+}
+
+func TestModeFormat(t *testing.T) {
+	for _, c := range []struct {
+		text      string
+		mode      os.FileMode
+		formatted string
+	}{
+		{"644", 0644, "644"},
+		{"0755", 0755, "755"},
+		{"1777", 0777 | os.ModeSticky, "1777"},
+		{"4755", 0755 | os.ModeSetuid, "4755"},
+		{"2750", 0750 | os.ModeSetgid, "2750"},
+	} {
+		mode, err := parseMode(c.text)
+		if err != nil || mode != c.mode {
+			t.Errorf("parseMode(%q) = %v, %v", c.text, mode, err)
+		}
+		if got := formatMode(c.mode); got != c.formatted {
+			t.Errorf("formatMode(%v) = %q, want %q", c.mode, got, c.formatted)
+		}
+	}
+}
+
+// fakeEditor makes the editor a script that runs body with the file as $1,
+// and runs it synchronously as tea.ExecProcess can't without a terminal
+func fakeEditor(t *testing.T, body string) {
+	t.Helper()
+	skipWithoutSh(t)
+	script := filepath.Join(t.TempDir(), "editor")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"+body+"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VISUAL", script)
+	t.Setenv("TMPDIR", t.TempDir())
+	execProcess = func(c *exec.Cmd, fn tea.ExecCallback) tea.Cmd {
+		return func() tea.Msg { return fn(c.Run()) }
+	}
+	t.Cleanup(func() { execProcess = tea.ExecProcess })
+}
+
+// noListsLeft checks that the edited list of names was cleaned up
+func noListsLeft(t *testing.T) {
+	t.Helper()
+	if left, _ := filepath.Glob(filepath.Join(os.TempDir(), "sushi-rename-*")); len(left) != 0 {
+		t.Fatalf("temporary files left: %v", left)
+	}
+}
+
+func TestBulkRenameSwapsAndUndoes(t *testing.T) {
+	fakeEditor(t, `printf 'b.txt\na.txt\nC.md\n' > "$1"`)
+	dir := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		writeTestFile(t, filepath.Join(dir, name), name)
+	}
+
+	m := newTestModel(t, dir, nil)
+	m.bookmarks.Add("a", filepath.Join(dir, "a.txt"))
+	m, _ = press(t, m, "*")
+	m, cmd := press(t, m, "R")
+	m = drain(t, m, cmd)
+
+	if readTestFile(t, filepath.Join(dir, "b.txt")) != "a.txt" || readTestFile(t, filepath.Join(dir, "a.txt")) != "b.txt" || readTestFile(t, filepath.Join(dir, "C.md")) != "c.txt" {
+		t.Fatalf("after renaming: %v, statusMsg = %q", dirNames(t, dir), m.statusMsg)
+	}
+	if m.statusMsg != "Renamed 3 items" || len(m.tab().Selected) != 0 {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+	if got := m.bookmarks.Get(0).Path; got != filepath.Join(dir, "b.txt") {
+		t.Fatalf("bookmark = %s, want it to follow a.txt to b.txt", got)
+	}
+	noListsLeft(t)
+
+	m = undoNow(t, m)
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		if readTestFile(t, filepath.Join(dir, name)) != name {
+			t.Fatalf("after undo: %v, statusMsg = %q", dirNames(t, dir), m.statusMsg)
+		}
+	}
+}
+
+func TestBulkRenameRejectsBadEdits(t *testing.T) {
+	for _, c := range []struct{ body, want string }{
+		{`printf 'only one\n' > "$1"`, "expected 2 names"},
+		{`printf 'same\nsame\n' > "$1"`, "both say same"},
+		{`printf 'taken.txt\nb.txt\n' > "$1"`, "taken.txt already exists"},
+		{`printf 'a/b\nb.txt\n' > "$1"`, "path separator"},
+		{`exit 3`, "editor failed"},
+		{`true`, "No names changed"},
+	} {
+		fakeEditor(t, c.body)
+		dir := t.TempDir()
+		for _, name := range []string{"a.txt", "b.txt"} {
+			writeTestFile(t, filepath.Join(dir, name), "")
+		}
+		m := newTestModel(t, dir, nil)
+		m, _ = press(t, m, " ")
+		m, _ = press(t, m, " ")
+		writeTestFile(t, filepath.Join(dir, "taken.txt"), "")
+		m, cmd := press(t, m, "R")
+		m = drain(t, m, cmd)
+
+		if !strings.Contains(m.statusMsg, c.want) {
+			t.Errorf("%s: statusMsg = %q, want %q", c.body, m.statusMsg, c.want)
+		}
+		if got := dirNames(t, dir); strings.Join(got, ",") != "a.txt,b.txt,taken.txt" {
+			t.Errorf("%s: files changed to %v", c.body, got)
+		}
+		noListsLeft(t)
+	}
+}
+
+func TestBulkRenameWithoutSelectionRenames(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "")
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "R")
+	if m.mode != ModeInput || m.prompt.action != promptRename {
+		t.Fatal("R without a selection should rename the file under the cursor")
+	}
+}
+
+func zipNames(t *testing.T, path string) []string {
+	t.Helper()
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	var names []string
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func TestArchiveExtractAndUndo(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "aaa")
+	writeTestFile(t, filepath.Join(dir, "b.txt"), "bbb")
+
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "*")
+	m, _ = press(t, m, "a")
+	if m.mode != ModeInput || m.prompt.input.Value() != "a.zip" || !strings.Contains(plain(m.View())[m.height-2], "ARCHIVE") {
+		t.Fatalf("prompt = %q", m.prompt.input.Value())
+	}
+	m = submit(t, m)
+	archive := filepath.Join(dir, "a.zip")
+	if got := zipNames(t, archive); strings.Join(got, ",") != "a.txt,b.txt" {
+		t.Fatalf("archive holds %v, statusMsg = %q", got, m.statusMsg)
+	}
+	if m.statusMsg != "Compressed 2 items into a.zip" || m.tab().Files[m.tab().Cursor].Name != "a.zip" {
+		t.Fatalf("statusMsg = %q, cursor on %s", m.statusMsg, m.tab().Files[m.tab().Cursor].Name)
+	}
+
+	// The name is taken now, and the prompt says so
+	m, _ = press(t, m, "a")
+	m, _ = press(t, m, "enter")
+	if m.mode != ModeInput || !strings.Contains(m.prompt.err, "already exists") {
+		t.Fatalf("err = %q", m.prompt.err)
+	}
+	m, _ = press(t, m, "esc")
+	m, _ = press(t, m, "u")
+
+	m, cmd := press(t, m, "X")
+	m = drain(t, m, cmd)
+	if readTestFile(t, filepath.Join(dir, "a", "b.txt")) != "bbb" || m.tab().Files[m.tab().Cursor].Name != "a" {
+		t.Fatalf("not extracted: %v, statusMsg = %q", dirNames(t, dir), m.statusMsg)
+	}
+	// Extracting again never touches the first folder
+	m = cursorTo(t, m, "a.zip")
+	m, cmd = press(t, m, "X")
+	m = drain(t, m, cmd)
+	if !fs.Exists(filepath.Join(dir, "a 2", "a.txt")) {
+		t.Fatalf("second extraction: %v", dirNames(t, dir))
+	}
+
+	m = undoNow(t, m)
+	m = undoNow(t, m)
+	m = undoNow(t, m)
+	if got := dirNames(t, dir); strings.Join(got, ",") != "a.txt,b.txt" {
+		t.Fatalf("after undoing everything: %v, statusMsg = %q", got, m.statusMsg)
+	}
+}
+
+func TestExtractReportsUnsafeArchives(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "downloads")
+	os.Mkdir(dir, 0755)
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, _ := zw.Create("../escaped.txt")
+	w.Write([]byte("pwned"))
+	zw.Close()
+	os.WriteFile(filepath.Join(dir, "evil.zip"), buf.Bytes(), 0644)
+	writeTestFile(t, filepath.Join(dir, "notes.txt"), "")
+
+	m := cursorTo(t, newTestModel(t, dir, nil), "evil.zip")
+	m, cmd := press(t, m, "X")
+	m = drain(t, m, cmd)
+	if !strings.Contains(m.statusMsg, "unsafe path") || fs.Exists(filepath.Join(root, "escaped.txt")) {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+	if got := dirNames(t, dir); len(got) != 2 {
+		t.Fatalf("something was extracted: %v", got)
+	}
+
+	m = cursorTo(t, m, "notes.txt")
+	if m, _ = press(t, m, "X"); !strings.Contains(m.statusMsg, "Nothing to extract") {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
 	}
 }

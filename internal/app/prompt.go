@@ -19,6 +19,7 @@ const (
 	promptRename promptAction = iota
 	promptNewFile
 	promptNewDir
+	promptTool // Permissions and archive names; the prompt's submit does the work
 )
 
 // prompt is the text input shown in place of the status bar
@@ -28,6 +29,10 @@ type prompt struct {
 	input  components.TextInput
 	target string // File being renamed
 	err    string // Shown next to the input until the text changes
+
+	// For promptTool: the mode's name in the status bar, and what Enter does
+	badge  string
+	submit func(m Model, value string) (tea.Model, tea.Cmd)
 }
 
 // openPrompt switches to input mode
@@ -72,6 +77,9 @@ func (m Model) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	value := m.prompt.input.Value()
 	dir := m.tab().CurrentPath
+	if m.prompt.submit != nil {
+		return m.prompt.submit(m, value)
+	}
 
 	var path, status string
 	var undo *undoEntry

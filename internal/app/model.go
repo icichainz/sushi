@@ -175,6 +175,12 @@ type KeyMap struct {
 	HardDelete  key.Binding
 	Undo        key.Binding
 	Cancel      key.Binding
+	Duplicate   key.Binding
+	PasteLink   key.Binding
+	Chmod       key.Binding
+	BulkRename  key.Binding
+	Archive     key.Binding
+	Extract     key.Binding
 	Search      key.Binding
 	Bookmark    key.Binding
 	AddBookmark key.Binding
@@ -284,7 +290,7 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("v"),
 			key.WithHelp("v", "paste"),
 		),
-		// Trash and undo; see tools.go
+		// Trash, undo and file tools; see tools.go
 		HardDelete: key.NewBinding(
 			key.WithKeys("D"),
 			key.WithHelp("D", "delete permanently"),
@@ -296,6 +302,30 @@ func DefaultKeyMap() KeyMap {
 		Cancel: key.NewBinding(
 			key.WithKeys("ctrl+x"),
 			key.WithHelp("ctrl+x", "cancel operation"),
+		),
+		Duplicate: key.NewBinding(
+			key.WithKeys("y"),
+			key.WithHelp("y", "duplicate"),
+		),
+		PasteLink: key.NewBinding(
+			key.WithKeys("V"),
+			key.WithHelp("V", "paste as symlink"),
+		),
+		Chmod: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "permissions"),
+		),
+		BulkRename: key.NewBinding(
+			key.WithKeys("R"),
+			key.WithHelp("R", "bulk rename"),
+		),
+		Archive: key.NewBinding(
+			key.WithKeys("a"),
+			key.WithHelp("a", "compress to zip"),
+		),
+		Extract: key.NewBinding(
+			key.WithKeys("X"),
+			key.WithHelp("X", "extract archive"),
 		),
 		Search: key.NewBinding(
 			key.WithKeys("/"),

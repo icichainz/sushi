@@ -615,6 +615,9 @@ func (m Model) modeBadge() (string, lipgloss.Color) {
 	case ModeSearch:
 		return "SEARCH", t.Accent
 	case ModeInput:
+		if m.prompt.badge != "" {
+			return m.prompt.badge, t.Accent
+		}
 		if m.prompt.action == promptRename {
 			return "RENAME", t.Accent
 		}
@@ -972,7 +975,7 @@ var helpGroups = []struct {
 }{
 	{"Move", []hint{{"j k", "down, up"}, {"h l", "parent, open"}, {"g G", "first, last"}, {"ctrl+u d", "page up, down"}, {"J K", "scroll preview"}}},
 	{"Files", []hint{{"enter", "open"}, {"e o", "edit, default app"}, {"r", "rename"}, {"n N", "new file, folder"}, {"d D", "trash, delete"}}},
-	{"Tools", []hint{{"ctrl+z", "undo"}, {"ctrl+x", "cancel operation"}}},
+	{"Tools", []hint{{"ctrl+z", "undo"}, {"ctrl+x", "cancel operation"}, {"y V", "duplicate, paste link"}, {"m R", "chmod, bulk rename"}, {"a X", "zip, extract"}}},
 	{"Select", []hint{{"space", "toggle"}, {"*", "invert"}, {"u", "clear"}, {"c x v", "copy, cut, paste"}}},
 	{"View", []hint{{"/", "search"}, {"p", "preview"}, {".", "hidden files"}, {"?", "this panel"}}},
 	{"Tabs", []hint{{"t T", "new here, home"}, {"tab", "next"}, {"shift+tab", "previous"}, {"ctrl+w", "close"}}},

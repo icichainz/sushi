@@ -21,16 +21,20 @@ type stepKind int
 const (
 	stepRestore stepKind = iota // Move from back to to: undoes trash, rename and move
 	stepRemove                  // Remove path if unchanged: undoes copy and create
+	stepChmod                   // Put path's mode back
+	stepRenames                 // Undo a bulk rename, all at once
 )
 
 // undoStep reverses one part of an operation
 type undoStep struct {
 	kind     stepKind
-	from, to string   // stepRestore
-	info     string   // stepRestore from the trash: the item's .trashinfo file
-	trashed  bool     // stepRestore: from is in the trash
-	path     string   // stepRemove
-	stamp    fs.Stamp // stepRemove: what it was like when created
+	from, to string          // stepRestore
+	info     string          // stepRestore from the trash: the item's .trashinfo file
+	trashed  bool            // stepRestore: from is in the trash
+	path     string          // stepRemove and stepChmod
+	stamp    fs.Stamp        // stepRemove: what it was like when created
+	mode     os.FileMode     // stepChmod
+	renames  []fs.RenamePair // stepRenames
 }
 
 // undoEntry is an operation that can be undone
@@ -174,6 +178,15 @@ func (s undoStep) undo(t *fs.Task, useTrash bool) ([]fs.RenamePair, error) {
 
 	case stepRemove:
 		return nil, removeCreated(t, s.path, s.stamp, useTrash)
+
+	case stepChmod:
+		return nil, os.Chmod(s.path, s.mode)
+
+	case stepRenames:
+		if err := fs.RenameAll(s.renames); err != nil {
+			return nil, err
+		}
+		return s.renames, nil
 	}
 	return nil, nil
 }
