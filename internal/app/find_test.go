@@ -190,6 +190,40 @@ func TestFindInFilesJumpsToTheLine(t *testing.T) {
 	}
 }
 
+func TestFindInFilesJumpsPastTheUsualPreviewLines(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 6000; i++ {
+		if i == 4500 {
+			b.WriteString("the NEEDLE is here\n")
+			continue
+		}
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	root := makeTree(t, map[string]string{"big.txt": b.String()})
+
+	// The preview reads 2000 lines, or as far as a result being opened
+	m := find(t, newTestModel(t, root, nil), "F", "needle")
+	m, cmd := press(t, m, "enter")
+	m = drain(t, m, cmd)
+	shown := false
+	for _, line := range plain(m.View()) {
+		shown = shown || strings.Contains(line, " 4500 ") && strings.Contains(line, "the NEEDLE is here")
+	}
+	if !shown || m.statusMsg != "" {
+		t.Fatalf("line 4500 is not in the preview (status %q):\n%s", m.statusMsg, strings.Join(plain(m.View()), "\n"))
+	}
+
+	// Past the most it reads, the status bar says why the line isn't shown
+	maxPreviewLines = 3000
+	t.Cleanup(func() { maxPreviewLines = 20000 })
+	m = find(t, newTestModel(t, root, nil), "F", "needle")
+	m, cmd = press(t, m, "enter")
+	m = drain(t, m, cmd)
+	if want := "Line 4500 is past the first 3000 lines, which is as far as the preview reads"; m.statusMsg != want {
+		t.Fatalf("status = %q, want %q", m.statusMsg, want)
+	}
+}
+
 func TestFindJumpIsDroppedIfAnotherKeyComesFirst(t *testing.T) {
 	root := makeTree(t, map[string]string{"a.txt": strings.Repeat("x\n", 100) + "needle\n"})
 	m := find(t, newTestModel(t, root, nil), "F", "needle")

@@ -168,12 +168,32 @@ func (m *Model) reloadIfWanted(tab *Tab) tea.Cmd {
 	return m.reloadTab(tab)
 }
 
-// previewCmd loads the preview for the file under the tab's cursor, if shown
+// maxPreviewLines is the most lines of a text file a preview reads, to
+// show a search result far into it; a variable so tests can lower it
+var maxPreviewLines = 20000
+
+// previewCmd loads the preview for the file under the tab's cursor, if
+// shown. A text preview reads its usual lines, or enough to show the line
+// of a search result being opened, and on a reload as many as it had.
 func (m *Model) previewCmd(tab *Tab) tea.Cmd {
 	if !tab.PreviewEnabled || len(tab.Files) == 0 {
 		return nil
 	}
-	return loadPreview(tab.ID, tab.Files[tab.Cursor], m.theme.Syntax)
+	file := tab.Files[tab.Cursor]
+	cfg := previewConfig(m.theme.Syntax)
+	if m.jumpingTo(tab, file.Path) {
+		cfg.MaxLines = max(cfg.MaxLines, min(m.jump.line+m.previewRows(), maxPreviewLines))
+	}
+	if p := tab.Preview; p.Path == file.Path && p.IsText {
+		cfg.MaxLines = max(cfg.MaxLines, len(p.Lines))
+	}
+	return loadPreviewWith(tab.ID, file, cfg)
+}
+
+// jumpingTo reports whether a search result's line is waiting to be shown
+// in the tab's preview of path
+func (m *Model) jumpingTo(tab *Tab, path string) bool {
+	return m.jump.line > 0 && m.jump.tabID == tab.ID && m.jump.path == path
 }
 
 // loadPreviewNow loads a preview synchronously using the theme's syntax
@@ -835,10 +855,15 @@ func loadDirectory(tabID, seq int, path string, opts fs.ScanOptions) tea.Cmd {
 
 // loadPreview loads preview content asynchronously
 func loadPreview(tabID int, file fs.FileInfo, syntax string) tea.Cmd {
+	return loadPreviewWith(tabID, file, previewConfig(syntax))
+}
+
+// loadPreviewWith loads preview content asynchronously with cfg
+func loadPreviewWith(tabID int, file fs.FileInfo, cfg components.PreviewConfig) tea.Cmd {
 	return func() tea.Msg {
 		return previewLoadedMsg{
 			tabID:   tabID,
-			preview: components.LoadPreviewWithConfig(file, previewConfig(syntax)),
+			preview: components.LoadPreviewWithConfig(file, cfg),
 		}
 	}
 }

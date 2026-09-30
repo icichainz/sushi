@@ -268,17 +268,23 @@ func (m Model) openFindResult() (tea.Model, tea.Cmd) {
 }
 
 // showJump scrolls the preview to a search result's line once the file's
-// preview has loaded
-func (m *Model) showJump(msg previewLoadedMsg) {
+// preview has loaded; previewCmd reads that far into the file, up to
+// maxPreviewLines. Past that, the preview shows its last lines and the
+// status bar says why the line isn't there.
+func (m *Model) showJump(msg previewLoadedMsg) tea.Cmd {
 	j := m.jump
 	tab := m.tabByID(msg.tabID)
 	if j.line == 0 || j.tabID != msg.tabID || j.path != msg.preview.Path || tab == nil || tab.Preview.Path != j.path {
-		return
+		return nil
 	}
 	// Centred, so the lines around it show too
 	rows := m.previewRows()
 	tab.PreviewScroll = max(min(j.line-1-(rows-1)/2, tab.Preview.MaxScroll(rows)), 0)
 	m.jump = previewJump{}
+	if p := tab.Preview; p.IsText && j.line > len(p.Lines) {
+		return m.setStatus(fmt.Sprintf("Line %d is past the first %d lines, which is as far as the preview reads", j.line, len(p.Lines)))
+	}
+	return nil
 }
 
 // findQuery prepares a name query: lowercase, with slashes as separators,
