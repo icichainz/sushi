@@ -99,6 +99,85 @@ func TestPasteOverALinkedFolderLeavesItsTargetAlone(t *testing.T) {
 	}
 }
 
+// ignoresCase reports whether the filesystem holding dir takes names that
+// differ only in case for the same, as macOS and Windows do by default
+func ignoresCase(t *testing.T, dir string) bool {
+	t.Helper()
+	probe := filepath.Join(dir, "CaseProbe")
+	writeTestFile(t, probe, "")
+	defer os.Remove(probe)
+	_, err := os.Lstat(filepath.Join(dir, "caseprobe"))
+	return err == nil
+}
+
+// reportAndReport sets up x/report.txt and y/Report.txt, and an empty z/
+func reportAndReport(t *testing.T) (x, y, z string) {
+	t.Helper()
+	root := t.TempDir()
+	for _, d := range []string{"x", "y", "z"} {
+		os.Mkdir(filepath.Join(root, d), 0755)
+	}
+	x, y = filepath.Join(root, "x", "report.txt"), filepath.Join(root, "y", "Report.txt")
+	writeTestFile(t, x, "x's report")
+	writeTestFile(t, y, "y's report")
+	return x, y, filepath.Join(root, "z")
+}
+
+func TestPasteRefusesNamesThatDifferOnlyInCase(t *testing.T) {
+	for _, mode := range []string{"copy", "cut"} {
+		// On a filesystem that ignores case, the second used to replace the
+		// first, "Moved: 2 items" was reported, and undo then moved y's
+		// report to x's place: x's report was gone
+		x, y, z := reportAndReport(t)
+		m := newTestModel(t, filepath.Dir(x), nil)
+		m.clipboard, m.clipboardMode = []string{x, y}, mode
+		m.tab().CurrentPath = z
+		m, cmd := press(t, m, "v")
+		m = drain(t, m, cmd)
+		if !strings.Contains(m.statusMsg, "Can't paste") || !strings.Contains(m.statusMsg, "differ only in case") {
+			t.Fatalf("%s: statusMsg = %q", mode, m.statusMsg)
+		}
+		if readTestFile(t, x) != "x's report" || readTestFile(t, y) != "y's report" || len(dirNames(t, z)) != 0 {
+			t.Fatalf("%s: files were pasted: %v", mode, dirNames(t, z))
+		}
+	}
+
+	// Accents written as one character or two are the same name too
+	if nameKey("re\u0301sume\u0301.txt") != nameKey("R\u00e9sum\u00e9.txt") {
+		t.Fatal("names differing only in normalisation should match")
+	}
+}
+
+func TestPasteNeverReplacesWhatItHasJustPasted(t *testing.T) {
+	x, y, z := reportAndReport(t)
+	if !ignoresCase(t, z) {
+		t.Skip("the filesystem tells Report.txt from report.txt")
+	}
+	for _, mode := range []string{"copy", "cut"} {
+		x, y, z = reportAndReport(t)
+		// As if the check before pasting had missed it
+		m := newTestModel(t, filepath.Dir(x), nil)
+		m.clipboard, m.clipboardMode = []string{x, y}, mode
+		m.tab().CurrentPath = z
+		m = drain(t, m, m.executePaste())
+		if m.statusMsg == "" || !strings.Contains(m.statusMsg, "just put there") {
+			t.Fatalf("%s: statusMsg = %q", mode, m.statusMsg)
+		}
+		if got := readTestFile(t, filepath.Join(z, "report.txt")); got != "x's report" {
+			t.Fatalf("%s: z/report.txt holds %q", mode, got)
+		}
+		if readTestFile(t, y) != "y's report" {
+			t.Fatalf("%s: y's report is gone", mode)
+		}
+		if mode == "cut" {
+			m = undoNow(t, m)
+			if readTestFile(t, x) != "x's report" || readTestFile(t, y) != "y's report" {
+				t.Fatalf("undo put back the wrong file: %q", m.statusMsg)
+			}
+		}
+	}
+}
+
 func TestTargetsAreCleaned(t *testing.T) {
 	dir := t.TempDir()
 	m := newTestModel(t, dir, nil)

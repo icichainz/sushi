@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/fs"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 // targets returns the paths an operation applies to: the selection if there
@@ -153,17 +156,30 @@ func (m Model) startPaste() (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// nameKey folds a file name the way filesystems that ignore case and
+// Unicode normalisation compare names (APFS and HFS+ by default, NTFS,
+// FAT): "Report.txt" and "report.txt" name one file, and so do two
+// spellings of "résumé" with each é one character or two
+func nameKey(name string) string {
+	return norm.NFC.String(cases.Fold().String(norm.NFC.String(name)))
+}
+
 // checkPaste validates pasting the clipboard into dir and returns the names
-// that already exist there
+// that already exist there. Two items whose names differ only in case or
+// normalisation are refused, whatever the filesystem: where they are the
+// same name, the second would replace the first.
 func (m Model) checkPaste(dir string) ([]string, error) {
 	var conflicts []string
 	seen := make(map[string]string, len(m.clipboard))
 	for _, src := range m.clipboard {
 		name := filepath.Base(src)
-		if other, ok := seen[name]; ok {
+		if other, ok := seen[nameKey(name)]; ok {
+			if filepath.Base(other) != name {
+				return nil, fmt.Errorf("%s and %s have names that differ only in case or accents, the same name on many filesystems", other, src)
+			}
 			return nil, fmt.Errorf("%s and %s have the same name", other, src)
 		}
-		seen[name] = src
+		seen[nameKey(name)] = src
 
 		dst := filepath.Join(dir, name)
 		if err := fs.CheckTransfer(src, dst); err != nil {
@@ -211,8 +227,20 @@ func (m *Model) executePaste() tea.Cmd {
 			t.Count(srcs...)
 		}
 		undo := &undoEntry{label: label + describe(srcs)}
+		var made []os.FileInfo // What this paste has put in dir so far
 		op, _ := runBatch(t, mode, verb, srcs, func(src string) error {
 			dst := filepath.Join(dir, filepath.Base(src))
+			// Something this paste has just put here under another spelling
+			// of the name, which the filesystem takes for the same: pasting
+			// would replace it, and undo would then put the wrong file back
+			if info, err := os.Lstat(dst); err == nil && slices.ContainsFunc(made, func(p os.FileInfo) bool { return os.SameFile(p, info) }) {
+				return fmt.Errorf("would replace %s, which this paste has just put there", filepath.Base(dst))
+			}
+			defer func() {
+				if info, err := os.Lstat(dst); err == nil {
+					made = append(made, info)
+				}
+			}()
 			// Only what the paste created can be undone: what it replaced is gone
 			replaced := fs.Exists(dst)
 			var err error
