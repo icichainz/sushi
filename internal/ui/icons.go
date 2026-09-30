@@ -148,36 +148,36 @@ const (
 // Reference: https://icons.getbootstrap.com/
 var bootstrapIconMap = map[string]string{
 	// Programming languages
-	".go":     "\uf3bf", // bi-file-zip (no specific Go icon, using code)
-	".py":     "\uf3b0", // bi-filetype-py
-	".js":     "\uf3a3", // bi-filetype-js
-	".ts":     "\uf352", // bi-file-code
-	".tsx":    "\uf352", // bi-file-code
-	".jsx":    "\uf352", // bi-file-code
-	".rs":     "\uf352", // bi-file-code
-	".java":   "\uf3a1", // bi-filetype-java
-	".c":      "\uf352", // bi-file-code
-	".cpp":    "\uf352", // bi-file-code
-	".cc":     "\uf352", // bi-file-code
-	".h":      "\uf352", // bi-file-code
-	".hpp":    "\uf352", // bi-file-code
-	".rb":     "\uf3ad", // bi-filetype-rb
-	".php":    "\uf3ab", // bi-filetype-php
-	".swift":  "\uf352", // bi-file-code
-	".kt":     "\uf352", // bi-file-code
-	".scala":  "\uf352", // bi-file-code
-	".lua":    "\uf352", // bi-file-code
-	".pl":     "\uf352", // bi-file-code
-	".r":      "\uf352", // bi-file-code
-	".ex":     "\uf352", // bi-file-code
-	".exs":    "\uf352", // bi-file-code
-	".erl":    "\uf352", // bi-file-code
-	".hs":     "\uf352", // bi-file-code
-	".clj":    "\uf352", // bi-file-code
-	".vim":    "\uf352", // bi-file-code
-	".zig":    "\uf352", // bi-file-code
-	".dart":   "\uf352", // bi-file-code
-	".elm":    "\uf352", // bi-file-code
+	".go":    "\uf3bf", // bi-file-zip (no specific Go icon, using code)
+	".py":    "\uf3b0", // bi-filetype-py
+	".js":    "\uf3a3", // bi-filetype-js
+	".ts":    "\uf352", // bi-file-code
+	".tsx":   "\uf352", // bi-file-code
+	".jsx":   "\uf352", // bi-file-code
+	".rs":    "\uf352", // bi-file-code
+	".java":  "\uf3a1", // bi-filetype-java
+	".c":     "\uf352", // bi-file-code
+	".cpp":   "\uf352", // bi-file-code
+	".cc":    "\uf352", // bi-file-code
+	".h":     "\uf352", // bi-file-code
+	".hpp":   "\uf352", // bi-file-code
+	".rb":    "\uf3ad", // bi-filetype-rb
+	".php":   "\uf3ab", // bi-filetype-php
+	".swift": "\uf352", // bi-file-code
+	".kt":    "\uf352", // bi-file-code
+	".scala": "\uf352", // bi-file-code
+	".lua":   "\uf352", // bi-file-code
+	".pl":    "\uf352", // bi-file-code
+	".r":     "\uf352", // bi-file-code
+	".ex":    "\uf352", // bi-file-code
+	".exs":   "\uf352", // bi-file-code
+	".erl":   "\uf352", // bi-file-code
+	".hs":    "\uf352", // bi-file-code
+	".clj":   "\uf352", // bi-file-code
+	".vim":   "\uf352", // bi-file-code
+	".zig":   "\uf352", // bi-file-code
+	".dart":  "\uf352", // bi-file-code
+	".elm":   "\uf352", // bi-file-code
 
 	// Web
 	".html":   "\uf3a0", // bi-filetype-html
@@ -201,18 +201,18 @@ var bootstrapIconMap = map[string]string{
 	".env":    "\uf4df", // bi-key
 
 	// Documents
-	".md":       "\uf481", // bi-markdown
-	".mdx":      "\uf481", // bi-markdown
-	".txt":      "\uf3b9", // bi-file-text
-	".pdf":      "\uf3aa", // bi-filetype-pdf
-	".doc":      "\uf397", // bi-filetype-doc
-	".docx":     "\uf398", // bi-filetype-docx
-	".xls":      "\uf3b5", // bi-filetype-xls
-	".xlsx":     "\uf3b6", // bi-filetype-xlsx
-	".ppt":      "\uf3ac", // bi-filetype-ppt
-	".pptx":     "\uf3ac", // bi-filetype-ppt
-	".tex":      "\uf3b9", // bi-file-text
-	".rst":      "\uf3b9", // bi-file-text
+	".md":   "\uf481", // bi-markdown
+	".mdx":  "\uf481", // bi-markdown
+	".txt":  "\uf3b9", // bi-file-text
+	".pdf":  "\uf3aa", // bi-filetype-pdf
+	".doc":  "\uf397", // bi-filetype-doc
+	".docx": "\uf398", // bi-filetype-docx
+	".xls":  "\uf3b5", // bi-filetype-xls
+	".xlsx": "\uf3b6", // bi-filetype-xlsx
+	".ppt":  "\uf3ac", // bi-filetype-ppt
+	".pptx": "\uf3ac", // bi-filetype-ppt
+	".tex":  "\uf3b9", // bi-file-text
+	".rst":  "\uf3b9", // bi-file-text
 
 	// Images
 	".png":  "\uf3a8", // bi-filetype-png
@@ -340,46 +340,46 @@ const (
 // Reference: https://www.nerdfonts.com/cheat-sheet
 var iconMap = map[string]string{
 	// Programming languages
-	".go":     "\ue627", // nf-seti-go
-	".py":     "\ue73c", // nf-dev-python
-	".js":     "\ue74e", // nf-dev-javascript
-	".ts":     "\ue628", // nf-seti-typescript
-	".tsx":    "\ue7ba", // nf-dev-react
-	".jsx":    "\ue7ba", // nf-dev-react
-	".rs":     "\ue7a8", // nf-dev-rust
-	".java":   "\ue738", // nf-dev-java
-	".c":      "\ue61e", // nf-custom-c
-	".cpp":    "\ue61d", // nf-custom-cpp
-	".cc":     "\ue61d", // nf-custom-cpp
-	".h":      "\ue61e", // nf-custom-c
-	".hpp":    "\ue61d", // nf-custom-cpp
-	".rb":     "\ue739", // nf-dev-ruby
-	".php":    "\ue73d", // nf-dev-php
-	".swift":  "\ue755", // nf-dev-swift
-	".kt":     "\ue634", // nf-seti-kotlin
-	".scala":  "\ue737", // nf-dev-scala
-	".lua":    "\ue620", // nf-seti-lua
-	".pl":     "\ue769", // nf-dev-perl
-	".r":      "\ue68a", // nf-seti-r
-	".ex":     "\ue62d", // nf-seti-elixir
-	".exs":    "\ue62d", // nf-seti-elixir
-	".erl":    "\ue7b1", // nf-dev-erlang
-	".hs":     "\ue61f", // nf-seti-haskell
-	".clj":    "\ue768", // nf-dev-clojure
-	".vim":    "\ue62b", // nf-dev-vim
-	".zig":    "\ue6a9", // nf-seti-zig
-	".dart":   "\ue798", // nf-dev-dart
-	".elm":    "\ue62c", // nf-seti-elm
+	".go":    "\ue627", // nf-seti-go
+	".py":    "\ue73c", // nf-dev-python
+	".js":    "\ue74e", // nf-dev-javascript
+	".ts":    "\ue628", // nf-seti-typescript
+	".tsx":   "\ue7ba", // nf-dev-react
+	".jsx":   "\ue7ba", // nf-dev-react
+	".rs":    "\ue7a8", // nf-dev-rust
+	".java":  "\ue738", // nf-dev-java
+	".c":     "\ue61e", // nf-custom-c
+	".cpp":   "\ue61d", // nf-custom-cpp
+	".cc":    "\ue61d", // nf-custom-cpp
+	".h":     "\ue61e", // nf-custom-c
+	".hpp":   "\ue61d", // nf-custom-cpp
+	".rb":    "\ue739", // nf-dev-ruby
+	".php":   "\ue73d", // nf-dev-php
+	".swift": "\ue755", // nf-dev-swift
+	".kt":    "\ue634", // nf-seti-kotlin
+	".scala": "\ue737", // nf-dev-scala
+	".lua":   "\ue620", // nf-seti-lua
+	".pl":    "\ue769", // nf-dev-perl
+	".r":     "\ue68a", // nf-seti-r
+	".ex":    "\ue62d", // nf-seti-elixir
+	".exs":   "\ue62d", // nf-seti-elixir
+	".erl":   "\ue7b1", // nf-dev-erlang
+	".hs":    "\ue61f", // nf-seti-haskell
+	".clj":   "\ue768", // nf-dev-clojure
+	".vim":   "\ue62b", // nf-dev-vim
+	".zig":   "\ue6a9", // nf-seti-zig
+	".dart":  "\ue798", // nf-dev-dart
+	".elm":   "\ue62c", // nf-seti-elm
 
 	// Web
-	".html":   "\ue736", // nf-dev-html5
-	".htm":    "\ue736", // nf-dev-html5
-	".css":    "\ue749", // nf-dev-css3
-	".scss":   "\ue603", // nf-dev-sass
-	".sass":   "\ue603", // nf-dev-sass
-	".less":   "\ue758", // nf-dev-less
-	".vue":    "\ue6a0", // nf-seti-vue
-	".svelte": "\ue697", // nf-seti-svelte
+	".html":    "\ue736", // nf-dev-html5
+	".htm":     "\ue736", // nf-dev-html5
+	".css":     "\ue749", // nf-dev-css3
+	".scss":    "\ue603", // nf-dev-sass
+	".sass":    "\ue603", // nf-dev-sass
+	".less":    "\ue758", // nf-dev-less
+	".vue":     "\ue6a0", // nf-seti-vue
+	".svelte":  "\ue697", // nf-seti-svelte
 	".angular": "\ue753", // nf-dev-angular
 
 	// Data/Config
@@ -394,18 +394,18 @@ var iconMap = map[string]string{
 	".env":    "\ue615", // nf-seti-settings
 
 	// Documents
-	".md":       "\ue73e", // nf-dev-markdown
-	".mdx":      "\ue73e", // nf-dev-markdown
-	".txt":      "\uf0f6", // nf-fa-file_text_o
-	".pdf":      "\uf1c1", // nf-fa-file_pdf_o
-	".doc":      "\uf1c2", // nf-fa-file_word_o
-	".docx":     "\uf1c2", // nf-fa-file_word_o
-	".xls":      "\uf1c3", // nf-fa-file_excel_o
-	".xlsx":     "\uf1c3", // nf-fa-file_excel_o
-	".ppt":      "\uf1c4", // nf-fa-file_powerpoint_o
-	".pptx":     "\uf1c4", // nf-fa-file_powerpoint_o
-	".tex":      "\ue69b", // nf-seti-tex
-	".rst":      "\ue6a7", // nf-seti-rst
+	".md":   "\ue73e", // nf-dev-markdown
+	".mdx":  "\ue73e", // nf-dev-markdown
+	".txt":  "\uf0f6", // nf-fa-file_text_o
+	".pdf":  "\uf1c1", // nf-fa-file_pdf_o
+	".doc":  "\uf1c2", // nf-fa-file_word_o
+	".docx": "\uf1c2", // nf-fa-file_word_o
+	".xls":  "\uf1c3", // nf-fa-file_excel_o
+	".xlsx": "\uf1c3", // nf-fa-file_excel_o
+	".ppt":  "\uf1c4", // nf-fa-file_powerpoint_o
+	".pptx": "\uf1c4", // nf-fa-file_powerpoint_o
+	".tex":  "\ue69b", // nf-seti-tex
+	".rst":  "\ue6a7", // nf-seti-rst
 
 	// Images
 	".png":  "\uf1c5", // nf-fa-file_image_o
@@ -430,15 +430,15 @@ var iconMap = map[string]string{
 	".webm": "\uf1c8", // nf-fa-file_video_o
 
 	// Archives
-	".zip":   "\uf1c6", // nf-fa-file_archive_o
-	".tar":   "\uf1c6", // nf-fa-file_archive_o
-	".gz":    "\uf1c6", // nf-fa-file_archive_o
-	".bz2":   "\uf1c6", // nf-fa-file_archive_o
-	".xz":    "\uf1c6", // nf-fa-file_archive_o
-	".7z":    "\uf1c6", // nf-fa-file_archive_o
-	".rar":   "\uf1c6", // nf-fa-file_archive_o
-	".deb":   "\ue77d", // nf-dev-debian
-	".rpm":   "\ue7bb", // nf-dev-redhat
+	".zip": "\uf1c6", // nf-fa-file_archive_o
+	".tar": "\uf1c6", // nf-fa-file_archive_o
+	".gz":  "\uf1c6", // nf-fa-file_archive_o
+	".bz2": "\uf1c6", // nf-fa-file_archive_o
+	".xz":  "\uf1c6", // nf-fa-file_archive_o
+	".7z":  "\uf1c6", // nf-fa-file_archive_o
+	".rar": "\uf1c6", // nf-fa-file_archive_o
+	".deb": "\ue77d", // nf-dev-debian
+	".rpm": "\ue7bb", // nf-dev-redhat
 
 	// Data
 	".sql": "\ue706", // nf-dev-database

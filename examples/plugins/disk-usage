@@ -1,0 +1,11 @@
+#!/bin/sh
+# sushi-mode: background
+# sushi-description: Total size of the selection, or of the file under the cursor
+
+if [ $# -eq 0 ]; then
+    echo "Nothing to measure"
+    exit 0
+fi
+
+# The last line printed becomes the status message
+echo "$(du -shc "$@" | tail -n 1 | cut -f1) in $# item(s)"

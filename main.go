@@ -4,21 +4,51 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/app"
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/fonts"
+	"github.com/icichainz/sushi/internal/shell"
 	"github.com/icichainz/sushi/internal/ui"
+	"github.com/icichainz/sushi/internal/utils"
 )
+
+// version is what --version prints. Builds set it with
+// -ldflags "-X main.version=1.2.3", as the Makefile does.
+var version = "dev"
+
+// optionalString is a flag that can be given alone or with a value, as in
+// --print-shell-wrapper or --print-shell-wrapper=zsh
+type optionalString struct {
+	set   bool
+	value string
+}
+
+func (o *optionalString) String() string   { return o.value }
+func (o *optionalString) IsBoolFlag() bool { return true }
+func (o *optionalString) Set(s string) error {
+	o.set = true
+	if s != "true" {
+		o.value = s
+	}
+	return nil
+}
 
 func main() {
 	// Parse command line flags
 	asciiMode := flag.Bool("ascii", false, "Use ASCII icons (no icon font required)")
 	bootstrapMode := flag.Bool("bootstrap", false, "Use Bootstrap Icons font")
-	installFont := flag.Bool("install-font", false, "Download and install JetBrainsMono Nerd Font")
+	installFont := flag.Bool("install-font", false, "Download and install a Nerd Font (JetBrainsMono unless --font is given)")
+	fontName := flag.String("font", "", "Nerd Font to install with --install-font (see --list-fonts)")
 	listFonts := flag.Bool("list-fonts", false, "List available Nerd Fonts to install")
 	initConfig := flag.Bool("init-config", false, "Create default configuration file")
+	listKeys := flag.Bool("list-keys", false, "Print every action and its keys, as a keys: section for the config file")
+	cwdFile := flag.String("cwd-file", "", "On quit, write the directory shown to this `file` (Q quits without writing)")
+	var wrapperShell optionalString
+	flag.Var(&wrapperShell, "print-shell-wrapper", "Print the sushicd shell function for zsh, bash or fish (default: $SHELL)")
+	showVersion := flag.Bool("version", false, "Print the version of sushi")
 	showHelp := flag.Bool("help", false, "Show help message")
 	flag.BoolVar(showHelp, "h", false, "Show help message")
 
@@ -33,22 +63,54 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  --ascii: ASCII text icons (works everywhere)\n")
 		fmt.Fprintf(os.Stderr, "\nFont Installation:\n")
 		fmt.Fprintf(os.Stderr, "  --install-font: Download and install JetBrainsMono Nerd Font\n")
+		fmt.Fprintf(os.Stderr, "  --install-font --font FiraCode: Install a different font from --list-fonts\n")
 		fmt.Fprintf(os.Stderr, "  --list-fonts: Show available Nerd Fonts\n")
 		fmt.Fprintf(os.Stderr, "\nConfiguration:\n")
 		fmt.Fprintf(os.Stderr, "  --init-config: Create default config file at ~/.config/sushi/config.yaml\n")
 		fmt.Fprintf(os.Stderr, "  Config file settings: icon_mode, preview_enabled, preview_width, etc.\n")
+		fmt.Fprintf(os.Stderr, "  --list-keys: Show every action and its keys; change them under keys: in the config file\n")
+		fmt.Fprintf(os.Stderr, "\nShell Integration:\n")
+		fmt.Fprintf(os.Stderr, "  A program can't change its shell's directory, so sushicd runs sushi and cds\n")
+		fmt.Fprintf(os.Stderr, "  to the directory it was showing when you quit with q (Q quits without).\n")
+		fmt.Fprintf(os.Stderr, "  eval \"$(sushi --print-shell-wrapper zsh)\"   # in ~/.zshrc (bash: ~/.bashrc)\n")
+		fmt.Fprintf(os.Stderr, "  sushi --print-shell-wrapper fish | source    # in ~/.config/fish/config.fish\n")
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  sushi              # Open current directory (Nerd Font icons)\n")
 		fmt.Fprintf(os.Stderr, "  sushi ~/projects   # Open specific directory\n")
 		fmt.Fprintf(os.Stderr, "  sushi --install-font  # Install Nerd Font for icons\n")
 		fmt.Fprintf(os.Stderr, "  sushi --ascii      # Use ASCII icons\n")
 		fmt.Fprintf(os.Stderr, "  sushi --init-config   # Create configuration file\n")
+		fmt.Fprintf(os.Stderr, "  sushi --version    # Print the version\n")
 	}
 
 	flag.Parse()
 
 	if *showHelp {
 		flag.Usage()
+		os.Exit(0)
+	}
+
+	if *showVersion {
+		fmt.Println("sushi " + version)
+		os.Exit(0)
+	}
+
+	// Print the shell function, for the shell named after the flag or in
+	// $SHELL
+	if wrapperShell.set {
+		name := wrapperShell.value
+		if name == "" && flag.NArg() > 0 {
+			name = flag.Arg(0)
+		}
+		if name == "" {
+			name = os.Getenv("SHELL")
+		}
+		script, err := shell.Wrapper(name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(script)
 		os.Exit(0)
 	}
 
@@ -60,7 +122,7 @@ func main() {
 			fmt.Printf("  - %s (v%s)\n", font.Name, font.Version)
 		}
 		fmt.Println()
-		fmt.Println("Install with: sushi --install-font")
+		fmt.Println("Install with: sushi --install-font [--font NAME]")
 		fmt.Println()
 
 		// Check for installed fonts
@@ -77,6 +139,14 @@ func main() {
 	// Handle font installation
 	if *installFont {
 		font := fonts.GetDefaultFont()
+		if *fontName != "" {
+			found, ok := fonts.FindFont(*fontName)
+			if !ok {
+				fmt.Printf("Unknown font %q. Run 'sushi --list-fonts' to see the choices.\n", *fontName)
+				os.Exit(1)
+			}
+			font = found
+		}
 		fmt.Printf("Installing %s Nerd Font...\n\n", font.Name)
 
 		err := fonts.InstallFont(font, func(status string) {
@@ -93,7 +163,7 @@ func main() {
 		fmt.Println()
 		fmt.Println("Next steps:")
 		fmt.Println("  1. Open your terminal preferences/settings")
-		fmt.Println("  2. Change the font to 'JetBrainsMono Nerd Font'")
+		fmt.Printf("  2. Change the font to '%s Nerd Font'\n", font.Name)
 		fmt.Println("  3. Restart your terminal")
 		fmt.Println("  4. Run 'sushi' to enjoy file icons!")
 		os.Exit(0)
@@ -119,6 +189,23 @@ func main() {
 
 	// Load configuration
 	cfg := config.LoadConfig()
+
+	// Print the keys as the config sets them, and anything wrong with them
+	if *listKeys {
+		problems, err := app.WriteKeys(os.Stdout, cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		// Problems quote plugin names, which could hold escape codes
+		for _, p := range problems {
+			fmt.Fprintln(os.Stderr, utils.Printable(p))
+		}
+		if len(problems) > 0 {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	// Set icon mode: CLI flags take precedence over config
 	if *asciiMode {
@@ -154,9 +241,30 @@ func main() {
 	// Create the initial model with config
 	m := app.NewModelWithConfig(startPath, cfg)
 
-	// Run the program
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
+	// Run the program. With mouse reporting on, terminals select text only
+	// while Shift (or Option on macOS) is held, so it can be turned off.
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	if cfg.Mouse {
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(m, opts...)
+	final, err := p.Run()
+	if model, ok := final.(app.Model); ok {
+		model.Close()
+		// A copy or move still running when sushi quit, or was sent SIGTERM,
+		// is cancelled and given time to clean up after itself
+		if serr := model.Shutdown(10 * time.Second); serr != nil {
+			fmt.Fprintf(os.Stderr, "sushi: %v\n", serr)
+		}
+		// For the shell function to cd to; see --print-shell-wrapper
+		if err == nil && *cwdFile != "" {
+			if err := model.WriteExitDir(*cwdFile); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	}
+	if err != nil {
 		fmt.Printf("Error running program: %v\n", err)
 		os.Exit(1)
 	}

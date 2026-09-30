@@ -2,15 +2,80 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/icichainz/sushi/internal/fs"
 	"github.com/icichainz/sushi/internal/ui"
 	"github.com/icichainz/sushi/internal/ui/components"
 	"github.com/icichainz/sushi/internal/utils"
 )
+
+const (
+	// minWidthParent is the terminal width from which the parent pane shows
+	minWidthParent = 100
+	// minWidthPreview is the terminal width from which the preview pane shows
+	minWidthPreview = 72
+	// chromeRows is the rows around the panes: tabs, breadcrumb, status, hints
+	chromeRows = 4
+	// minPathWidth is the least of the breadcrumb's path a note beside it
+	// may leave
+	minPathWidth = 12
+)
+
+// glyphs are the drawing characters, with plain ASCII ones for --ascii
+type glyphs struct {
+	vline, hline, tl, tr, bl, br string
+	mark, up, down, dot, more    string
+}
+
+func currentGlyphs() glyphs {
+	if ui.GetIconMode() == ui.IconModeASCII {
+		return glyphs{"|", "-", "+", "+", "+", "+", "*", "^", "v", "-", "..."}
+	}
+	return glyphs{"│", "─", "╭", "╮", "╰", "╯", "●", "↑", "↓", "·", "…"}
+}
+
+// layout is how the terminal is divided between the panes
+type layout struct {
+	parentW, listW, previewW int // Pane widths including their divider; 0 hides the pane
+	bodyH                    int // Rows of each pane, heading included
+}
+
+// layout works out the panes for the current terminal size: narrow
+// terminals lose the parent pane first, then the preview
+func (m Model) layout() layout {
+	tab := m.tabs[m.activeTabIdx]
+	l := layout{bodyH: max(m.height-chromeRows, 1)}
+	rest := m.width
+	if m.width >= minWidthParent && filepath.Dir(tab.CurrentPath) != tab.CurrentPath {
+		l.parentW = min(max(m.width*18/100, 18), 30)
+		rest -= l.parentW
+	}
+	if tab.PreviewEnabled && m.width >= minWidthPreview {
+		l.previewW = rest * tab.PreviewWidth / 100
+	}
+	l.listW = rest - l.previewW
+	return l
+}
+
+// listRows returns how many files fit in the file list
+func (m Model) listRows() int {
+	return max(m.layout().bodyH-1, 1)
+}
+
+// previewRows returns the height of the preview pane, heading included
+func (m Model) previewRows() int {
+	return m.layout().bodyH
+}
+
+func (m Model) fg(c lipgloss.Color) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(c)
+}
 
 // View renders the application
 func (m Model) View() string {
@@ -18,594 +83,1090 @@ func (m Model) View() string {
 		return "Loading..."
 	}
 
-	// Show help view if in help mode
-	if m.mode == ModeHelp {
-		return m.renderHelpView()
+	lines := m.mainLines()
+	switch m.mode {
+	case ModeConfirm:
+		lines = m.withDialog(lines, m.confirmBox())
+	case ModeBookmarks:
+		lines = m.withDialog(lines, m.bookmarksBox())
+	case ModePlugins:
+		lines = m.withDialog(lines, m.runBox())
+	case ModeSort:
+		lines = m.withDialog(lines, m.sortBox())
+	case ModeFind:
+		lines = m.withDialog(lines, m.findBox())
+	case ModeHelp:
+		lines = m.withHelp(lines)
 	}
 
-	// Show confirmation dialog if in confirm mode
-	if m.mode == ModeConfirm {
-		return m.renderConfirmDialog()
-	}
-
-	// Show bookmarks view if in bookmarks mode
-	if m.mode == ModeBookmarks {
-		return m.renderBookmarksView()
-	}
-
-	tab := m.tabs[m.activeTabIdx]
-	var sections []string
-
-	// Header with current path
-	sections = append(sections, m.renderHeader())
-
-	// Tab bar (only if multiple tabs)
-	if len(m.tabs) > 1 {
-		sections = append(sections, m.renderTabBar())
-	}
-
-	// Main content: file list + preview (if enabled)
-	if tab.PreviewEnabled {
-		sections = append(sections, m.renderSplitView())
-	} else {
-		sections = append(sections, m.renderFileList(m.width))
-	}
-
-	// Search bar (if in search mode)
-	if m.mode == ModeSearch {
-		sections = append(sections, m.renderSearchBar())
-	} else {
-		// Status bar
-		sections = append(sections, m.renderStatusBar())
-	}
-
-	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+	// Never exceed the terminal: Bubble Tea drops lines from the top of an
+	// oversized frame, which would hide the tabs
+	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(strings.Join(lines, "\n"))
 }
 
-// renderHeader renders the header with current path
-func (m Model) renderHeader() string {
-	tab := m.tabs[m.activeTabIdx]
-	pathStyle := m.styles.Header.Width(m.width)
-	return pathStyle.Render(fmt.Sprintf(" 📁 %s", tab.CurrentPath))
+// renderMainView renders the browser: tabs, breadcrumb, panes, status, hints
+func (m Model) renderMainView() string {
+	return strings.Join(m.mainLines(), "\n")
 }
 
-// renderTabBar renders the tab bar
+func (m Model) mainLines() []string {
+	l := m.layout()
+	lines := make([]string, 0, l.bodyH+chromeRows)
+	lines = append(lines, m.renderTabBar(), m.renderHeader())
+
+	var parent, preview []string
+	if l.parentW > 0 {
+		parent = m.renderParent(l.parentW, l.bodyH)
+	}
+	list := m.renderFileList(l.listW, l.bodyH, l.parentW > 0)
+	if l.previewW > 0 {
+		preview = m.renderPreview(l.previewW, l.bodyH)
+	}
+	for i := 0; i < l.bodyH; i++ {
+		row := list[i]
+		if parent != nil {
+			row = parent[i] + row
+		}
+		if preview != nil {
+			row += preview[i]
+		}
+		lines = append(lines, row)
+	}
+
+	return append(lines, m.renderStatusBar(), m.renderBottomRow())
+}
+
+// renderTabBar renders the tabs, which are always shown
 func (m Model) renderTabBar() string {
-	var tabs []string
+	t := m.theme
+	bar := lipgloss.NewStyle().Background(t.TabBarBg)
+	active := lipgloss.NewStyle().Background(t.Accent).Foreground(t.TabActiveFg).Bold(true)
+	inactive := lipgloss.NewStyle().Background(t.TabInactiveBg).Foreground(t.TabInactiveFg)
 
-	for i, tab := range m.tabs {
-		name := filepath.Base(tab.CurrentPath)
-		if name == "" || name == "/" {
-			name = "/"
-		}
-
-		// Truncate long names
-		if len(name) > 15 {
-			name = name[:12] + "..."
-		}
-
-		tabLabel := fmt.Sprintf("%d:%s", i+1, name)
-
-		if i == m.activeTabIdx {
-			tabs = append(tabs, m.styles.TabActive.Render(tabLabel))
+	var b strings.Builder
+	used := 0
+	for _, span := range m.tabSpans() {
+		if span.index == m.activeTabIdx {
+			b.WriteString(active.Render(span.label))
 		} else {
-			tabs = append(tabs, m.styles.TabInactive.Render(tabLabel))
+			b.WriteString(inactive.Render(span.label))
+		}
+		used += span.width
+	}
+
+	// The keys as bound, leaving out actions without one
+	var labels []string
+	for _, l := range []hint{{shownKey(m.keys.Plugins), "run"}, {shownKey(m.keys.Bookmark), "bookmarks"}} {
+		if l.key != "" {
+			labels = append(labels, l.key+" "+l.label)
 		}
 	}
-
-	tabContent := lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
-	return m.styles.TabBar.Width(m.width).Render(tabContent)
-}
-
-// renderSplitView renders the split pane layout (file list + preview)
-func (m Model) renderSplitView() string {
-	tab := m.tabs[m.activeTabIdx]
-	// Calculate widths for split view
-	listWidth := m.width * tab.PreviewWidth / 100
-	previewWidth := m.width - listWidth
-
-	// Render both panes
-	fileListPane := m.renderFileList(listWidth)
-	previewPane := m.renderPreview(previewWidth)
-
-	// Join horizontally
-	return lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		fileListPane,
-		previewPane,
-	)
-}
-
-// renderFileList renders the list of files
-func (m Model) renderFileList(width int) string {
-	tab := m.tabs[m.activeTabIdx]
-
-	// Account for tab bar in height calculation
-	heightOffset := 4
-	if len(m.tabs) > 1 {
-		heightOffset = 5
-	}
-
-	if tab.Loading {
-		return m.styles.EmptyDir.
-			Width(width).
-			Height(m.height - heightOffset).
-			Render("⏳ Loading...")
-	}
-
-	if len(tab.Files) == 0 {
-		return m.styles.EmptyDir.
-			Width(width).
-			Height(m.height - heightOffset).
-			Render("Empty directory")
-	}
-
-	// Calculate visible range
-	height := m.height - heightOffset // Account for header, tab bar, and status bar
-	start := max(0, tab.Cursor-height/2)
-	end := min(len(tab.Files), start+height)
-
-	// Adjust start if we're near the end
-	if end-start < height && start > 0 {
-		start = max(0, end-height)
-	}
-
-	// Pre-allocate slice with exact capacity needed
-	visibleCount := end - start
-	lines := make([]string, 0, visibleCount)
-
-	for i := start; i < end; i++ {
-		file := tab.Files[i]
-		isMatch := m.isSearchMatch(i)
-		line := m.renderFileLine(file, i == tab.Cursor, isMatch, width)
-		lines = append(lines, line)
-	}
-
-	listContent := strings.Join(lines, "\n")
-	return m.styles.FileList.
-		Width(width).
-		Height(height).
-		Render(listContent)
-}
-
-// renderFileLine renders a single file line
-func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, isMatch bool, width int) string {
-	icon := ui.GetFileIcon(file)
-	name := file.Name
-
-	// Check if this file is in clipboard (cut mode shows strikethrough effect)
-	isCutFile := m.clipboardMode == "cut" && m.clipboard == file.Path
-
-	// Truncate name if too long
-	maxNameLen := width - 30 // Leave room for size and date
-	if maxNameLen < 10 {
-		maxNameLen = 10
-	}
-	if len(name) > maxNameLen {
-		name = name[:maxNameLen-3] + "..."
-	}
-
-	size := utils.HumanizeSize(file.Size)
-	modTime := file.ModTime.Format("Jan 02 15:04")
-
-	// Build the line with proper spacing
-	namePart := fmt.Sprintf("%s  %-*s", icon, maxNameLen, name)
-	sizePart := fmt.Sprintf("%10s", size)
-	timePart := fmt.Sprintf("  %s", modTime)
-
-	line := namePart + sizePart + timePart
-
-	// Ensure line doesn't exceed width
-	if len(line) > width-2 {
-		line = line[:width-2]
-	}
-
-	// Apply styling
-	style := m.styles.File
-	if isCursor {
-		style = m.styles.SelectedFile
-	}
-	if file.IsDir {
-		style = style.Foreground(lipgloss.Color("12"))
-	}
-
-	// Dim non-matching files in search mode
-	if m.mode == ModeSearch && !isMatch {
-		style = style.Foreground(lipgloss.Color("240"))
-	}
-
-	// Visual indicator for cut files (dimmed with strikethrough effect)
-	if isCutFile {
-		style = style.Foreground(lipgloss.Color("243")).Italic(true)
-	}
-
-	return style.Render(line)
-}
-
-// isSearchMatch checks if file index is in search results (O(1) lookup using map)
-func (m Model) isSearchMatch(index int) bool {
-	tab := m.tabs[m.activeTabIdx]
-	if m.mode != ModeSearch || tab.SearchMatchSet == nil {
-		return true // Not in search mode, everything matches
-	}
-	_, exists := tab.SearchMatchSet[index]
-	return exists
-}
-
-// renderPreview renders the preview pane
-func (m Model) renderPreview(width int) string {
-	tab := m.tabs[m.activeTabIdx]
-
-	// Account for tab bar in height calculation
-	heightOffset := 4
-	if len(m.tabs) > 1 {
-		heightOffset = 5
-	}
-	height := m.height - heightOffset
-
-	// Create preview border style
-	previewStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, false, false, true).
-		BorderForeground(lipgloss.Color("238")).
-		Width(width).
-		Height(height)
-
-	// If no file selected
-	if len(tab.Files) == 0 {
-		emptyStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Align(lipgloss.Center, lipgloss.Center).
-			Width(width - 2).
-			Height(height - 2)
-		return previewStyle.Render(emptyStyle.Render("No file selected"))
-	}
-
-	// Render preview content
-	previewContent := components.RenderPreview(
-		tab.Preview,
-		width-4, // Account for border and padding
-		height-2,
-		m.styles.File,
-	)
-
-	return previewStyle.Render(previewContent)
-}
-
-// renderStatusBar renders the status bar
-func (m Model) renderStatusBar() string {
-	tab := m.tabs[m.activeTabIdx]
-
-	// Left side: file count and size (using cached TotalSize)
-	leftInfo := fmt.Sprintf(" %d files | %s", len(tab.Files), utils.HumanizeSize(tab.TotalSize))
-
-	// Center: status message
-	centerInfo := ""
-	if m.statusMsg != "" {
-		centerInfo = " " + m.statusMsg + " "
-	} else if m.err != nil {
-		centerInfo = fmt.Sprintf(" Error: %v ", m.err)
-	}
-
-	// Right side: cursor position, tab count, and preview status
-	rightInfo := ""
-	if len(tab.Files) > 0 {
-		previewStatus := ""
-		if tab.PreviewEnabled {
-			previewStatus = "👁️ "
-		}
-		tabInfo := ""
-		if len(m.tabs) > 1 {
-			tabInfo = fmt.Sprintf("Tab %d/%d | ", m.activeTabIdx+1, len(m.tabs))
-		}
-		rightInfo = fmt.Sprintf("%s%s%d/%d ", tabInfo, previewStatus, tab.Cursor+1, len(tab.Files))
-	}
-
-	// Build status bar using strings.Builder for efficient concatenation
-	leftWidth := lipgloss.Width(leftInfo)
-	centerWidth := lipgloss.Width(centerInfo)
-	rightWidth := lipgloss.Width(rightInfo)
-	totalContent := leftWidth + centerWidth + rightWidth
-
-	var sb strings.Builder
-	sb.Grow(m.width) // Pre-allocate capacity
-
-	if totalContent > m.width {
-		// Terminal too small, truncate center info or show minimal
-		if m.width < 40 {
-			// Very small terminal, just show position
-			sb.WriteString(rightInfo)
-		} else {
-			// Truncate center info
-			available := m.width - leftWidth - rightWidth - 2
-			if available > 0 && len(centerInfo) > available {
-				centerInfo = centerInfo[:available-3] + "..."
-			} else if available <= 0 {
-				centerInfo = ""
-			}
-			gap := m.width - leftWidth - lipgloss.Width(centerInfo) - rightWidth
-			if gap < 0 {
-				gap = 0
-			}
-			sb.WriteString(leftInfo)
-			sb.WriteString(centerInfo)
-			for i := 0; i < gap; i++ {
-				sb.WriteByte(' ')
-			}
-			sb.WriteString(rightInfo)
-		}
+	right := strings.Join(labels, "  ") + " "
+	if rw := utils.Width(right); len(labels) > 0 && used+rw+2 <= m.width {
+		b.WriteString(bar.Render(strings.Repeat(" ", m.width-used-rw)))
+		b.WriteString(bar.Foreground(t.TabInactiveFg).Render(right))
 	} else {
-		gap := m.width - totalContent
-		sb.WriteString(leftInfo)
-		sb.WriteString(centerInfo)
-		for i := 0; i < gap; i++ {
-			sb.WriteByte(' ')
-		}
-		sb.WriteString(rightInfo)
+		b.WriteString(bar.Render(strings.Repeat(" ", m.width-used)))
 	}
-
-	return m.styles.StatusBar.
-		Width(m.width).
-		Render(sb.String())
+	return b.String()
 }
 
-// renderHelpView renders the help screen
-func (m Model) renderHelpView() string {
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("212")).
-		MarginBottom(1)
-
-	keyStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("229")).
-		Bold(true).
-		Width(15)
-
-	descStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
-
-	helpItems := []struct {
-		key  string
-		desc string
-	}{
-		{"↑/k", "Move cursor up"},
-		{"↓/j", "Move cursor down"},
-		{"PgUp/^u", "Page up"},
-		{"PgDn/^d", "Page down"},
-		{"g/Home", "Go to first file"},
-		{"G/End", "Go to last file"},
-		{"←/h", "Go to parent directory"},
-		{"→/l", "Enter directory"},
-		{"Enter", "Open/Enter directory"},
-		{"Backspace", "Go back"},
-		{"/", "Fuzzy search"},
-		{"b", "Show bookmarks"},
-		{"B", "Add bookmark"},
-		{"1-9", "Quick jump to bookmark"},
-		{"p", "Toggle preview pane"},
-		{"t", "New tab (current dir)"},
-		{"T", "New tab (home dir)"},
-		{"Tab", "Next tab"},
-		{"Shift+Tab", "Previous tab"},
-		{"Ctrl+w", "Close tab"},
-		{"d", "Delete file/directory"},
-		{"c", "Copy to clipboard"},
-		{"x", "Cut to clipboard"},
-		{"v", "Paste from clipboard"},
-		{"q", "Quit"},
-		{"?", "Show this help"},
+// sortLabel describes the sort order, e.g. "name ↑"
+func (m Model) sortLabel() string {
+	g := currentGlyphs()
+	// Size and modified list the largest and newest first
+	descending := m.sortBy == "size" || m.sortBy == "modified"
+	if m.sortReverse {
+		descending = !descending
 	}
+	if descending {
+		return m.sortBy + " " + g.down
+	}
+	return m.sortBy + " " + g.up
+}
+
+// pathSegments splits a path for display, with the home directory as "~"
+// and each name made printable
+func pathSegments(path string) []string {
+	segs := splitPath(path)
+	for i := range segs {
+		segs[i] = utils.Printable(segs[i])
+	}
+	return segs
+}
+
+// splitPath splits a path into its directories, with the home directory
+// as "~"
+func splitPath(path string) []string {
+	sep := string(filepath.Separator)
+	if home, err := os.UserHomeDir(); err == nil && home != sep {
+		if path == home {
+			return []string{"~"}
+		}
+		if rest, ok := strings.CutPrefix(path, home+sep); ok {
+			return append([]string{"~"}, strings.Split(rest, sep)...)
+		}
+	}
+	trimmed := strings.Trim(path, sep)
+	if trimmed == "" {
+		return []string{sep}
+	}
+	segs := strings.Split(trimmed, sep)
+	if strings.HasPrefix(path, sep) {
+		segs[0] = sep + segs[0]
+	}
+	return segs
+}
+
+// renderHeader renders the breadcrumb, with the sort order and hidden-file
+// setting on the right
+func (m Model) renderHeader() string {
+	t := m.theme
+	g := currentGlyphs()
+	tab := m.tabs[m.activeTabIdx]
+	inner := max(m.width-2, 0)
+
+	hidden := "off"
+	if m.showHidden {
+		hidden = "on"
+	}
+	info := fmt.Sprintf("sort %s %s hidden %s", m.sortLabel(), g.dot, hidden)
+	// Changes to a directory that isn't watched show only after a refresh
+	note := ""
+	if m.watch.unwatched(tab.CurrentPath) {
+		note = "not watched"
+		if k := keysLabel(" ", m.keys.Refresh); k != "" {
+			note += ": " + k + " refreshes"
+		}
+		info = note + " " + g.dot + " " + info
+	}
+
+	// The sort order shows only where the whole path fits beside it. The
+	// note matters more than the path's leading directories, which make
+	// room for it.
+	segs := pathSegments(tab.CurrentPath)
+	width := func(s []string) int { return utils.Width(strings.Join(s, " / ")) }
+	warn := m.fg(t.Highlight)
+	right, rightW := "", 0
+	switch {
+	case width(segs)+2+utils.Width(info) <= inner:
+		if note != "" {
+			right = warn.Render(note)
+		}
+		right += m.fg(t.Muted).Render(strings.TrimPrefix(info, note))
+		rightW = utils.Width(info)
+	case note != "":
+		for _, text := range []string{note, "not watched"} {
+			if utils.Width(text)+2+minPathWidth <= inner {
+				right, rightW = warn.Render(text), utils.Width(text)
+				break
+			}
+		}
+	}
+	room := inner
+	if rightW > 0 {
+		room -= rightW + 2
+	}
+
+	// Drop leading directories until the path fits, keeping the current one
+	for len(segs) > 1 && width(segs) > room {
+		segs = append([]string{g.more}, segs[2:]...)
+		if len(segs) == 1 {
+			break
+		}
+	}
+
+	var b strings.Builder
+	used := 0
+	for i, seg := range segs {
+		last := i == len(segs)-1
+		if last {
+			seg = utils.TruncateLeft(seg, max(room-used, 0))
+			b.WriteString(m.fg(t.HeaderFg).Bold(true).Render(seg))
+		} else {
+			b.WriteString(m.fg(t.Muted).Render(seg) + m.fg(t.Faint).Render(" / "))
+			used += 3
+		}
+		used += utils.Width(seg)
+	}
+	gap := max(inner-used-rightW, 0)
+	return utils.Fit(" "+b.String()+strings.Repeat(" ", gap)+right, m.width)
+}
+
+// divider returns the line drawn on the left edge of a pane
+func (m Model) divider() string {
+	return m.fg(m.theme.Border).Render(currentGlyphs().vline)
+}
+
+// window returns the first visible index of a list of n items showing rows
+// at a time, keeping the cursor centered where possible
+func window(cursor, n, rows int) int {
+	start := max(0, cursor-rows/2)
+	if start+rows > n {
+		start = max(0, n-rows)
+	}
+	return start
+}
+
+// renderParent renders the parent directory, with the current one marked
+func (m Model) renderParent(width, height int) []string {
+	t := m.theme
+	tab := m.tabs[m.activeTabIdx]
+	parentPath := filepath.Dir(tab.CurrentPath)
+	name := utils.Printable(filepath.Base(parentPath))
+
+	out := make([]string, 0, height)
+	out = append(out, utils.Fit(" "+m.fg(t.Faint).Render(utils.Truncate(name, width-2)), width))
+
+	rows := height - 1
+	start := m.parentStart(rows)
+	for i := start; i < start+rows; i++ {
+		if i >= len(tab.ParentFiles) {
+			out = append(out, strings.Repeat(" ", width))
+			continue
+		}
+		f := tab.ParentFiles[i]
+		text := utils.Fit(" "+ui.GetFileIcon(f)+"  "+utils.Printable(f.Name), width)
+		style := m.fg(t.Faint)
+		if f.Path == tab.CurrentPath {
+			style = lipgloss.NewStyle().Foreground(t.Text).Background(t.Raised).Bold(true)
+		}
+		out = append(out, style.Render(text))
+	}
+	return out
+}
+
+// columns is how a file row is divided
+type columns struct {
+	inner, iconW, nameW int
+	size, date          bool
+}
+
+const (
+	sizeW = 9  // "1023.9 KB"
+	dateW = 14 // Two spaces and "Jan 02 15:04"
+)
+
+// listColumns sizes the columns; narrow lists lose the date, then the size
+func listColumns(inner int, files []fs.FileInfo) columns {
+	c := columns{inner: inner, iconW: 1, size: inner >= 40, date: inner >= 58}
+	for _, f := range files {
+		c.iconW = max(c.iconW, utils.Width(ui.GetFileIcon(f)))
+	}
+	// Margin, marker, space, icon, two spaces, name, [size], [date], margin
+	c.nameW = inner - 3 - c.iconW - 2 - 1
+	if c.size {
+		c.nameW -= sizeW
+	}
+	if c.date {
+		c.nameW -= dateW
+	}
+	c.nameW = max(c.nameW, 4)
+	return c
+}
+
+// visibleFiles returns the indexes of the files the list shows: all of
+// them, or only the matches while searching
+func (m Model) visibleFiles() []int {
+	tab := m.tabs[m.activeTabIdx]
+	if m.mode == ModeSearch && tab.SearchQuery != "" {
+		return tab.SearchResults
+	}
+	all := make([]int, len(tab.Files))
+	for i := range all {
+		all[i] = i
+	}
+	return all
+}
+
+// renderFileList renders the heading and rows of the file list
+func (m Model) renderFileList(width, height int, divider bool) []string {
+	t := m.theme
+	g := currentGlyphs()
+	tab := m.tabs[m.activeTabIdx]
+
+	edge := ""
+	inner := width
+	if divider {
+		edge = m.divider()
+		inner--
+	}
+	visible := m.visibleFiles()
+	files := make([]fs.FileInfo, len(visible))
+	for i, idx := range visible {
+		files[i] = tab.Files[idx]
+	}
+	c := listColumns(inner, files)
+
+	// Heading, with an arrow on the sorted column. The type has no column,
+	// nor has the size or date once the list is too narrow for it, so
+	// then the name's heading says what the order is.
+	arrow := func(col string) string {
+		if m.sortBy == col {
+			return " " + strings.TrimPrefix(m.sortLabel(), m.sortBy+" ")
+		}
+		return ""
+	}
+	nameHead := "Name" + arrow("name")
+	switch by := m.sortBy; {
+	case by == "type":
+		nameHead = "Name (by type)" + arrow("type")
+	case by == "size" && !c.size, by == "modified" && !c.date:
+		nameHead = "Name (" + m.sortLabel() + ")"
+	}
+	head := strings.Repeat(" ", 3+c.iconW+2) + utils.Fit(nameHead, c.nameW)
+	if c.size {
+		head += utils.FitRight("Size"+arrow("size"), sizeW)
+	}
+	if c.date {
+		head += utils.FitRight("Modified"+arrow("modified"), dateW)
+	}
+	out := make([]string, 0, height)
+	out = append(out, edge+m.fg(t.Faint).Render(utils.Fit(head, inner)))
+
+	rows := height - 1
+	message := ""
+	switch {
+	case tab.Loading && len(tab.Files) == 0:
+		message = "Loading" + g.more
+	case len(tab.Files) == 0:
+		message = "Empty directory"
+	case len(visible) == 0:
+		message = "No matches"
+	}
+	if message != "" {
+		out = append(out, edge+m.fg(t.Faint).Render(utils.Fit("   "+message, inner)))
+		for len(out) < height {
+			out = append(out, edge+strings.Repeat(" ", inner))
+		}
+		return out
+	}
+
+	start := m.listStart(visible, rows)
+	renaming := m.mode == ModeInput && m.prompt.action == promptRename
+	for i := start; i < start+rows; i++ {
+		if i >= len(visible) {
+			out = append(out, edge+strings.Repeat(" ", inner))
+			continue
+		}
+		idx := visible[i]
+		file := tab.Files[idx]
+		// On the file being renamed, wherever the cursor is
+		if renaming && file.Path == m.prompt.target {
+			out = append(out, edge+m.renderRenameRow(file, c))
+			continue
+		}
+		var matched map[int]bool
+		if m.mode == ModeSearch {
+			matched = fuzzyPositions(strings.ToLower(tab.SearchQuery), strings.ToLower(file.Name))
+		}
+		out = append(out, edge+m.renderFileLine(file, idx == tab.Cursor, matched, c))
+	}
+	return out
+}
+
+// renderFileLine renders a single file row
+func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, matched map[int]bool, c columns) string {
+	t := m.theme
+	selected := m.tabs[m.activeTabIdx].Selected[file.Path]
+	cut := m.clipboardMode == "cut" && m.inClipboard(file.Path)
+
+	// A marker shows selection without relying on color alone
+	marker := " "
+	if selected {
+		marker = currentGlyphs().mark
+	}
+
+	markStyle := m.fg(t.Selected)
+	iconStyle := m.fg(t.Muted)
+	nameStyle := m.fg(t.Text)
+	metaStyle := m.fg(t.Muted)
+	if file.IsDir {
+		iconStyle = m.fg(t.Directory)
+		nameStyle = nameStyle.Bold(true)
+	}
+	if selected {
+		nameStyle = nameStyle.Foreground(t.Selected)
+	}
+	if cut {
+		iconStyle = m.fg(t.Faint)
+		nameStyle = m.fg(t.Faint).Italic(true)
+		metaStyle = m.fg(t.Faint)
+	}
+	if isCursor {
+		base := lipgloss.NewStyle().Foreground(t.CursorFg).Background(t.CursorBg)
+		markStyle, iconStyle, metaStyle = base, base, base
+		nameStyle = base.Bold(file.IsDir).Italic(cut)
+	}
+
+	var b strings.Builder
+	b.WriteString(markStyle.Render(" " + marker + " "))
+	b.WriteString(iconStyle.Render(utils.Fit(ui.GetFileIcon(file), c.iconW) + "  "))
+
+	// Underline the letters the search matched. Printable replaces rune
+	// for rune, so the matched positions still hold.
+	full := utils.Printable(file.Name)
+	name := utils.Truncate(full, c.nameW)
+	shown := []rune(name)
+	kept := len(shown)
+	if name != full {
+		kept -= 3 // The ellipsis
+	}
+	for i := 0; i < len(shown); {
+		hit := i < kept && matched[i]
+		j := i
+		for j < len(shown) && (j < kept && matched[j]) == hit {
+			j++
+		}
+		style := nameStyle
+		if hit {
+			style = style.Underline(true).Bold(true)
+		}
+		b.WriteString(style.Render(string(shown[i:j])))
+		i = j
+	}
+	b.WriteString(nameStyle.Underline(false).Render(strings.Repeat(" ", max(c.nameW-utils.Width(name), 0))))
+
+	meta := ""
+	if c.size {
+		meta += utils.FitRight(utils.HumanizeSize(file.Size), sizeW)
+	}
+	if c.date {
+		meta += utils.FitRight(file.ModTime.Format("Jan 02 15:04"), dateW)
+	}
+	b.WriteString(metaStyle.Render(meta + " "))
+	return utils.Cells(b.String(), 0, c.inner)
+}
+
+// renderRenameRow renders the row being renamed as a text field, with any
+// error beside it
+func (m Model) renderRenameRow(file fs.FileInfo, c columns) string {
+	t := m.theme
+	base := lipgloss.NewStyle().Background(t.Raised)
+	lead := base.Foreground(t.Accent).Render("   " + utils.Fit(ui.GetFileIcon(file), c.iconW) + "  ")
+
+	room := max(c.inner-utils.Width(lead)-1, 1)
+	errText := ""
+	if m.prompt.err != "" {
+		errText = utils.Truncate(utils.Printable(m.prompt.err), room/2)
+		room -= utils.Width(errText) + 2
+	}
+	input := m.prompt.input.View(room, base.Foreground(t.Text), base.Foreground(t.Text).Reverse(true))
+	row := lead + input + base.Render(strings.Repeat(" ", max(room-utils.Width(input), 0)))
+	if errText != "" {
+		row += base.Render("  ") + base.Foreground(t.Danger).Render(errText)
+	}
+	return utils.Cells(row+base.Render(" "), 0, c.inner)
+}
+
+// renderPreview renders the preview pane: the selection if there is one,
+// otherwise the file under the cursor
+func (m Model) renderPreview(width, height int) []string {
+	t := m.theme
+	tab := m.tabs[m.activeTabIdx]
+	edge := m.divider()
+	inner := max(width-1, 1)
 
 	var lines []string
-	lines = append(lines, titleStyle.Render("Sushi - Keyboard Shortcuts"))
-	lines = append(lines, "")
-
-	for _, item := range helpItems {
-		line := keyStyle.Render(item.key) + descStyle.Render(item.desc)
-		lines = append(lines, line)
+	switch {
+	case len(tab.Selected) > 0:
+		lines = m.renderSelection(inner, height)
+	case len(tab.Files) == 0:
+		lines = []string{utils.Fit(" "+m.fg(t.Faint).Render("Nothing to preview"), inner)}
+	default:
+		lines = components.RenderPreview(tab.Preview, inner, height, tab.PreviewScroll, components.PreviewStyles{
+			Title: m.fg(t.Text).Bold(true),
+			Text:  m.fg(t.Text),
+			Faint: m.fg(t.Faint),
+			Dir:   m.fg(t.Directory).Bold(true),
+			Error: m.fg(t.Danger),
+		})
 	}
 
-	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
-		Italic(true).
-		Render("Press any key to close"))
-
-	content := strings.Join(lines, "\n")
-
-	// Center the help box
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
-		Padding(1, 3).
-		Align(lipgloss.Left)
-
-	box := boxStyle.Render(content)
-
-	return lipgloss.Place(
-		m.width,
-		m.height,
-		lipgloss.Center,
-		lipgloss.Center,
-		box,
-	)
+	out := make([]string, 0, height)
+	for i := 0; i < height; i++ {
+		if i < len(lines) {
+			out = append(out, edge+lines[i])
+		} else {
+			out = append(out, edge+strings.Repeat(" ", inner))
+		}
+	}
+	return out
 }
 
-// renderConfirmDialog renders a confirmation dialog
-func (m Model) renderConfirmDialog() string {
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("196")).
-		MarginBottom(1)
-
-	messageStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
-
-	hintStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
-		Italic(true)
-
-	var title, message string
-
+// renderSelection summarises the selected files in the preview pane
+func (m Model) renderSelection(width, height int) []string {
+	t := m.theme
+	g := currentGlyphs()
 	tab := m.tabs[m.activeTabIdx]
+
+	var here []fs.FileInfo
+	var size int64
+	for _, f := range tab.Files {
+		if tab.Selected[f.Path] {
+			here = append(here, f)
+			size += f.Size
+		}
+	}
+	elsewhere := len(tab.Selected) - len(here)
+
+	lines := []string{" " + m.fg(t.Selected).Bold(true).Render(fmt.Sprintf("%d selected", len(tab.Selected)))}
+	room := max(height-4, 1)
+	for i, f := range here {
+		if i == room-1 && len(here) > room {
+			lines = append(lines, " "+m.fg(t.Faint).Render(fmt.Sprintf("and %d more", len(here)-i)))
+			break
+		}
+		name := utils.Fit(g.mark+" "+ui.GetFileIcon(f)+"  "+utils.Printable(f.Name), max(width-sizeW-3, 4))
+		lines = append(lines, " "+m.fg(t.Selected).Render(name)+m.fg(t.Muted).Render(utils.FitRight(utils.HumanizeSize(f.Size), sizeW)))
+	}
+	total := fmt.Sprintf("%s in %d here", utils.HumanizeSize(size), len(here))
+	if elsewhere > 0 {
+		total += fmt.Sprintf(", %d in other folders", elsewhere)
+	}
+	lines = append(lines, "", " "+m.fg(t.Muted).Render(utils.Truncate(total, width-2)))
+
+	for i := range lines {
+		lines[i] = utils.Fit(lines[i], width)
+	}
+	return lines
+}
+
+// modeBadge returns the name and color of the current mode
+func (m Model) modeBadge() (string, lipgloss.Color) {
+	t := m.theme
+	switch m.mode {
+	case ModeSearch:
+		return "SEARCH", t.Accent
+	case ModeInput:
+		if m.prompt.badge != "" {
+			return m.prompt.badge, t.Accent
+		}
+		if m.prompt.action == promptRename {
+			return "RENAME", t.Accent
+		}
+		return "NEW", t.Accent
+	case ModeConfirm:
+		return "CONFIRM", t.Danger
+	case ModeBookmarks:
+		return "BOOKMARKS", t.Accent
+	case ModePlugins:
+		return "RUN", t.Accent
+	case ModeSort:
+		return "SORT", t.Accent
+	case ModeFind:
+		return "FIND", t.Accent
+	case ModeHelp:
+		return "KEYS", t.Accent
+	}
+	if len(m.tabs[m.activeTabIdx].Selected) > 0 {
+		return "SELECT", t.Selected
+	}
+	return "NORMAL", t.Accent
+}
+
+// isProblem reports whether a status message describes a failure
+func isProblem(msg string) bool {
+	for _, word := range []string{"Error", "failed", "Can't", "unknown", "invalid", "conflict"} {
+		if strings.Contains(msg, word) {
+			return true
+		}
+	}
+	return false
+}
+
+// renderStatusBar renders the mode, counts, clipboard and messages
+func (m Model) renderStatusBar() string {
+	t := m.theme
+	tab := m.tabs[m.activeTabIdx]
+	bar := lipgloss.NewStyle().Background(t.BarBg).Foreground(t.BarFg)
+
+	mode, color := m.modeBadge()
+	badge := lipgloss.NewStyle().Background(color).Foreground(t.CursorFg).Bold(true).Render(" " + mode + " ")
+
+	visible := m.visibleFiles()
+	right := ""
+	if len(visible) > 0 {
+		pos := 0
+		for i, idx := range visible {
+			if idx == tab.Cursor {
+				pos = i
+			}
+		}
+		right = fmt.Sprintf("%d/%d ", pos+1, len(visible))
+	}
+
+	type segment struct {
+		text  string
+		style lipgloss.Style
+	}
+	// The message and the running job's progress come first: they are what
+	// the bar is for, so the counts, selection and clipboard give way
+	var first, rest []segment
+	if m.statusMsg != "" {
+		style := bar.Foreground(t.Highlight)
+		if isProblem(m.statusMsg) {
+			style = bar.Foreground(t.Danger)
+		}
+		first = append(first, segment{m.statusMsg, style})
+	}
+	if m.job != nil {
+		first = append(first, segment{m.job.status(), bar.Foreground(t.Highlight).Bold(true)})
+	}
+	if m.mode == ModeSearch {
+		rest = append(rest, segment{fmt.Sprintf("%d of %d match", len(visible), len(tab.Files)), bar})
+	} else {
+		rest = append(rest,
+			segment{plural(len(tab.Files), "item"), bar},
+			segment{utils.HumanizeSize(tab.TotalSize), bar.Foreground(t.Muted)})
+	}
+	if n := len(tab.Selected); n > 0 {
+		rest = append(rest, segment{fmt.Sprintf("%d selected", n), bar.Foreground(t.Selected)})
+	}
+	if n := len(m.clipboard); n > 0 {
+		rest = append(rest, segment{fmt.Sprintf("clipboard: %s %d", m.clipboardMode, n), bar.Foreground(t.Muted)})
+	}
+
+	// Messages quote names, errors and plugin output, so may hold anything
+	shown := func(s segment) string { return "  " + utils.Printable(s.text) }
+	widths := func(segs []segment) int {
+		w := 0
+		for _, s := range segs {
+			w += utils.Width(shown(s))
+		}
+		return w
+	}
+	room := m.width - utils.Width(badge) - utils.Width(right)
+	// Short of room, the progress drops its bar
+	if m.job != nil && widths(first) > room-1 {
+		first[len(first)-1].text = m.job.shortStatus()
+	}
+
+	var b strings.Builder
+	used := 0
+	// Cut short, a segment keeps a few characters besides the "..."
+	add := func(s segment, width int) {
+		text := utils.Truncate(shown(s), width)
+		if text != shown(s) && utils.Width(text) < 10 {
+			return
+		}
+		b.WriteString(s.style.Render(text))
+		used += utils.Width(text)
+	}
+	// A message too long for both is cut short, keeping room for the
+	// progress after it
+	for i, s := range first {
+		width := room - used - 1
+		if after := widths(first[i+1:]); width-after >= 20 {
+			width -= after
+		}
+		add(s, width)
+	}
+	// The rest, as far as each fits whole: "clipbo..." helps no one
+	for _, s := range rest {
+		if utils.Width(shown(s)) > room-used-1 {
+			break
+		}
+		add(s, room-used-1)
+	}
+	gap := max(room-used, 0)
+	line := badge + b.String() + bar.Render(strings.Repeat(" ", gap)) + bar.Foreground(t.Muted).Render(right)
+	return utils.Cells(line, 0, m.width)
+}
+
+type hint struct{ key, label string }
+
+// renderHints renders as many key hints as fit on one line, leaving out
+// actions that have no key
+func (m Model) renderHints(hints []hint) string {
+	t := m.theme
+	var b strings.Builder
+	used := 1
+	for _, h := range hints {
+		if h.key == "" {
+			continue
+		}
+		w := utils.Width(h.key) + 1 + utils.Width(h.label) + 3
+		if used+w > m.width {
+			break
+		}
+		b.WriteString(m.fg(t.Highlight).Bold(true).Render(h.key) + " " + m.fg(t.Muted).Render(h.label) + "   ")
+		used += w
+	}
+	return utils.Fit(" "+b.String(), m.width)
+}
+
+// renderBottomRow renders the last line: key hints for the current mode,
+// or the text being typed. Keys from the key map are shown as bound; the
+// rest are the modes' own.
+func (m Model) renderBottomRow() string {
+	k := m.keys
+	switch m.mode {
+	case ModeSearch:
+		return m.renderSearchBar()
+	case ModeInput:
+		if m.prompt.action != promptRename {
+			return m.renderPromptBar()
+		}
+		return m.renderHints([]hint{{"enter", "save"}, {"esc", "cancel"}, {"ctrl+u", "clear"}, {"ctrl+w", "delete word"}})
+	case ModeConfirm:
+		verb := "delete"
+		if m.confirmAction == "paste" {
+			verb = "overwrite"
+		}
+		return m.renderHints([]hint{{"y", verb}, {"n", "keep"}, {"esc", "cancel"}})
+	case ModeBookmarks:
+		return m.renderHints([]hint{{"1-9", "jump"}, {"enter", "go"}, keyHint("remove", k.Delete), {"esc", "close"}})
+	case ModePlugins:
+		return m.renderHints([]hint{{"enter", "run"}, {"tab", "switch between command and plugins"}, {"esc", "close"}})
+	case ModeSort:
+		return m.renderHints([]hint{{sortLetters(), "sort by"}, {"enter", "choose"}, keyHint("reverse", k.Reverse), {"esc", "close"}})
+	case ModeFind:
+		return m.renderHints(m.findHints())
+	case ModeHelp:
+		if m.maxHelpScroll() > 0 {
+			return m.renderHints([]hint{{"esc", "close"}, {keysLabel("/", k.Down, k.Up), "scroll"}, {"any other key", "does what it says"}})
+		}
+		return m.renderHints([]hint{{"esc", "close"}, {"any other key", "does what it says"}})
+	}
+	if m.job != nil {
+		return m.renderHints([]hint{keyHint("cancel "+strings.ToLower(m.job.doing), k.Cancel), keyHint("open", k.Enter),
+			keyHint("select", k.Select), keyHint("copy", k.Copy), keyHint("cut", k.Cut), keyHint("search", k.Search), keyHint("all keys", k.Help)})
+	}
+	if len(m.tabs[m.activeTabIdx].Selected) > 0 {
+		return m.renderHints([]hint{keyHint("toggle", k.Select), keyHint("invert", k.Invert), keyHint("clear", k.Unselect),
+			keyHint("copy", k.Copy), keyHint("cut", k.Cut), keyHint("delete", k.Delete), keyHint("edit", k.Edit),
+			keyHint("open", k.Open), keyHint("shell", k.Shell), keyHint("all keys", k.Help)})
+	}
+	return m.renderHints([]hint{keyHint("open", k.Enter), keyHint("select", k.Select), keyHint("copy", k.Copy), keyHint("cut", k.Cut),
+		keyHint("paste", k.Paste), keyHint("rename", k.Rename), keyHint("new", k.NewFile), keyHint("delete", k.Delete),
+		keyHint("search", k.Search), keyHint("all keys", k.Help)})
+}
+
+// renderSearchBar renders the search query being typed
+func (m Model) renderSearchBar() string {
+	t := m.theme
+	g := currentGlyphs()
+	tab := m.tabs[m.activeTabIdx]
+
+	right := fmt.Sprintf("%s/%s next match   enter keep   esc cancel ", g.up, g.down)
+	room := m.width - 4
+	if utils.Width(right)+20 > room {
+		right = ""
+	}
+	room -= utils.Width(right)
+
+	// Keep the end of a long query (where the user is typing) visible.
+	// Pasted text can bring control characters with it.
+	query := utils.TruncateLeft(utils.Printable(tab.SearchQuery), max(room, 1))
+	left := " " + m.fg(t.Title).Bold(true).Render("/") + " " + m.fg(t.Text).Render(query) + lipgloss.NewStyle().Reverse(true).Render(" ")
+	gap := max(m.width-utils.Width(left)-utils.Width(right), 0)
+	return utils.Cells(left+strings.Repeat(" ", gap)+m.fg(t.Faint).Render(right), 0, m.width)
+}
+
+// renderPromptBar renders the prompt used to create files and directories
+func (m Model) renderPromptBar() string {
+	t := m.theme
+	label := " " + m.fg(t.Title).Bold(true).Render(utils.Printable(m.prompt.label)) + " "
+
+	errText := ""
+	if m.prompt.err != "" {
+		errText = "  " + m.fg(t.Danger).Render(utils.Truncate(utils.Printable(m.prompt.err), m.width/2))
+	}
+
+	// The input gets whatever room the label and error leave
+	room := max(m.width-utils.Width(label)-utils.Width(errText)-1, 1)
+	input := m.prompt.input.View(room, m.fg(t.Text), lipgloss.NewStyle().Reverse(true))
+	return utils.Cells(label+input+errText, 0, m.width)
+}
+
+// dim redraws lines without their colors, in the faint color, so a dialog
+// stands out over them
+func (m Model) dim(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = m.fg(m.theme.Faint).Render(utils.Cells(ansi.Strip(line), 0, m.width))
+	}
+	return out
+}
+
+// place draws box over lines with its top-left corner at column x, row y
+func (m Model) place(lines, box []string, x, y int) []string {
+	for i, row := range box {
+		if y+i < 0 || y+i >= len(lines) {
+			continue
+		}
+		w := utils.Width(row)
+		plain := ansi.Strip(lines[y+i])
+		faint := m.fg(m.theme.Faint)
+		lines[y+i] = faint.Render(utils.Cells(plain, 0, x)) + row + faint.Render(utils.Cells(plain, x+w, m.width))
+	}
+	return lines
+}
+
+// withDialog dims the panes and centers box over them; the status bar and
+// hints stay as they are
+func (m Model) withDialog(lines, box []string) []string {
+	body := len(lines) - 2
+	if body < 1 || len(box) == 0 {
+		return lines
+	}
+	out := append(m.dim(lines[:body]), lines[body:]...)
+	x, y, shown := m.dialogFrame(box)
+	return m.place(out, shown, x, y)
+}
+
+// dialog builds a bordered box: a colored title bar, the body, and a footer
+func (m Model) dialog(title string, color lipgloss.Color, body []string, width int) []string {
+	g := currentGlyphs()
+	width = max(min(width, m.width), 8)
+	inner := width - 2
+	border := m.fg(color)
+	side := border.Render(g.vline)
+	row := func(s string) string { return side + utils.Fit(s, inner) + side }
+
+	box := []string{border.Render(g.tl + strings.Repeat(g.hline, inner) + g.tr)}
+	titleBar := lipgloss.NewStyle().Background(color).Foreground(m.theme.CursorFg).Bold(true)
+	box = append(box, side+titleBar.Render(utils.Fit(" "+title, inner))+side, row(""))
+	for _, line := range body {
+		box = append(box, row(line))
+	}
+	box = append(box, row(""), border.Render(g.bl+strings.Repeat(g.hline, inner)+g.br))
+	return box
+}
+
+// confirmBox builds the delete and overwrite confirmation
+func (m Model) confirmBox() []string {
+	t := m.theme
+	title, message := "Confirm", ""
 	switch m.confirmAction {
 	case "delete":
-		title = "Confirm Delete"
-		if len(tab.Files) > 0 {
-			file := tab.Files[tab.Cursor]
-			if file.IsDir {
-				message = fmt.Sprintf("Delete directory '%s' and all its contents?", file.Name)
-			} else {
-				message = fmt.Sprintf("Delete file '%s'?", file.Name)
-			}
-		}
+		title = "Confirm delete"
+		message = m.deleteMessage()
 	case "paste":
-		title = "Confirm Overwrite"
-		message = fmt.Sprintf("'%s' already exists. Overwrite?", filepath.Base(m.clipboard))
+		title = "Confirm overwrite"
+		message = m.pasteMessage()
 	}
 
-	var lines []string
-	lines = append(lines, titleStyle.Render(title))
-	lines = append(lines, "")
-	lines = append(lines, messageStyle.Render(message))
-	lines = append(lines, "")
-	lines = append(lines, hintStyle.Render("(y) Yes  (n) No"))
-
-	content := strings.Join(lines, "\n")
-
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("196")).
-		Padding(1, 3).
-		Align(lipgloss.Center)
-
-	box := boxStyle.Render(content)
-
-	return lipgloss.Place(
-		m.width,
-		m.height,
-		lipgloss.Center,
-		lipgloss.Center,
-		box,
-	)
+	var body []string
+	for _, line := range strings.Split(message, "\n") {
+		body = append(body, " "+m.fg(t.Text).Render(utils.Printable(line)))
+	}
+	if m.confirmAction == "delete" {
+		body = append(body, "", " "+m.fg(t.Muted).Render("This is permanent. There is no undo."))
+	}
+	return m.dialog(title, t.Danger, body, 60)
 }
 
-// renderBookmarksView renders the bookmarks modal
-func (m Model) renderBookmarksView() string {
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("212")).
-		MarginBottom(1)
+// renderConfirmDialog renders the confirmation dialog on its own
+func (m Model) renderConfirmDialog() string {
+	return strings.Join(m.confirmBox(), "\n")
+}
 
-	itemStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
+// pickerRow renders one row of a dialog list, highlighted if chosen
+func (m Model) pickerRow(chosen bool, width int, cols ...string) string {
+	t := m.theme
+	text := utils.Fit(" "+strings.Join(cols, " "), width)
+	if chosen {
+		return lipgloss.NewStyle().Background(t.CursorBg).Foreground(t.CursorFg).Bold(true).Render(text)
+	}
+	return m.fg(t.Text).Render(text)
+}
 
-	selectedStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("229")).
-		Background(lipgloss.Color("236")).
-		Bold(true)
+// bookmarksBox builds the bookmark list
+func (m Model) bookmarksBox() []string {
+	t := m.theme
+	width := min(72, m.width)
+	inner := width - 2
 
-	numStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
-
-	hintStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
-		Italic(true)
-
-	var lines []string
-	lines = append(lines, titleStyle.Render("Bookmarks"))
-	lines = append(lines, "")
-
+	var body []string
 	if m.bookmarks.Len() == 0 {
-		lines = append(lines, itemStyle.Render("No bookmarks yet"))
-		lines = append(lines, "")
-		lines = append(lines, hintStyle.Render("Press B to add current directory"))
-	} else {
-		for i := 0; i < m.bookmarks.Len(); i++ {
-			bm := m.bookmarks.Get(i)
-			num := numStyle.Render(fmt.Sprintf("%d. ", i+1))
-			name := bm.Name
-			path := bm.Path
-
-			// Truncate path if too long
-			maxLen := 40
-			if len(path) > maxLen {
-				path = "..." + path[len(path)-maxLen+3:]
-			}
-
-			line := fmt.Sprintf("%s → %s", name, path)
-
-			if i == m.bookmarkCursor {
-				lines = append(lines, num+selectedStyle.Render(line))
-			} else {
-				lines = append(lines, num+itemStyle.Render(line))
-			}
+		body = append(body, " "+m.fg(t.Text).Render("No bookmarks yet"))
+		if add := keysLabel(" ", m.keys.AddBookmark); add != "" {
+			body = append(body, "", " "+m.fg(t.Muted).Render("Press "+add+" to bookmark the current directory"))
 		}
-		lines = append(lines, "")
-		lines = append(lines, hintStyle.Render("Enter=Go  d=Delete  Esc=Close"))
 	}
-
-	content := strings.Join(lines, "\n")
-
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
-		Padding(1, 3).
-		Align(lipgloss.Left)
-
-	box := boxStyle.Render(content)
-
-	return lipgloss.Place(
-		m.width,
-		m.height,
-		lipgloss.Center,
-		lipgloss.Center,
-		box,
-	)
+	for i := 0; i < m.bookmarks.Len(); i++ {
+		bm := m.bookmarks.Get(i)
+		num := " "
+		if i < 9 {
+			num = fmt.Sprintf("%d", i+1)
+		}
+		// Keep the end of long paths visible
+		path := utils.TruncateLeft(strings.Join(pathSegments(bm.Path), string(filepath.Separator)), max(inner-22, 8))
+		body = append(body, m.pickerRow(i == m.bookmarkCursor, inner, num, utils.Fit(utils.Printable(bm.Name), 16), path))
+	}
+	return m.dialog("Bookmarks", t.Accent, body, width)
 }
 
-// renderSearchBar renders the search input bar
-func (m Model) renderSearchBar() string {
-	tab := m.tabs[m.activeTabIdx]
+// runBox builds the Run palette: a shell command line above the plugins
+func (m Model) runBox() []string {
+	t := m.theme
+	g := currentGlyphs()
+	width := min(84, m.width)
+	inner := width - 2
 
-	searchStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Foreground(lipgloss.Color("252")).
-		Padding(0, 1).
-		Width(m.width)
+	prompt := " " + m.fg(t.Title).Bold(true).Render("!") + " "
+	var body []string
+	switch {
+	case m.runTyping:
+		cursor := lipgloss.NewStyle().Reverse(true)
+		body = append(body, prompt+m.runInput.View(max(inner-4, 1), m.fg(t.Text), cursor))
+	case m.runInput.Value() != "":
+		body = append(body, prompt+m.fg(t.Muted).Render(utils.Truncate(utils.Printable(m.runInput.Value()), inner-4)))
+	default:
+		body = append(body, prompt+m.fg(t.Faint).Render(utils.Truncate("press tab to type a shell command", inner-4)))
+	}
+	body = append(body, m.fg(t.Border).Render(strings.Repeat(g.hline, inner)))
 
-	promptStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("212")).
-		Bold(true)
+	if len(m.plugins) == 0 {
+		body = append(body, " "+m.fg(t.Text).Render("No plugins yet"), "",
+			" "+m.fg(t.Muted).Render("Add commands under plugins: in ~/.config/sushi/config.yaml,"),
+			" "+m.fg(t.Muted).Render("or executable scripts to ~/.config/sushi/plugins/"))
+	}
+	descW := max(inner-10-18-12-4, 0)
+	// Plugins are described by config files and scripts' comments
+	for i, p := range m.plugins {
+		body = append(body, m.pickerRow(!m.runTyping && i == m.pluginCursor, inner,
+			utils.Fit(utils.Printable(p.Key), 10), utils.Fit(utils.Printable(p.Name), 18),
+			utils.Fit(utils.Printable(p.Description), descW), utils.FitRight(utils.Printable(p.Mode), 10)))
+	}
 
-	queryStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("229"))
-
-	matchStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
-
-	prompt := promptStyle.Render("/")
-	query := queryStyle.Render(tab.SearchQuery)
-	cursor := "█"
-
-	matchCount := fmt.Sprintf(" [%d/%d]", len(tab.SearchResults), len(tab.Files))
-	matches := matchStyle.Render(matchCount)
-
-	searchLine := prompt + query + cursor + matches
-
-	return searchStyle.Render(searchLine)
+	target := describe(m.targets())
+	if len(m.targets()) == 0 {
+		target = "this directory"
+	}
+	body = append(body, "", " "+m.fg(t.Muted).Render(utils.Truncate("Runs on "+utils.Printable(target), inner-2)))
+	return m.dialog("Run", t.Accent, body, width)
 }
 
-// Helper functions
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
+// helpGroup is a column of the key panel
+type helpGroup struct {
+	title string
+	keys  []hint
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+// helpGroups lists the keyboard shortcuts shown in the key panel, each
+// labelled with the keys it is bound to. Every action of the key map is
+// here, and those left without a key are left out.
+func (k KeyMap) helpGroups() []helpGroup {
+	groups := []helpGroup{
+		{"Move", []hint{keyHint("down, up", k.Down, k.Up), keyHint("parent, open", k.Left, k.Right), keyHint("parent", k.Back),
+			keyHint("first, last", k.Home, k.End), keyHint("page up, down", k.PageUp, k.PageDown)}},
+		{"Files", []hint{keyHint("open", k.Enter), keyHint("edit, default app", k.Edit, k.Open), keyHint("rename", k.Rename),
+			keyHint("new file, folder", k.NewFile, k.NewDir), keyHint("trash, delete", k.Delete, k.HardDelete)}},
+		{"Tools", []hint{keyHint("undo", k.Undo), keyHint("cancel operation", k.Cancel), keyHint("duplicate, paste link", k.Duplicate, k.PasteLink),
+			keyHint("chmod, bulk rename", k.Chmod, k.BulkRename), keyHint("zip, extract", k.Archive, k.Extract)}},
+		{"Select", []hint{keyHint("toggle", k.Select), keyHint("invert", k.Invert), keyHint("clear", k.Unselect),
+			keyHint("copy, cut, paste", k.Copy, k.Cut, k.Paste)}},
+		{"View", []hint{keyHint("search", k.Search), keyHint("preview", k.Preview), keyHint("scroll preview", k.PreviewDown, k.PreviewUp),
+			keyHint("hidden files", k.Hidden), keyHint("this panel", k.Help)}},
+		{"Find", []hint{keyHint("find by name", k.Find), keyHint("find in files", k.Grep), keyHint("sort by, reverse", k.Sort, k.Reverse),
+			keyHint("refresh", k.Refresh), keyHint("quit without cd", k.QuitNoCd)}},
+		{"Tabs", []hint{keyHint("new here, home", k.NewTab, k.NewTabHome), keyHint("next", k.NextTab), keyHint("previous", k.PrevTab),
+			keyHint("close", k.CloseTab)}},
+		{"Go", []hint{keyHint("bookmarks, add", k.Bookmark, k.AddBookmark), {"1-9", "jump to bookmark"}, keyHint("plugins", k.Plugins),
+			keyHint("shell command", k.Shell), keyHint("quit", k.Quit)}},
 	}
-	return b
+	for i := range groups {
+		groups[i].keys = slices.DeleteFunc(groups[i].keys, func(h hint) bool { return h.key == "" })
+	}
+	return groups
+}
+
+const (
+	helpKeyW = 10 // Narrowest key column
+	helpColW = 30
+)
+
+// keyWidth returns the width of a group's key column: helpKeyW, or more
+// for long remapped keys, up to half the column
+func (g helpGroup) keyWidth(colW int) int {
+	w := helpKeyW
+	for _, h := range g.keys {
+		w = max(w, utils.Width(h.key)+1)
+	}
+	return min(w, max(colW/2, helpKeyW))
+}
+
+// helpLines lays the key groups out in as many columns as fit the width
+func (m Model) helpLines() []string {
+	t := m.theme
+	helpGroups := m.keys.helpGroups()
+	cols := max(min(m.width/helpColW, len(helpGroups)), 1)
+	colW := m.width / cols
+
+	var lines []string
+	for start := 0; start < len(helpGroups); start += cols {
+		row := helpGroups[start:min(start+cols, len(helpGroups))]
+		height := 0
+		for _, group := range row {
+			height = max(height, len(group.keys)+1)
+		}
+		if start > 0 {
+			// Blank, not empty: the panel covers what is behind it
+			lines = append(lines, strings.Repeat(" ", m.width))
+		}
+		for i := 0; i < height; i++ {
+			var b strings.Builder
+			for _, group := range row {
+				cell := ""
+				switch {
+				case i == 0:
+					cell = " " + m.fg(t.Faint).Render(group.title)
+				case i <= len(group.keys):
+					k := group.keys[i-1]
+					keyW := group.keyWidth(colW)
+					cell = " " + m.fg(t.Highlight).Bold(true).Render(utils.Fit(k.key, keyW)) +
+						m.fg(t.Text).Render(utils.Truncate(k.label, colW-keyW-2))
+				}
+				b.WriteString(utils.Fit(cell, colW))
+			}
+			lines = append(lines, utils.Fit(b.String(), m.width))
+		}
+	}
+	return lines
+}
+
+// helpRows returns how many rows of the key panel fit above the status bar
+func (m Model) helpRows() int {
+	return max(m.height-chromeRows, 1)
+}
+
+// maxHelpScroll returns how far the key panel can scroll
+func (m Model) maxHelpScroll() int {
+	return max(len(m.helpLines())-m.helpRows(), 0)
+}
+
+// renderHelpView renders the key panel on its own
+func (m Model) renderHelpView() string {
+	g := currentGlyphs()
+	all := m.helpLines()
+	rows := min(len(all), m.helpRows())
+	offset := min(m.helpScroll, len(all)-rows)
+
+	rule := strings.Repeat(g.hline, m.width)
+	if len(all) > rows {
+		label := fmt.Sprintf(" %d-%d of %d ", offset+1, offset+rows, len(all))
+		if keys := keysLabel("/", m.keys.Down, m.keys.Up); keys != "" {
+			label = fmt.Sprintf(" %s to scroll,%s", keys, label)
+		}
+		rule = utils.Cells(strings.Repeat(g.hline, 2)+label+rule, 0, m.width)
+	}
+	lines := []string{m.fg(m.theme.Accent).Render(rule)}
+	return strings.Join(append(lines, all[offset:offset+rows]...), "\n")
+}
+
+// withHelp docks the key panel at the bottom, over the dimmed panes
+func (m Model) withHelp(lines []string) []string {
+	body := len(lines) - 2
+	if body < 1 {
+		return lines
+	}
+	panel := strings.Split(m.renderHelpView(), "\n")
+	if len(panel) > body {
+		panel = panel[:body]
+	}
+	out := append(m.dim(lines[:body]), lines[body:]...)
+	return m.place(out, panel, 0, body-len(panel))
 }
