@@ -37,6 +37,7 @@ type Tab struct {
 	TotalSize       int64            // Cached total size of all files
 	Loading         bool
 	reloadWanted    bool // Changed while loading: reload once the load is in
+	resortWanted    bool // Sort order changed while loading: sort the load once in
 }
 
 // Model represents the application state

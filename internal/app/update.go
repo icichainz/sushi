@@ -48,6 +48,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		tab.Loading = false
+		// The load read the directory before the order changed
+		resort := tab.resortWanted
+		tab.resortWanted = false
 		if msg.err != nil {
 			// Keep showing the previous directory rather than an empty
 			// one. The file to focus was in the directory that failed, and
@@ -73,6 +76,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		tab.setFiles(msg.files)
 		tab.ParentFiles = msg.parent
 		tab.CurrentPath = msg.path
+		if resort {
+			fs.SortFiles(tab.Files, m.sortBy, m.sortReverse)
+			fs.SortFiles(tab.ParentFiles, m.sortBy, m.sortReverse)
+		}
 		tab.Cursor = 0
 		if samePath {
 			tab.Cursor = min(oldCursor, max(len(tab.Files)-1, 0))
@@ -160,11 +167,12 @@ func (m *Model) setStatusFor(msg string, d time.Duration) tea.Cmd {
 }
 
 // loadDir starts loading path into tab, superseding any load already in
-// flight. A load starting now sees every change so far, so no reload is
-// wanted after it.
+// flight. A load starting now sees every change so far, and lists files in
+// the order chosen so far, so no reload or re-sort is wanted after it.
 func (m *Model) loadDir(tab *Tab, path string) tea.Cmd {
 	tab.Loading = true
 	tab.reloadWanted = false
+	tab.resortWanted = false
 	tab.loadSeq++
 	return loadDirectory(tab.ID, tab.loadSeq, path, m.scanOptions())
 }

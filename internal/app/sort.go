@@ -2,7 +2,6 @@ package app
 
 import (
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,16 +25,6 @@ func sortLetters() string {
 		letters[i] = f.key
 	}
 	return strings.Join(letters, " ")
-}
-
-// resortDelay is how often tabs that were loading when the order changed
-// are checked, to sort them once their load is in
-const resortDelay = 100 * time.Millisecond
-
-// resortMsg sorts tabs whose loads were in flight when the order changed:
-// those loads list files in the old order
-type resortMsg struct {
-	tabs map[int]int // Tab ID → the load that was in flight
 }
 
 // openSortMenu opens the sort menu on the current order
@@ -97,19 +86,18 @@ func (m Model) reverseSort() (tea.Model, tea.Cmd) {
 
 // setSort changes the order of every tab for the rest of the session. The
 // config file is left alone. Lists are sorted where they are rather than
-// reloaded, so the change is instant.
+// reloaded, so the change is instant. A load in flight lists files in the
+// old order, so its tab is sorted again once it lands (see dirLoadedMsg),
+// rather than checked on until then, which a load that hangs would make
+// forever.
 func (m Model) setSort(by string, reverse bool) (tea.Model, tea.Cmd) {
 	m.sortBy, m.sortReverse = by, reverse
-
-	loading := make(map[int]int)
 	for i := range m.tabs {
 		tab := &m.tabs[i]
 		m.resort(tab)
-		if tab.Loading {
-			loading[tab.ID] = tab.loadSeq
-		}
+		tab.resortWanted = tab.Loading
 	}
-	cmd := tea.Batch(m.resortLater(loading), m.setStatus("Sorted by "+m.sortLabel()))
+	cmd := m.setStatus("Sorted by " + m.sortLabel())
 	return m, cmd
 }
 
@@ -132,32 +120,6 @@ func (m *Model) resort(tab *Tab) {
 	if m.mode == ModeSearch && tab.ID == m.tab().ID {
 		m.updateSearchResults()
 	}
-}
-
-// resortLater checks on loading tabs shortly, to sort them once loaded
-func (m *Model) resortLater(tabs map[int]int) tea.Cmd {
-	if len(tabs) == 0 {
-		return nil
-	}
-	return tea.Tick(resortDelay, func(time.Time) tea.Msg { return resortMsg{tabs: tabs} })
-}
-
-// resortTabs sorts the tabs a resortMsg waits for whose loads are in
-func (m *Model) resortTabs(msg resortMsg) tea.Cmd {
-	waiting := make(map[int]int)
-	for id, seq := range msg.tabs {
-		tab := m.tabByID(id)
-		// Closed, or a newer load has started, which uses the new order
-		if tab == nil || tab.loadSeq != seq {
-			continue
-		}
-		if tab.Loading {
-			waiting[id] = seq
-			continue
-		}
-		m.resort(tab)
-	}
-	return m.resortLater(waiting)
 }
 
 // sortBox builds the sort menu

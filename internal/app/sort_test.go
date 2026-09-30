@@ -135,31 +135,44 @@ func TestSortAppliesToLoadsInFlight(t *testing.T) {
 	dir := sizedFiles(t)
 	m := newTestModel(t, dir, nil)
 
-	// A reload started before the change lists files in the old order
+	// A reload started before the change lists files in the old order; it
+	// is sorted when it lands, and nothing is left ticking until then, so
+	// a load that hangs costs nothing
 	load := m.loadDir(m.tab(), dir)
 	m, cmd := press(t, m, "S")
-	m = run(t, m, load)
-	if got := strings.Join(names(m.tab()), " "); got != "a.txt b.txt c.txt" {
-		t.Fatalf("the old load should land in the old order, got %s", got)
+	if !m.tab().resortWanted {
+		t.Fatal("the loading tab should be marked for sorting")
 	}
-	// Then the tab is sorted again
-	m = drain(t, m, cmd)
+	if msg := cmd(); msg != nil {
+		t.Fatalf("changing the order left a command running, giving %T", msg)
+	}
+	m = run(t, m, load)
 	if got := strings.Join(names(m.tab()), " "); got != "c.txt b.txt a.txt" {
-		t.Fatalf("after the load landed: %s, want reversed", got)
+		t.Fatalf("the load landed as %s, want it reversed", got)
+	}
+	if m.tab().resortWanted {
+		t.Fatal("still marked for sorting after the load")
+	}
+
+	// A load started after the change lists files in the new order anyway
+	load = m.loadDir(m.tab(), dir)
+	if m.tab().resortWanted {
+		t.Fatal("a new load was marked for sorting")
+	}
+	if m = run(t, m, load); strings.Join(names(m.tab()), " ") != "c.txt b.txt a.txt" {
+		t.Fatalf("order = %v", names(m.tab()))
 	}
 }
 
 func TestResortKeepsSearchResultsInStep(t *testing.T) {
 	dir := sizedFiles(t)
 	m := newTestModel(t, dir, nil)
-	m.tab().Loading = true
-	m, cmd := press(t, m, "S")
-	m.tab().Loading = false
+	load := m.loadDir(m.tab(), dir)
+	m, _ = press(t, m, "S")
 
-	// The old load lands in the old order, and a search starts on it
-	m.tab().Files[0], m.tab().Files[2] = m.tab().Files[2], m.tab().Files[0]
+	// A search starts before the old load lands in the old order
 	m = typeQuery(t, m, "a")
-	m = drain(t, m, cmd)
+	m = run(t, m, load)
 	if names := names(m.tab()); names[0] != "c.txt" {
 		t.Fatalf("order = %v, want it re-sorted", names)
 	}
