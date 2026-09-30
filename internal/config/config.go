@@ -38,7 +38,7 @@ type Config struct {
 	Plugins []plugins.Plugin `yaml:"plugins"`
 
 	// Keys for actions by name, replacing their defaults; actions left
-	// out keep theirs
+	// out keep theirs. sushi --list-keys prints the names.
 	Keys map[string]KeyList `yaml:"keys"`
 
 	// Problems found reading the file, for the app to show at startup

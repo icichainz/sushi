@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/plugins"
+	"gopkg.in/yaml.v3"
 )
 
 // withKeys builds a test model whose config remaps keys
@@ -197,7 +198,7 @@ func TestKeyProblemsAreReported(t *testing.T) {
 		"refresh":     nil, // Written with no value
 	})
 	wantProblems(t, m,
-		`keys: unknown action "jump"`,
+		`keys: unknown action "jump" (sushi --list-keys lists them)`,
 		`keys: unknown action "hard-delete" (did you mean hard_delete?)`,
 		`keys: up: unknown key "ctrlr+k"`,
 		`keys: down: unknown key "shift+j" (shifted letters are capitals, like "J")`,
@@ -415,5 +416,50 @@ func TestMouseDoesNotNeedTheKeys(t *testing.T) {
 	m, cmd = clickAt(m, 1, paneTop)
 	if m = drain(t, m, cmd); m.tab().CurrentPath != root {
 		t.Fatalf("clicking the parent heading went to %s", m.tab().CurrentPath)
+	}
+}
+
+func TestWriteKeys(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfg := config.DefaultConfig()
+	cfg.Keys = map[string]config.KeyList{"up": {"i", "up"}, "refresh": {}, "hidden": {"alt+space"}, "bogus": {"b"}}
+	cfg.Plugins = []plugins.Plugin{{Name: "git status", Key: "Z", Command: "true"}}
+
+	var out strings.Builder
+	problems, err := WriteKeys(&out, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) != 1 || !strings.Contains(problems[0], `unknown action "bogus"`) {
+		t.Fatalf("problems = %q", problems)
+	}
+	text := out.String()
+	for _, want := range []string{"  up: [i, up]", "  hard_delete: [D]", "  select: [space]", `  help: ["?"]`, "  refresh: []",
+		"  hidden: [alt+space]", "  quit: [q, ctrl+c]", "# move up", "#   Z  git status", "1-9"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output lacks %q:\n%s", want, text)
+		}
+	}
+
+	// It is a keys: section that gives the same keys back
+	var parsed struct {
+		Keys map[string]config.KeyList `yaml:"keys"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("%v:\n%s", err, text)
+	}
+	again, problems := loadKeyMap(parsed.Keys)
+	if len(problems) > 0 {
+		t.Fatalf("reading it back: %q", problems)
+	}
+	want, _ := loadKeyMap(cfg.Keys)
+	for i, a := range again.actions() {
+		if w := want.actions()[i].binding.Keys(); !slices.Equal(a.binding.Keys(), w) {
+			t.Errorf("%s read back as %q, want %q", a.name, a.binding.Keys(), w)
+		}
+	}
+	if len(parsed.Keys) != len(again.actions()) {
+		t.Errorf("%d actions listed, want %d", len(parsed.Keys), len(again.actions()))
 	}
 }

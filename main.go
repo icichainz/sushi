@@ -38,6 +38,7 @@ func main() {
 	fontName := flag.String("font", "", "Nerd Font to install with --install-font (see --list-fonts)")
 	listFonts := flag.Bool("list-fonts", false, "List available Nerd Fonts to install")
 	initConfig := flag.Bool("init-config", false, "Create default configuration file")
+	listKeys := flag.Bool("list-keys", false, "Print every action and its keys, as a keys: section for the config file")
 	cwdFile := flag.String("cwd-file", "", "On quit, write the directory shown to this `file` (Q quits without writing)")
 	var wrapperShell optionalString
 	flag.Var(&wrapperShell, "print-shell-wrapper", "Print the sushicd shell function for zsh, bash or fish (default: $SHELL)")
@@ -60,6 +61,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nConfiguration:\n")
 		fmt.Fprintf(os.Stderr, "  --init-config: Create default config file at ~/.config/sushi/config.yaml\n")
 		fmt.Fprintf(os.Stderr, "  Config file settings: icon_mode, preview_enabled, preview_width, etc.\n")
+		fmt.Fprintf(os.Stderr, "  --list-keys: Show every action and its keys; change them under keys: in the config file\n")
 		fmt.Fprintf(os.Stderr, "\nShell Integration:\n")
 		fmt.Fprintf(os.Stderr, "  A program can't change its shell's directory, so sushicd runs sushi and cds\n")
 		fmt.Fprintf(os.Stderr, "  to the directory it was showing when you quit with q (Q quits without).\n")
@@ -174,6 +176,22 @@ func main() {
 
 	// Load configuration
 	cfg := config.LoadConfig()
+
+	// Print the keys as the config sets them, and anything wrong with them
+	if *listKeys {
+		problems, err := app.WriteKeys(os.Stdout, cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		for _, p := range problems {
+			fmt.Fprintln(os.Stderr, p)
+		}
+		if len(problems) > 0 {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	// Set icon mode: CLI flags take precedence over config
 	if *asciiMode {

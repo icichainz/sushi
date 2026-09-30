@@ -2,9 +2,11 @@ package app
 
 import (
 	"fmt"
+	"io"
 	"maps"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -12,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/config"
+	"github.com/icichainz/sushi/internal/plugins"
 )
 
 // Keys are remapped under keys: in the config file, by action. Actions are
@@ -241,7 +244,7 @@ func unknownAction(name string, actions []keyAction) string {
 			return fmt.Sprintf("keys: unknown action %q (did you mean %s?)", name, a.name)
 		}
 	}
-	return fmt.Sprintf("keys: unknown action %q", name)
+	return fmt.Sprintf("keys: unknown action %q (sushi --list-keys lists them)", name)
 }
 
 // dialogKey describes a dialog that follows some actions of the key map
@@ -344,4 +347,68 @@ func keyHint(desc string, bindings ...key.Binding) hint {
 		desc = strings.Join(bound, ", ")
 	}
 	return hint{keysLabel(" ", bindings...), desc}
+}
+
+// WriteKeys writes every action with the keys cfg binds it to, as a keys:
+// section for the config file, and then the keys that can't be changed and
+// those of plugins. It returns the problems found with the config's keys
+// and plugins, which sushi would show in the status bar.
+func WriteKeys(w io.Writer, cfg *config.Config) ([]string, error) {
+	keys, problems := loadKeyMap(cfg.Keys)
+	problems = append(slices.Clone(cfg.Problems), problems...)
+	loaded, warnings := plugins.Load(cfg.Plugins, config.PluginDir())
+	m := Model{keys: keys, plugins: loaded}
+	problems = append(problems, warnings...)
+	problems = append(problems, m.bindPluginKeys()...)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Every action and its keys, with the keys: section of\n# %s applied.\n", config.GetConfigPath())
+	b.WriteString(`# To change an action's keys, copy its line there; actions left out keep
+# these. A key is a character (k, G, "?"), space, or a name such as enter,
+# esc, tab, backspace, delete, up, pgdown, home, f1, ctrl+r, shift+tab or
+# alt+x. An empty list, [], leaves an action without a key.
+keys:
+`)
+	var lines []string
+	width := 0
+	for _, a := range keys.actions() {
+		var names []string
+		for _, s := range a.binding.Keys() {
+			names = append(names, yamlKey(s))
+		}
+		line := fmt.Sprintf("  %s: [%s]", a.name, strings.Join(names, ", "))
+		lines = append(lines, line)
+		width = max(width, utf8.RuneCountInString(line))
+	}
+	for i, a := range keys.actions() {
+		fmt.Fprintf(&b, "%-*s  # %s\n", width, lines[i], a.binding.Help().Desc)
+	}
+
+	fmt.Fprintf(&b, "\n# Fixed: 1-9 jump to bookmarks, dialogs keep esc, enter and tab, the sort\n"+
+		"# menu its letters (%s), and confirmations y and n.\n", sortLetters())
+	var pluginLines []string
+	for i, p := range m.plugins {
+		if j, ok := m.pluginKeys[p.Key]; ok && j == i {
+			pluginLines = append(pluginLines, fmt.Sprintf("#   %s  %s", yamlKey(p.Key), p.Name))
+		}
+	}
+	if len(pluginLines) > 0 {
+		b.WriteString("# Plugin keys, set with each plugin:\n" + strings.Join(pluginLines, "\n") + "\n")
+	}
+
+	_, err := io.WriteString(w, b.String())
+	return problems, err
+}
+
+// yamlKey writes a key as the config does, quoted unless YAML would read
+// it back as the same string anyway
+func yamlKey(s string) string {
+	name := keyName(s)
+	for i, r := range name {
+		plain := r < utf8.RuneSelf && (unicode.IsLetter(r) || unicode.IsDigit(r) || i > 0 && (r == '+' || r == '_'))
+		if !plain {
+			return strconv.Quote(name)
+		}
+	}
+	return name
 }
