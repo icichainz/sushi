@@ -312,6 +312,39 @@ func TestConcurrentTrashingKeepsEveryItem(t *testing.T) {
 	}
 }
 
+// ignoresCase reports whether the filesystem holding dir takes names that
+// differ only in case for the same, as macOS and Windows do by default
+func ignoresCase(t *testing.T, dir string) bool {
+	t.Helper()
+	probe := filepath.Join(dir, "CaseProbe")
+	writeFile(t, probe, "")
+	defer os.Remove(probe)
+	return Exists(filepath.Join(dir, "caseprobe"))
+}
+
+func TestCopyIntoItselfUnderAnotherCaseIsRefused(t *testing.T) {
+	root := t.TempDir()
+	if !ignoresCase(t, root) {
+		t.Skip("the filesystem tells Proj from proj")
+	}
+	// "proj/sub/Proj" is inside "Proj" here: copying used to go on copying
+	// the copy into itself until the path was too long
+	src := filepath.Join(root, "Proj")
+	os.MkdirAll(filepath.Join(src, "sub"), 0755)
+	writeFile(t, filepath.Join(src, "main.go"), "package main")
+	dst := filepath.Join(root, "proj", "sub", "Proj")
+
+	if err := CopyPath(src, dst); !errors.Is(err, ErrDestInsideSource) {
+		t.Fatalf("copy: err = %v, want ErrDestInsideSource", err)
+	}
+	if err := MovePath(src, dst); !errors.Is(err, ErrDestInsideSource) {
+		t.Fatalf("move: err = %v, want ErrDestInsideSource", err)
+	}
+	if got := dirEntries(t, filepath.Join(src, "sub")); len(got) != 0 {
+		t.Fatalf("something was copied: %v", got)
+	}
+}
+
 func TestMoveKeepsWhatTurnsUpAtTheDestination(t *testing.T) {
 	for _, across := range []bool{false, true} {
 		root := t.TempDir()

@@ -54,13 +54,33 @@ func CheckTransfer(src, dst string) error {
 	}
 
 	// Symlinks are copied as links, so only real directories can recurse into themselves
-	if srcEntry.IsDir() {
-		if strings.HasPrefix(resolvePath(dst), resolvePath(src)+string(filepath.Separator)) {
-			return ErrDestInsideSource
-		}
+	if srcEntry.IsDir() && inside(src, srcEntry, dst) {
+		return ErrDestInsideSource
 	}
 
 	return nil
+}
+
+// inside reports whether dst is somewhere below the directory src, which
+// info describes. Names can't always tell: a filesystem that ignores case
+// has "proj/sub/Proj" inside "Proj", and firmlinks and bind mounts give a
+// folder a second path. So each folder above dst that exists, followed
+// from the real path of its deepest existing part, is compared with src
+// by identity.
+func inside(src string, info os.FileInfo, dst string) bool {
+	if strings.HasPrefix(resolvePath(dst), resolvePath(src)+string(filepath.Separator)) {
+		return true
+	}
+	for dir := resolvePath(filepath.Dir(dst)); ; {
+		if here, err := os.Stat(dir); err == nil && os.SameFile(here, info) {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
 }
 
 // resolvePath returns an absolute, symlink-free form of path.
