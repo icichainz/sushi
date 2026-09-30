@@ -169,13 +169,94 @@ func TestCancelledZipIsRemoved(t *testing.T) {
 	os.WriteFile(filepath.Join(src, "big"), bytes.Repeat([]byte("z"), 2*chunkSize), 0644)
 	archive := filepath.Join(t.TempDir(), "a.zip")
 
-	task, _ := cancelWhen(func(p Progress) bool { return p.Bytes > 0 })
+	// Until it is complete, the zip is under a hidden name, not its own
+	var named, hidden bool
+	task, _ := cancelWhen(func(p Progress) bool {
+		named = named || Exists(archive)
+		hidden = hidden || len(leftovers(t, filepath.Dir(archive))) == 1
+		return p.Bytes > 0
+	})
 	if err := task.CreateZip(archive, []string{src}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
 	}
-	if Exists(archive) {
+	if named || !hidden {
+		t.Fatalf("while writing: under its own name %v, under a hidden one %v", named, hidden)
+	}
+	if Exists(archive) || len(leftovers(t, filepath.Dir(archive))) != 0 {
 		t.Fatal("the partial archive was left behind")
 	}
+}
+
+func TestZipIsNoMoreOpenThanItsFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows files have no Unix permissions")
+	}
+	real := umask
+	umask = 0o022
+	t.Cleanup(func() { umask = real })
+
+	dir := t.TempDir()
+	public := filepath.Join(dir, "notes.txt")
+	writeFile(t, public, "n")
+	os.Chmod(public, 0644)
+	keys := filepath.Join(dir, "keys")
+	os.Mkdir(keys, 0755)
+	private := filepath.Join(keys, "id_ed25519")
+	writeFile(t, private, "secret")
+	os.Chmod(private, 0600)
+	secret := filepath.Join(dir, "secret")
+	os.Mkdir(secret, 0700)
+	writeFile(t, filepath.Join(secret, "plans.txt"), "p")
+	os.Chmod(filepath.Join(secret, "plans.txt"), 0644)
+
+	for _, c := range []struct {
+		paths []string
+		want  os.FileMode
+	}{
+		{[]string{public}, 0644},
+		{[]string{private}, 0600},
+		{[]string{public, keys}, 0600},   // A private file inside a folder
+		{[]string{secret}, 0600},         // Files inside a private folder
+		{[]string{public, secret}, 0600}, // Mixed
+	} {
+		archive := filepath.Join(t.TempDir(), "a.zip")
+		if err := background().CreateZip(archive, c.paths); err != nil {
+			t.Fatal(err)
+		}
+		if info, err := os.Stat(archive); err != nil || info.Mode().Perm() != c.want {
+			t.Errorf("zip of %v is %v, want %v (%v)", c.paths, info.Mode().Perm(), c.want, err)
+		}
+	}
+}
+
+func TestZipLeavesOutUnfinishedFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a"), "a")
+	writeFile(t, filepath.Join(dir, ".sushi-partial-123"), "half a copy")
+	archive := filepath.Join(t.TempDir(), "a.zip")
+	if err := background().CreateZip(archive, []string{dir}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range zipNames(t, archive) {
+		if strings.Contains(name, ".sushi-partial-") {
+			t.Fatalf("the archive holds %s", name)
+		}
+	}
+}
+
+// zipNames lists the names in the zip at path
+func zipNames(t *testing.T, path string) []string {
+	t.Helper()
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	var names []string
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+	}
+	return names
 }
 
 func TestExtractTarAndTgz(t *testing.T) {

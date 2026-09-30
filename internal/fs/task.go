@@ -210,7 +210,7 @@ func (t *Task) copyFile(src, dst string, info os.FileInfo) error {
 		return ErrSamePath
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".sushi-partial-*")
+	tmp, err := os.CreateTemp(filepath.Dir(dst), partialPrefix+"*")
 	if err != nil {
 		return fmt.Errorf("cannot create destination: %w", err)
 	}

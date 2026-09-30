@@ -32,22 +32,32 @@ func ArchiveKind(name string) string {
 // CreateZip compresses paths, and everything in the directories among
 // them, into a new zip file at dst, which must not exist. Entries are named
 // from each path's parent, so a folder "photos" is stored as "photos/...".
-// Symlinks are stored as links. If it fails or is cancelled, dst is removed.
+// Symlinks are stored as links.
+//
+// The zip is written under a hidden name beside dst, readable by its owner
+// only, and renamed to dst once complete, so a zip under dst's name is
+// never partial, even if sushi is killed; if it fails or is cancelled, the
+// partial zip is removed. It ends up readable by no more people than the
+// files in it: a folder of private files makes a private zip.
 func (t *Task) CreateZip(dst string, paths []string) (err error) {
-	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
-	if errors.Is(err, os.ErrExist) {
+	dst = filepath.Clean(dst)
+	if Exists(dst) {
 		return fmt.Errorf("%s already exists", filepath.Base(dst))
 	}
+	f, err := os.CreateTemp(filepath.Dir(dst), partialPrefix+"*.zip")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
 	self, err := f.Stat()
 	if err != nil {
 		f.Close()
-		os.Remove(dst)
+		os.Remove(tmp)
 		return err
 	}
 
+	// What a new file would get, narrowed below by each file put in
+	mode := 0666 &^ umask
 	zw := zip.NewWriter(f)
 	defer func() {
 		if cerr := zw.Close(); err == nil {
@@ -56,12 +66,22 @@ func (t *Task) CreateZip(dst string, paths []string) (err error) {
 		if cerr := f.Close(); err == nil {
 			err = cerr
 		}
+		if err == nil {
+			err = os.Chmod(tmp, mode)
+		}
+		if err == nil {
+			// Something may have taken the name meanwhile; it is kept
+			if err = renameNoReplace(tmp, dst); errors.Is(err, os.ErrExist) {
+				err = fmt.Errorf("%s already exists", filepath.Base(dst))
+			}
+		}
 		if err != nil {
-			os.Remove(dst)
+			os.Remove(tmp)
 		}
 	}()
 
 	for _, root := range paths {
+		root = filepath.Clean(root)
 		parent := filepath.Dir(root)
 		err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
@@ -70,13 +90,24 @@ func (t *Task) CreateZip(dst string, paths []string) (err error) {
 			if cerr := t.ctx.Err(); cerr != nil {
 				return cerr
 			}
+			// Unfinished copies and archives, this one among them when it is
+			// inside a folder being compressed
+			if path != root && isPartial(d.Name()) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 			info, err := d.Info()
 			if err != nil {
 				return err
 			}
-			// The archive itself, when it is inside a folder being compressed
 			if os.SameFile(info, self) {
 				return nil
+			}
+			if info.Mode()&os.ModeSymlink == 0 {
+				// Group and others lose what any file or folder denies them
+				mode &= info.Mode().Perm() | 0700
 			}
 			rel, err := filepath.Rel(parent, path)
 			if err != nil {
@@ -89,6 +120,17 @@ func (t *Task) CreateZip(dst string, paths []string) (err error) {
 		}
 	}
 	return nil
+}
+
+// partialPrefix starts the names of what sushi is still writing: files
+// being copied, folders being moved across drives and archives being made.
+// They are renamed into place once complete, so a name without it is never
+// partial.
+const partialPrefix = ".sushi-partial-"
+
+// isPartial reports whether name is one sushi gives what it is still writing
+func isPartial(name string) bool {
+	return strings.HasPrefix(name, partialPrefix)
 }
 
 // addToZip writes one file, directory or symlink to the archive as name
