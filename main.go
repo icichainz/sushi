@@ -164,8 +164,13 @@ func main() {
 	// Create the initial model with config
 	m := app.NewModelWithConfig(startPath, cfg)
 
-	// Run the program
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	// Run the program. With mouse reporting on, terminals select text only
+	// while Shift (or Option on macOS) is held, so it can be turned off.
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	if cfg.Mouse {
+		opts = append(opts, tea.WithMouseCellMotion())
+	}
+	p := tea.NewProgram(m, opts...)
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error running program: %v\n", err)
 		os.Exit(1)

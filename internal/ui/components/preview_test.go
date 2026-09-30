@@ -50,9 +50,44 @@ func TestRenderPreviewIsExactlyPaneSized(t *testing.T) {
 	binary := filepath.Join(dir, "a.png")
 	os.WriteFile(binary, []byte{0, 1, 2}, 0644)
 
+	var previews []PreviewContent
 	for _, path := range []string{long, empty, binary, dir} {
-		p := LoadPreview(fileInfo(t, path), 2000)
-		for _, size := range [][2]int{{40, 12}, {12, 3}, {3, 1}, {120, 40}} {
+		previews = append(previews, LoadPreview(fileInfo(t, path), 2000))
+	}
+	link := filepath.Join(dir, "link.go")
+	if os.Symlink(long, link) == nil {
+		info, _ := os.Lstat(link)
+		previews = append(previews, LoadPreview(fs.NewFileInfo(link, info), 2000))
+	}
+
+	// Every new kind too: images in both color modes, archives, a PDF
+	wide := filepath.Join(dir, "wide.png")
+	writeImage(t, wide, 300, 40, stripes)
+	tall := filepath.Join(dir, "tall.png")
+	writeImage(t, tall, 7, 90, stripes)
+	for _, colors := range []ImageColors{ImagesTrueColor, Images256, ImagesOff} {
+		cfg := DefaultPreviewConfig()
+		cfg.Images = colors
+		for _, path := range []string{wide, tall} {
+			p := LoadPreviewWithConfig(fileInfo(t, path), cfg)
+			if colors != ImagesOff && p.Image == nil {
+				t.Fatalf("%s: not drawn with colors %d: %v", path, colors, p.Lines)
+			}
+			previews = append(previews, p)
+		}
+	}
+	zipPath := filepath.Join(dir, "files.zip")
+	writeZip(t, zipPath, map[string]string{"a/very/deeply/nested/" + strings.Repeat("long-", 20) + ".txt": "x", "b.go": "package b"})
+	tgz := filepath.Join(dir, "files.tar.gz")
+	writeTar(t, tgz, true, map[string]string{"c.txt": "c"})
+	pdf := filepath.Join(dir, "doc.pdf")
+	os.WriteFile(pdf, []byte("%PDF-1.4"), 0644)
+	for _, path := range []string{zipPath, tgz, pdf} {
+		previews = append(previews, LoadPreview(fileInfo(t, path), 2000))
+	}
+
+	for _, p := range previews {
+		for _, size := range [][2]int{{40, 12}, {12, 3}, {3, 1}, {120, 40}, {1, 1}, {2, 5}, {7, 30}} {
 			render(t, p, size[0], size[1], 0)
 			render(t, p, size[0], size[1], 9999)
 		}

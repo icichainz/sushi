@@ -26,6 +26,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKeyPress(msg)
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -155,9 +158,13 @@ func (m *Model) previewCmd(tab *Tab) tea.Cmd {
 	return loadPreview(tab.ID, tab.Files[tab.Cursor], m.theme.Syntax)
 }
 
-// loadPreviewNow loads a preview synchronously using the theme's syntax style
+// loadPreviewNow loads a preview synchronously using the theme's syntax
+// style. Slow previews (images, archives, PDFs) are left Pending for Init
+// to load, so they don't hold up startup.
 func (m *Model) loadPreviewNow(file fs.FileInfo) components.PreviewContent {
-	return components.LoadPreviewWithConfig(file, previewConfig(m.theme.Syntax))
+	cfg := previewConfig(m.theme.Syntax)
+	cfg.Quick = true
+	return components.LoadPreviewWithConfig(file, cfg)
 }
 
 // previewConfig returns the preview settings for the given syntax style

@@ -77,6 +77,9 @@ type Model struct {
 	bookmarks      *config.BookmarkStore
 	bookmarkCursor int
 
+	// Mouse
+	lastClick click // The last left click, to recognise a double-click
+
 	// Plugins
 	plugins      []plugins.Plugin
 	pluginKeys   map[string]int // Shortcut to index in plugins
@@ -460,5 +463,8 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
+	if m.tab().Preview.Pending {
+		return tea.Batch(m.initCmd, m.previewCmd(m.tab()))
+	}
 	return m.initCmd
 }
