@@ -17,8 +17,11 @@ func fakeTools(t *testing.T, toText, info string) {
 		t.Skip("the stand-ins are shell scripts")
 	}
 	bin := t.TempDir()
-	oldToText, oldInfo := pdfToText, pdfInfo
-	t.Cleanup(func() { pdfToText, pdfInfo = oldToText, oldInfo })
+	oldToText, oldInfo, oldTimeout := pdfToText, pdfInfo, pdfTimeout
+	t.Cleanup(func() { pdfToText, pdfInfo, pdfTimeout = oldToText, oldInfo, oldTimeout })
+	// Starting a new script can take seconds while the whole suite runs,
+	// longer than a real conversion is given; TestSlowPDFTimesOut sets its own
+	pdfTimeout = 30 * time.Second
 
 	for name, script := range map[string]string{"pdftotext": toText, "pdfinfo": info} {
 		path := filepath.Join(bin, name)
