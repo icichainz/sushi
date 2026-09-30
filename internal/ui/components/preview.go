@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -165,12 +166,13 @@ func LoadPreviewWithConfig(file fs.FileInfo, config PreviewConfig) PreviewConten
 
 	// Images, archives and PDFs read only what they need, so the size
 	// limit for text doesn't apply
-	name := strings.ToLower(file.Name)
+	kindName := typeName(file)
+	name := strings.ToLower(kindName)
 	switch {
 	case imageExts[filepath.Ext(name)]:
-		return loadImagePreview(preview, config)
+		return loadImagePreview(preview, kindName, config)
 	case archiveFormat(name) != "":
-		return loadArchivePreview(preview, config)
+		return loadArchivePreview(preview, kindName, config)
 	case filepath.Ext(name) == ".pdf":
 		return loadPDFPreview(preview, config)
 	}
@@ -188,7 +190,7 @@ func LoadPreviewWithConfig(file fs.FileInfo, config PreviewConfig) PreviewConten
 	}
 
 	if isBinaryFile {
-		return message(getFileType(strings.ToLower(filepath.Ext(file.Name))),
+		return message(getFileType(filepath.Ext(name)),
 			"Modified  "+file.ModTime.Format("2006-01-02 15:04:05"),
 			"",
 			"Cannot preview binary content")
@@ -208,7 +210,7 @@ func LoadPreviewWithConfig(file fs.FileInfo, config PreviewConfig) PreviewConten
 
 	// Apply syntax highlighting if enabled; on failure the text stays plain
 	if config.SyntaxHighlight && len(lines) > 0 {
-		if highlighted, kind, err := highlightLines(file.Path, preview.Content, config.SyntaxTheme); err == nil && len(highlighted) == len(lines) {
+		if highlighted, kind, err := highlightLines(kindName, preview.Content, config.SyntaxTheme); err == nil && len(highlighted) == len(lines) {
 			preview.Lines = highlighted
 			preview.Kind = kind
 		}
@@ -216,11 +218,24 @@ func LoadPreviewWithConfig(file fs.FileInfo, config PreviewConfig) PreviewConten
 	return preview
 }
 
+// typeName returns the name a file's type is told by: its own, or for a
+// symlink without an extension, that of what it leads to, so a link
+// "latest" to "photo.png" is previewed as an image
+func typeName(file fs.FileInfo) string {
+	if !file.IsSymlink || filepath.Ext(file.Name) != "" {
+		return file.Name
+	}
+	if target, err := filepath.EvalSymlinks(file.Path); err == nil {
+		return filepath.Base(target)
+	}
+	return file.Name
+}
+
 // highlightLines highlights content and returns it line by line, each line
-// carrying its own color codes, along with the language name
-func highlightLines(path, content, themeName string) ([]string, string, error) {
-	// Determine lexer from filename
-	lexer := lexers.Match(path)
+// carrying its own color codes, along with the language name. The lexer
+// is chosen by the file's name, then by the content.
+func highlightLines(name, content, themeName string) ([]string, string, error) {
+	lexer := lexers.Match(name)
 	if lexer == nil {
 		lexer = lexers.Analyse(content)
 	}
@@ -265,7 +280,9 @@ func highlightLines(path, content, themeName string) ([]string, string, error) {
 	return lines, kind, nil
 }
 
-// loadDirectoryPreview lists up to 200 entries of a directory, directories first
+// loadDirectoryPreview lists up to 200 entries of a directory, directories
+// first. In a larger directory they are the first 200 it gives, sorted,
+// as reading the rest could take long.
 func loadDirectoryPreview(path string) ([]Entry, bool, error) {
 	// Open directory for streaming read (avoids loading entire listing for huge dirs)
 	dir, err := os.Open(path)
@@ -286,15 +303,26 @@ func loadDirectoryPreview(path string) ([]Entry, bool, error) {
 		entries = entries[:maxItems]
 	}
 
-	var dirs, files []Entry
-	for _, entry := range entries {
-		if entry.IsDir() {
-			dirs = append(dirs, Entry{Name: entry.Name(), IsDir: true})
-		} else {
-			files = append(files, Entry{Name: entry.Name()})
-		}
+	// In the file list's order by name, rather than the directory's, which
+	// on some filesystems is no order at all: directories first, then by
+	// name ignoring case, exact case breaking ties
+	list := make([]Entry, len(entries))
+	for i, entry := range entries {
+		list[i] = Entry{Name: entry.Name(), IsDir: entry.IsDir()}
 	}
-	return append(dirs, files...), more, nil
+	slices.SortFunc(list, func(a, b Entry) int {
+		if a.IsDir != b.IsDir {
+			if a.IsDir {
+				return -1
+			}
+			return 1
+		}
+		if c := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return list, more, nil
 }
 
 // getFileType returns a human-readable file type
@@ -380,15 +408,9 @@ func RenderPreview(p PreviewContent, width, height, scroll int, st PreviewStyles
 	case p.IsText && p.Total > 0:
 		pos = fmt.Sprintf("%d-%d of %d", scroll+1, min(scroll+rows, p.Total), p.Total)
 	case p.Kind == "Directory" && len(p.Entries) > 0:
-		pos = fmt.Sprintf("%d items", len(p.Entries))
-		if p.More {
-			pos = fmt.Sprintf("%d+ items", len(p.Entries))
-		}
+		pos = count(len(p.Entries), p.More, "item", "items")
 	case p.Archive && p.Error == nil && p.Count > 0:
-		pos = fmt.Sprintf("%d entries", p.Count)
-		if p.Partial {
-			pos = fmt.Sprintf("%d+ entries", p.Count)
-		}
+		pos = count(p.Count, p.Partial, "entry", "entries")
 	}
 	inner := width - 2
 	posW := utils.Width(pos)
@@ -426,13 +448,25 @@ func RenderPreview(p PreviewContent, width, height, scroll int, st PreviewStyles
 		case p.IsText && p.Total == 0:
 			line = " " + st.Faint.Render(utils.Truncate("Empty file", inner))
 		case p.IsText:
-			line = " " + st.Faint.Render(utils.Truncate(fmt.Sprintf("%d more lines not shown", p.Total-len(p.Lines)), inner))
+			line = " " + st.Faint.Render(utils.Truncate(count(p.Total-len(p.Lines), false, "more line", "more lines")+" not shown", inner))
 		default:
 			line = " " + st.Text.Render(utils.Truncate(utils.Printable(p.Lines[i]), inner))
 		}
 		out = append(out, utils.Fit(line, width))
 	}
 	return out
+}
+
+// count writes n things, as in "1 item" or "3 items", or "3+ items" when
+// there are more than n
+func count(n int, more bool, one, many string) string {
+	switch {
+	case more:
+		return fmt.Sprintf("%d+ %s", n, many)
+	case n == 1:
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
 
 // renderEntry draws row i of a directory or archive preview

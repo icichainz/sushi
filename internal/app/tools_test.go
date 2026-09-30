@@ -1,6 +1,7 @@
 package app
 
 import (
+	"archive/tar"
 	"archive/zip"
 	"bytes"
 	"fmt"
@@ -246,6 +247,56 @@ func TestUndoMove(t *testing.T) {
 	}
 }
 
+func TestMovingAFolderTakesTabsAndBookmarksWithIt(t *testing.T) {
+	root := t.TempDir()
+	src, dst := filepath.Join(root, "src"), filepath.Join(root, "dst")
+	deep := filepath.Join(src, "project", "sub")
+	os.MkdirAll(deep, 0755)
+	os.Mkdir(dst, 0755)
+	writeTestFile(t, filepath.Join(deep, "notes.txt"), "")
+	writeTestFile(t, filepath.Join(src, "stays.txt"), "")
+
+	m := newTestModel(t, src, noWatch())
+	m.bookmarks.Add("project", filepath.Join(src, "project"))
+	m.bookmarks.Add("elsewhere", src)
+	// A second tab inside the folder, with something selected there
+	updated, cmd := m.createTab(deep)
+	m = drain(t, updated.(Model), cmd)
+	m.tab().Selected[filepath.Join(deep, "notes.txt")] = true
+	m, _ = press(t, m, "tab")
+
+	m = cursorTo(t, m, "project")
+	m, _ = press(t, m, "x")
+	m.tab().CurrentPath = dst
+	m, cmd = press(t, m, "v")
+	m = drain(t, m, cmd)
+
+	moved := filepath.Join(dst, "project", "sub")
+	if !fs.Exists(filepath.Join(moved, "notes.txt")) {
+		t.Fatalf("not moved: %q", m.statusMsg)
+	}
+	inside := m.tabs[1]
+	if inside.CurrentPath != moved || !inside.Selected[filepath.Join(moved, "notes.txt")] || len(inside.Files) != 1 {
+		t.Fatalf("the tab inside is in %s with %v selected and %d files, want it in %s", inside.CurrentPath, inside.Selected, len(inside.Files), moved)
+	}
+	if got := m.bookmarks.Get(0).Path; got != filepath.Join(dst, "project") {
+		t.Fatalf("bookmark = %s, want it moved", got)
+	}
+	if got := m.bookmarks.Get(1).Path; got != src {
+		t.Fatalf("the other bookmark = %s", got)
+	}
+	// The move emptied the clipboard, rather than following it
+	if len(m.clipboard) != 0 {
+		t.Fatalf("clipboard = %v after the move", m.clipboard)
+	}
+
+	// Undoing it takes them back
+	m = undoNow(t, m)
+	if m.tabs[1].CurrentPath != deep || m.bookmarks.Get(0).Path != filepath.Join(src, "project") {
+		t.Fatalf("after undo: tab in %s, bookmark %s", m.tabs[1].CurrentPath, m.bookmarks.Get(0).Path)
+	}
+}
+
 func TestUndoCopyRemovesOnlyUnchangedCopies(t *testing.T) {
 	src, dst := t.TempDir(), t.TempDir()
 	writeTestFile(t, filepath.Join(src, "a.txt"), "a")
@@ -390,6 +441,56 @@ func TestProgressShowsWhileRunning(t *testing.T) {
 	counting.changeJob(func(j *job) { j.progress = fs.Progress{Counting: true, TotalFiles: 1500} })
 	if s := counting.job.status(); s != "Copying: counting, 1500 files so far" {
 		t.Fatalf("while counting: %q", s)
+	}
+}
+
+func TestStatusBarKeepsTheMessageAndProgress(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	writeTestFile(t, filepath.Join(src, "a.txt"), "")
+
+	m := newTestModel(t, src, nil)
+	m, _ = press(t, m, "c")
+	m.tab().CurrentPath = dst
+	m, _ = press(t, m, "v") // Started, but its command isn't run
+	updated, _ := m.Update(jobProgressMsg{id: m.job.id, progress: fs.Progress{Files: 3, TotalFiles: 120, Bytes: 45, TotalBytes: 100}})
+	m = updated.(Model)
+	m, _ = press(t, m, "d") // Refused while busy
+
+	// At 80 columns both are whole, and the counts and clipboard give way
+	busy := resize(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	status := ansi.Strip(busy.renderStatusBar())
+	for _, want := range []string{"NORMAL", "Still copying: wait, or ctrl+x to cancel", "Copying 3/120 45%"} {
+		if !strings.Contains(status, want) {
+			t.Errorf("80 columns: status lacks %q: %q", want, status)
+		}
+	}
+	if strings.Index(status, "Still") > strings.Index(status, "Copying") {
+		t.Errorf("80 columns: the message should come first: %q", status)
+	}
+	// With room, the progress keeps its bar and the rest shows too
+	wide := resize(m, tea.WindowSizeMsg{Width: 140, Height: 24})
+	status = ansi.Strip(wide.renderStatusBar())
+	for _, want := range []string{"Still copying", "Copying 3/120 files 45% ████░░░░░░", "clipboard: copy 1"} {
+		if !strings.Contains(status, want) {
+			t.Errorf("140 columns: status lacks %q: %q", want, status)
+		}
+	}
+
+	// A long message cut short still leaves the progress its room
+	busy.statusMsg = "Error: " + strings.Repeat("something went wrong ", 10)
+	status = ansi.Strip(busy.renderStatusBar())
+	if !strings.Contains(status, "Error: something") || !strings.Contains(status, "Copying 3/120 45%") {
+		t.Errorf("long message: %q", status)
+	}
+
+	// Without a job, a message survives where the counts don't
+	idle := resize(newTestModel(t, src, nil), tea.WindowSizeMsg{Width: 80, Height: 24})
+	idle.statusMsg = "Can't paste: " + strings.Repeat("x", 50)
+	if status := ansi.Strip(idle.renderStatusBar()); !strings.Contains(status, "Can't paste: xxxx") {
+		t.Errorf("idle: %q", status)
+	}
+	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 40, Height: 10}, {Width: 20, Height: 10}} {
+		assertFills(t, fmt.Sprintf("%dx%d busy with a message", size.Width, size.Height), resize(busy, size))
 	}
 }
 
@@ -840,5 +941,29 @@ func TestExtractReportsUnsafeArchives(t *testing.T) {
 	m = cursorTo(t, m, "notes.txt")
 	if m, _ = press(t, m, "X"); !strings.Contains(m.statusMsg, "Nothing to extract") {
 		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+
+	// A tar archive is read in order, so its good entries are written
+	// before the bad one is found; then they go, with the folder
+	buf.Reset()
+	tw := tar.NewWriter(&buf)
+	for _, e := range []struct{ name, body string }{{"fine.txt", "fine"}, {"../escaped.txt", "pwned"}} {
+		tw.WriteHeader(&tar.Header{Name: e.name, Mode: 0644, Size: int64(len(e.body)), Typeflag: tar.TypeReg})
+		tw.Write([]byte(e.body))
+	}
+	tw.Close()
+	os.WriteFile(filepath.Join(dir, "evil.tar"), buf.Bytes(), 0644)
+	m = cursorTo(t, drain(t, m, m.reloadAll()), "evil.tar")
+	undos := len(m.undo)
+	m, cmd = press(t, m, "X")
+	m = drain(t, m, cmd)
+	if !strings.Contains(m.statusMsg, "unsafe path") || fs.Exists(filepath.Join(root, "escaped.txt")) {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+	if got := dirNames(t, dir); strings.Join(got, " ") != "evil.tar evil.zip notes.txt" {
+		t.Fatalf("left behind: %v", got)
+	}
+	if len(m.undo) != undos {
+		t.Fatal("a refused extraction was left to undo")
 	}
 }

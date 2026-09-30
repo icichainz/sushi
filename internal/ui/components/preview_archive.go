@@ -71,12 +71,13 @@ func (l *archiveListing) add(name string, dir bool, size int64) {
 	}
 }
 
-// loadArchivePreview lists an archive's entries without extracting it
-func loadArchivePreview(p PreviewContent, config PreviewConfig) PreviewContent {
-	format := archiveFormat(p.FileInfo.Name)
+// loadArchivePreview lists an archive's entries without extracting it. The
+// name, the file's or its link target's, gives the format.
+func loadArchivePreview(p PreviewContent, name string, config PreviewConfig) PreviewContent {
+	format := archiveFormat(name)
 	p.Kind = archiveKinds[format]
 	// The preview lists more formats (jar, tar.bz2) than sushi extracts
-	if fs.ArchiveKind(p.FileInfo.Name) == "" {
+	if fs.ArchiveKind(name) == "" {
 		p.Details = append(p.Details, "preview only")
 	}
 	if config.Quick {

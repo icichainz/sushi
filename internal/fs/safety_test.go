@@ -440,20 +440,71 @@ func TestExtractSaysWhenItCreatedNothing(t *testing.T) {
 	writeZip(t, bad, []entry{{name: "../escape", body: "x"}})
 	taken := filepath.Join(root, "taken")
 	os.Mkdir(taken, 0755)
+	// Cut off in the second file's data, after the first was written
+	cut := filepath.Join(root, "cut.tar")
+	writeTar(t, cut, false, []entry{{name: "first", body: "1"}, {name: "second", body: strings.Repeat("2", 2000)}})
+	os.Truncate(cut, 3*512+100)
 
 	for _, c := range []struct {
 		archive, dir string
 		created      bool
 	}{
-		{good, taken, false},                   // The folder was there first
-		{bad, filepath.Join(root, "b"), false}, // Refused before anything was made
-		{good, filepath.Join(root, "g"), true}, // Failed once it had made the folder
+		{good, taken, false},                    // The folder was there first
+		{bad, filepath.Join(root, "b"), false},  // Refused before anything was made
+		{good, filepath.Join(root, "g"), false}, // Refused once it had made the folder, which went
+		{cut, filepath.Join(root, "c"), true},   // Failed once it had made the folder
 		{filepath.Join(root, "x.rar"), filepath.Join(root, "r"), false},
 	} {
 		err := background().Extract(c.archive, c.dir)
 		if err == nil || errors.Is(err, ErrNotCreated) == c.created {
 			t.Errorf("%s into %s: err = %v, created = %v", filepath.Base(c.archive), filepath.Base(c.dir), err, c.created)
 		}
+		if c.dir != taken && Exists(c.dir) != c.created {
+			t.Errorf("%s into %s: the folder is there: %v", filepath.Base(c.archive), filepath.Base(c.dir), Exists(c.dir))
+		}
+	}
+}
+
+func TestRefusedExtractionLeavesNothingBehind(t *testing.T) {
+	// A tar archive is read in order, so entries before the bad one have
+	// been written by the time it is refused
+	for _, bad := range []entry{
+		{name: "../outside.txt", body: "pwned"},
+		{name: "link", body: "../outside.txt", mode: os.ModeSymlink},
+		{name: "sub/ok.txt", body: "twice"},
+		{name: "hard", body: "missing", hardlink: true},
+	} {
+		root, dest := sandbox(t)
+		archive := filepath.Join(root, "a.tar")
+		writeTar(t, archive, false, []entry{
+			{name: "sub/", mode: os.ModeDir},
+			{name: "sub/ok.txt", body: "fine"},
+			bad,
+		})
+		err := background().Extract(archive, dest)
+		if err == nil || !errors.Is(err, ErrNotCreated) {
+			t.Errorf("%s: err = %v, want a refusal that created nothing", bad.name, err)
+		}
+		if Exists(dest) {
+			t.Errorf("%s: the folder was left behind", bad.name)
+		}
+		assertOutsideUntouched(t, root)
+	}
+
+	// Something else in the folder's place by then is left alone
+	root, dest := sandbox(t)
+	archive := filepath.Join(root, "a.tar")
+	writeTar(t, archive, false, []entry{{name: "ok.txt", body: "fine"}, {name: "../x", body: "pwned"}})
+	x := newExtractor(background())
+	if err := x.open(dest); err != nil {
+		t.Fatal(err)
+	}
+	x.close()
+	os.Rename(dest, dest+"-moved")
+	os.Mkdir(dest, 0755)
+	writeFile(t, filepath.Join(dest, "theirs"), "")
+	if err := x.removeRefused(dest); err == nil || !Exists(filepath.Join(dest, "theirs")) {
+		t.Fatalf("err = %v: another folder in its place was removed", err)
 	}
 }
 

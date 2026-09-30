@@ -197,6 +197,71 @@ func TestDirectoryPreviewListsEntries(t *testing.T) {
 	}
 }
 
+func TestDirectoryPreviewIsSortedLikeTheList(t *testing.T) {
+	dir := t.TempDir()
+	// Made out of order, as a directory may list them in any
+	for _, name := range []string{"b.txt", "Zeta", "a.txt", "C.txt", "beta", "Alpha", "c.txt"} {
+		if strings.HasSuffix(name, ".txt") {
+			os.WriteFile(filepath.Join(dir, name), nil, 0644)
+		} else {
+			os.Mkdir(filepath.Join(dir, name), 0755)
+		}
+	}
+	p := LoadPreview(fileInfo(t, dir), 100)
+	var got []string
+	for _, e := range p.Entries {
+		got = append(got, e.Name)
+	}
+	// Folders first, then by name ignoring case, with capitals first on a tie
+	want := "Alpha beta Zeta a.txt b.txt C.txt c.txt"
+	if ignoresCase(dir) {
+		want = strings.TrimSuffix(want, " c.txt") // The same file as C.txt
+	}
+	if strings.Join(got, " ") != want {
+		t.Fatalf("entries = %v, want %s", got, want)
+	}
+}
+
+// ignoresCase reports whether dir's filesystem takes C.txt and c.txt for
+// the same name, so only one of them was made
+func ignoresCase(dir string) bool {
+	entries, _ := os.ReadDir(dir)
+	n := 0
+	for _, e := range entries {
+		if strings.EqualFold(e.Name(), "c.txt") {
+			n++
+		}
+	}
+	return n < 2
+}
+
+func TestLinksWithoutAnExtensionPreviewAsWhatTheyLeadTo(t *testing.T) {
+	dir := t.TempDir()
+	writeImage(t, filepath.Join(dir, "pic.png"), 4, 4, stripes)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "blob.exe"), []byte{0, 1, 2, 0}, 0644)
+	for link, target := range map[string]string{"noext-link": "pic.png", "tool": "main.go", "run": "blob.exe", "gone": "missing.png"} {
+		if err := os.Symlink(target, filepath.Join(dir, link)); err != nil {
+			t.Skipf("can't make symlinks here: %v", err)
+		}
+	}
+
+	// As the file list sees them
+	files, err := fs.ScanDirectory(dir, fs.ScanOptions{SortBy: "name"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := make(map[string]string)
+	for _, f := range files {
+		kinds[f.Name] = LoadPreview(f, 100).Kind
+	}
+	for name, want := range map[string]string{"noext-link": "PNG Image", "tool": "Go", "run": "Executable", "gone": "File"} {
+		if kinds[name] != want {
+			t.Errorf("%s previews as %q, want %q", name, kinds[name], want)
+		}
+	}
+}
+
 func TestEmptyFilePreviewsAsText(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "empty.txt")
 	os.WriteFile(path, nil, 0644)

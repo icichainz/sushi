@@ -1,6 +1,7 @@
 package app
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -40,12 +41,28 @@ func threeFiles(t *testing.T) string {
 	return dir
 }
 
-// wantProblems fails unless the status bar mentions every one of want
+// problems returns every problem found with m's config at startup, as
+// sushi --list-keys lists them; the status bar shows the first
+func problems(t *testing.T, m Model) string {
+	t.Helper()
+	found, err := WriteKeys(io.Discard, m.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) > 0 && !strings.HasPrefix(m.statusMsg, found[0]) {
+		t.Errorf("status bar = %q, want it to start with the first problem, %q", m.statusMsg, found[0])
+	}
+	return strings.Join(found, "\n")
+}
+
+// wantProblems fails unless every one of want is among the problems found
+// with m's config
 func wantProblems(t *testing.T, m Model, want ...string) {
 	t.Helper()
+	found := problems(t, m)
 	for _, w := range want {
-		if !strings.Contains(m.statusMsg, w) {
-			t.Errorf("status bar lacks %q:\n%s", w, strings.ReplaceAll(m.statusMsg, "; ", "\n"))
+		if !strings.Contains(found, w) {
+			t.Errorf("problems lack %q:\n%s", w, found)
 		}
 	}
 }
@@ -235,8 +252,8 @@ func TestKeyConflictsAreReported(t *testing.T) {
 		`keys: conflict: "esc" for down is ignored in the sort menu, where it closes it`,
 		`keys: conflict: "esc" for down is ignored in the Run palette, where it closes it`,
 		`keys: conflict: "n" for reverse is ignored in the sort menu, where it sorts by name`)
-	if strings.Contains(m.statusMsg, "new_file") {
-		t.Errorf("new_file moved to alt+n, so it doesn't clash: %s", m.statusMsg)
+	if found := problems(t, m); strings.Contains(found, "new_file") {
+		t.Errorf("new_file moved to alt+n, so it doesn't clash:\n%s", found)
 	}
 	if !isProblem(`keys: conflict: "3" for new_tab hides bookmark 3`) {
 		t.Error("conflicts should be shown as problems")
@@ -291,8 +308,8 @@ func TestPluginKeysFollowRemaps(t *testing.T) {
 			t.Errorf("no plugin on %s, which no action uses", k)
 		}
 	}
-	if strings.Contains(m.statusMsg, "freed") || strings.Contains(m.statusMsg, "dot") {
-		t.Errorf("unexpected problems: %s", m.statusMsg)
+	if found := problems(t, m); strings.Contains(found, "freed") || strings.Contains(found, "dot") {
+		t.Errorf("unexpected problems:\n%s", found)
 	}
 }
 
@@ -383,9 +400,13 @@ func TestPanelAndHintsShowRemaps(t *testing.T) {
 func TestLabelsFollowRemaps(t *testing.T) {
 	m := withKeys(t, threeFiles(t), map[string]config.KeyList{
 		"plugins": {"alt+p"}, "bookmark": {"ctrl+b"}, "reverse": {"alt+s"}, "find": {"ctrl+f"}, "grep": {"alt+f"},
+		"extract": {"ctrl+e"},
 	})
 	if m.statusMsg != "" {
 		t.Fatalf("unexpected problems: %s", m.statusMsg)
+	}
+	if none, _ := send(t, m, tea.KeyMsg{Type: tea.KeyCtrlE}); !strings.Contains(none.statusMsg, "ctrl+e unpacks") {
+		t.Errorf("extracting a text file: %q", none.statusMsg)
 	}
 	if bar := ansi.Strip(m.renderTabBar()); !strings.Contains(bar, "alt+p run  ctrl+b bookmarks") || strings.Contains(bar, "P run") {
 		t.Errorf("tab bar = %q", bar)

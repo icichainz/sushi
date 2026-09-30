@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -37,6 +36,7 @@ type Tab struct {
 	TotalSize       int64            // Cached total size of all files
 	Loading         bool
 	reloadWanted    bool // Changed while loading: reload once the load is in
+	resortWanted    bool // Sort order changed while loading: sort the load once in
 }
 
 // Model represents the application state
@@ -69,6 +69,7 @@ type Model struct {
 	clipboardMode string   // "copy" or "cut"
 	confirmAction string   // "delete" or "paste"
 	pending       []string // Paths to delete, or names a paste would overwrite
+	pasteDir      string   // Where the paste the dialog asks about goes
 
 	// Background operations and undo; see jobs.go and undo.go
 	job    *job        // The operation running in the background, if any
@@ -459,16 +460,10 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 		path = abs
 	}
 
-	// Problems are shown in the status bar rather than stopping startup
-	theme, problems := ui.LoadTheme(cfg.Theme, cfg.Colors)
+	// Problems are shown in the status bar rather than stopping startup.
+	// They are found in the same order as sushi --list-keys finds them.
+	theme, problems := loadTheme(cfg)
 	problems = append(slices.Clone(cfg.Problems), problems...)
-	if cfg.SyntaxTheme != "" {
-		if components.HasSyntaxTheme(cfg.SyntaxTheme) {
-			theme.Syntax = cfg.SyntaxTheme
-		} else {
-			problems = append(problems, fmt.Sprintf("unknown syntax_theme %q", cfg.SyntaxTheme))
-		}
-	}
 	keys, keyProblems := loadKeyMap(cfg.Keys)
 	problems = append(problems, keyProblems...)
 
@@ -490,7 +485,8 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	initialTab := m.newTab(path)
 	files, err := fs.ScanDirectory(path, m.scanOptions())
 	if err != nil {
-		problems = append(problems, fmt.Sprintf("Error: %v", err))
+		// First, as sushi --list-keys can't say it
+		problems = append([]string{fmt.Sprintf("Error: %v", err)}, problems...)
 	} else {
 		initialTab.setFiles(files)
 	}
@@ -509,9 +505,32 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	problems = append(problems, m.bindPluginKeys()...)
 
 	if len(problems) > 0 {
-		m.initCmd = m.setStatusFor(strings.Join(problems, "; "), 10*time.Second)
+		m.initCmd = m.setStatusFor(startupMessage(problems), 10*time.Second)
 	}
 	return m
+}
+
+// startupMessage shows the first of the problems found at startup, and
+// how many more there are: all of them on one line are cut short anyway
+func startupMessage(problems []string) string {
+	if len(problems) == 1 {
+		return problems[0]
+	}
+	return fmt.Sprintf("%s (+%d more, see sushi --list-keys)", problems[0], len(problems)-1)
+}
+
+// loadTheme returns the theme the config asks for, and its problems: an
+// unknown theme, color or syntax style
+func loadTheme(cfg *config.Config) (ui.Theme, []string) {
+	theme, problems := ui.LoadTheme(cfg.Theme, cfg.Colors)
+	if cfg.SyntaxTheme != "" {
+		if components.HasSyntaxTheme(cfg.SyntaxTheme) {
+			theme.Syntax = cfg.SyntaxTheme
+		} else {
+			problems = append(problems, fmt.Sprintf("unknown syntax_theme %q", cfg.SyntaxTheme))
+		}
+	}
+	return theme, problems
 }
 
 // Init initializes the model

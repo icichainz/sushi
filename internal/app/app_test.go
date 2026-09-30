@@ -553,6 +553,50 @@ func TestStatusBarShowsMode(t *testing.T) {
 	}
 }
 
+func TestCountsAndHeadingsReadRight(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "one")
+	os.Mkdir(dir, 0755)
+	writeTestFile(t, filepath.Join(dir, "only.txt"), "")
+
+	// One item, in the status bar and in the parent's preview of the folder
+	m := newTestModel(t, dir, nil)
+	if status := ansi.Strip(m.renderStatusBar()); !strings.Contains(status, " 1 item ") {
+		t.Errorf("status = %q, want 1 item", status)
+	}
+	m = drain(t, m, m.loadDir(m.tab(), root))
+	m = drain(t, m, m.previewCmd(m.tab()))
+	if heading := ansi.Strip(strings.Join(m.renderPreview(60, 5), "\n")); !strings.Contains(heading, " 1 item") || strings.Contains(heading, "1 items") {
+		t.Errorf("preview of the folder:\n%s", heading)
+	}
+
+	// Inverting says so, and the status bar counts the selection once
+	m = drain(t, m, m.loadDir(m.tab(), dir))
+	m, _ = press(t, m, "*")
+	if status := ansi.Strip(m.renderStatusBar()); strings.Count(status, "selected") != 1 || !strings.Contains(status, "1 selected") {
+		t.Errorf("after *: status = %q", status)
+	}
+
+	// Sorted by a column too narrow to show, the name's heading says so
+	for _, c := range []struct {
+		by    string
+		width int
+		head  string
+	}{
+		{"modified", 50, "Name (modified ↓)"},
+		{"modified", 80, "Modified ↓"},
+		{"size", 30, "Name (size ↓)"},
+		{"size", 50, "Size ↓"},
+		{"type", 50, "Name (by type) ↑"},
+		{"name", 30, "Name ↑"},
+	} {
+		m.sortBy = c.by
+		if head := ansi.Strip(m.renderFileList(c.width, 5, false)[0]); !strings.Contains(head, c.head) || strings.Count(head, "↓")+strings.Count(head, "↑") != 1 {
+			t.Errorf("by %s at %d columns: heading %q, want %q", c.by, c.width, head, c.head)
+		}
+	}
+}
+
 func TestSearchHidesOtherFiles(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"main.go", "Makefile", "README.md", "go.sum"} {
@@ -972,15 +1016,33 @@ func TestConfigProblemsShownAtStartup(t *testing.T) {
 	}
 	t.Cleanup(func() { statusTimer = old })
 
+	// The first is shown whole, with how many more there are: all of them
+	// on one line were cut short
 	m := newTestModel(t, t.TempDir(), cfg)
-	for _, want := range []string{"neon", "nope", "line 3: bad value"} {
-		if !strings.Contains(m.statusMsg, want) {
-			t.Fatalf("statusMsg = %q, want every problem", m.statusMsg)
-		}
+	if want := "config.yaml: line 3: bad value (+2 more, see sushi --list-keys)"; m.statusMsg != want {
+		t.Fatalf("statusMsg = %q, want %q", m.statusMsg, want)
+	}
+	// Which lists them all
+	var out strings.Builder
+	problems, _ := WriteKeys(&out, cfg)
+	if found := strings.Join(problems, "\n"); len(problems) != 3 || !strings.Contains(found, "neon") || !strings.Contains(found, "nope") {
+		t.Fatalf("--list-keys problems:\n%s", found)
 	}
 	// Init clears them, after long enough to read them
 	if m = drain(t, m, m.Init()); m.statusMsg != "" || shownFor != 10*time.Second {
 		t.Fatalf("after Init: status %q, shown for %v; want it cleared after 10s", m.statusMsg, shownFor)
+	}
+
+	// Just one is shown as it is
+	cfg.SyntaxTheme, cfg.Problems = "", nil
+	if m = newTestModel(t, t.TempDir(), cfg); m.statusMsg != `theme: unknown value "neon", using default` {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+
+	// A folder that can't be read comes first, as --list-keys can't say it
+	m = newTestModel(t, filepath.Join(t.TempDir(), "missing"), cfg)
+	if !strings.HasPrefix(m.statusMsg, "Error: ") || !strings.HasSuffix(m.statusMsg, "(+1 more, see sushi --list-keys)") {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
 	}
 }
 
@@ -1017,6 +1079,9 @@ func TestSelectCopyPasteMultipleFiles(t *testing.T) {
 	m, _ = press(t, m, "c")
 	if len(m.clipboard) != 2 || len(m.tab().Selected) != 0 {
 		t.Fatalf("clipboard=%v selected=%d, want 2 items and a cleared selection", m.clipboard, len(m.tab().Selected))
+	}
+	if m.statusMsg != "Copied to clipboard: 2 items" {
+		t.Fatalf("after c: %q", m.statusMsg)
 	}
 
 	m.tab().CurrentPath = dst
@@ -1130,12 +1195,18 @@ func TestCutClearsMovedItemsFromClipboard(t *testing.T) {
 	writeTestFile(t, filepath.Join(src, "a"), "")
 
 	m := newTestModel(t, src, nil)
-	m, _ = press(t, m, "x")
+	// Said so it isn't taken for a finished paste
+	if m, _ = press(t, m, "x"); m.statusMsg != "Cut to clipboard: a" {
+		t.Fatalf("after x: %q", m.statusMsg)
+	}
 	m.tab().CurrentPath = dst
 	m, cmd := press(t, m, "v")
 	m = run(t, m, cmd)
 	if len(m.clipboard) != 0 || m.clipboardMode != "" {
 		t.Fatalf("clipboard = %v (%s), want empty after the move", m.clipboard, m.clipboardMode)
+	}
+	if m.statusMsg != "Moved: a" {
+		t.Fatalf("after the paste: %q", m.statusMsg)
 	}
 }
 
@@ -1455,14 +1526,23 @@ func TestPluginKeyConflictsAreReported(t *testing.T) {
 	}
 	m := newTestModel(t, t.TempDir(), cfg)
 
-	if !strings.Contains(m.statusMsg, `key "q" is used by sushi`) || !strings.Contains(m.statusMsg, "already used by first") {
-		t.Fatalf("statusMsg = %q", m.statusMsg)
-	}
+	wantProblems(t, m, `key "q" is used by sushi`, "already used by first")
 	if _, ok := m.pluginKeys["q"]; ok {
 		t.Fatal("a plugin took over q")
 	}
 	if m.plugins[m.pluginKeys["Z"]].Name != "first" {
 		t.Fatal("Z should stay with the first plugin")
+	}
+
+	// The Run palette shows no key for those refused one, rather than a
+	// key that does something else
+	m, _ = press(t, m, "P")
+	for _, line := range strings.Split(ansi.Strip(strings.Join(m.runBox(), "\n")), "\n") {
+		for name, key := range map[string]string{"quitter": "", "first": "Z", "second": ""} {
+			if i := strings.Index(line, name); i >= 0 && strings.TrimSpace(line[strings.LastIndex(line[:i], "│")+len("│"):i]) != key {
+				t.Errorf("%s is shown as %q, want the key %q", name, strings.TrimSpace(line), key)
+			}
+		}
 	}
 }
 

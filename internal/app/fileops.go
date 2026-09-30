@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -84,8 +85,32 @@ func (m Model) invertSelection() (tea.Model, tea.Cmd) {
 			tab.Selected[f.Path] = true
 		}
 	}
-	cmd := m.setStatus(fmt.Sprintf("%d selected", len(tab.Selected)))
+	// The status bar counts the selection already
+	cmd := m.setStatus("Selection inverted")
 	return m, cmd
+}
+
+// pruneSelection drops selected paths that no longer exist, once a load
+// is in, so the count leaves them out and operations on the selection
+// don't fail on them. What the listing holds is there; anything else, which
+// may be hidden or in another folder, is looked up, and kept unless it is
+// gone.
+func (t *Tab) pruneSelection() {
+	if len(t.Selected) == 0 {
+		return
+	}
+	listed := make(map[string]bool, len(t.Files))
+	for _, f := range t.Files {
+		listed[f.Path] = true
+	}
+	for path := range t.Selected {
+		if listed[path] {
+			continue
+		}
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			delete(t.Selected, path)
+		}
+	}
 }
 
 // clearSelection deselects everything in the current tab
@@ -105,11 +130,12 @@ func (m Model) yank(mode string) (tea.Model, tea.Cmd) {
 	m.clipboardMode = mode
 	clear(m.tab().Selected)
 
+	// Not "Copied: ...", which is what a finished paste says
 	verb := "Copied"
 	if mode == "cut" {
 		verb = "Cut"
 	}
-	cmd := m.setStatus(fmt.Sprintf("%s: %s", verb, describe(paths)))
+	cmd := m.setStatus(fmt.Sprintf("%s to clipboard: %s", verb, describe(paths)))
 	return m, cmd
 }
 
@@ -141,7 +167,8 @@ func (m Model) startPaste() (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	conflicts, err := m.checkPaste(m.tab().CurrentPath)
+	dir := m.tab().CurrentPath
+	conflicts, err := m.checkPaste(dir)
 	if err != nil {
 		// Refuse up front rather than offering to overwrite a source with itself
 		cmd := m.setStatus(fmt.Sprintf("Can't paste: %v", err))
@@ -149,12 +176,37 @@ func (m Model) startPaste() (tea.Model, tea.Cmd) {
 	}
 	if len(conflicts) > 0 {
 		m.pending = conflicts
+		m.pasteDir = dir
 		m.confirmAction = "paste"
 		m.mode = ModeConfirm
 		return m, nil
 	}
-	cmd := m.executePaste()
+	cmd := m.executePaste(dir)
 	return m, cmd
+}
+
+// confirmPaste carries out the paste the overwrite dialog asked about, if
+// it is still that paste. The dialog stays open while the tab moves on: a
+// load lands, or the watcher finds the folder deleted and goes up, and
+// other names can be taken meanwhile. Pasting into whatever is shown now,
+// or over names nobody was asked about, could overwrite anything.
+func (m *Model) confirmPaste() tea.Cmd {
+	dir, asked := m.pasteDir, m.pending
+	m.pasteDir, m.pending = "", nil
+	why := ""
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		why = filepath.Base(dir) + " is gone"
+	} else if m.tab().CurrentPath != dir {
+		why = "The folder shown changed"
+	} else if conflicts, err := m.checkPaste(dir); err != nil {
+		return m.setStatus(fmt.Sprintf("Can't paste: %v", err))
+	} else if !slices.Equal(conflicts, asked) {
+		why = "What the paste would overwrite changed"
+	}
+	if why != "" {
+		return m.setStatus(why + ", so nothing was pasted")
+	}
+	return m.executePaste(dir)
 }
 
 // nameKey folds a file name the way filesystems that ignore case and
@@ -210,11 +262,9 @@ func (m *Model) executeDelete() tea.Cmd {
 	})
 }
 
-// executePaste copies or moves the clipboard into the current directory,
-// in the background
-func (m *Model) executePaste() tea.Cmd {
+// executePaste copies or moves the clipboard into dir, in the background
+func (m *Model) executePaste(dir string) tea.Cmd {
 	srcs := append([]string(nil), m.clipboard...)
-	dir := m.tab().CurrentPath
 	mode := m.clipboardMode
 	m.pending = nil
 
@@ -229,6 +279,7 @@ func (m *Model) executePaste() tea.Cmd {
 		}
 		undo := &undoEntry{label: label + describe(srcs)}
 		var made []os.FileInfo // What this paste has put in dir so far
+		var moved []fs.RenamePair
 		op, _ := runBatch(t, mode, verb, srcs, func(src string) error {
 			dst := filepath.Join(dir, filepath.Base(src))
 			// Something this paste has just put here under another spelling
@@ -250,6 +301,11 @@ func (m *Model) executePaste() tea.Cmd {
 			} else {
 				err = t.Copy(src, dst)
 			}
+			// Tabs, bookmarks and selections in what moved follow it there,
+			// as they do after a rename
+			if mode == "cut" && err == nil {
+				moved = append(moved, fs.RenamePair{From: src, To: dst})
+			}
 			switch {
 			case replaced:
 				if err == nil {
@@ -265,7 +321,7 @@ func (m *Model) executePaste() tea.Cmd {
 			}
 			return err
 		})
-		return jobDoneMsg{op: op, undo: undo}
+		return jobDoneMsg{op: op, undo: undo, moved: moved}
 	})
 }
 
@@ -313,15 +369,17 @@ func (m *Model) pruneClipboard() {
 
 // deleteMessage describes what the pending delete will remove. Items
 // outside the current folder, which a plugin can select, are shown by
-// their full path and counted, so nothing is deleted unseen.
+// their full path and counted, so nothing is deleted unseen. Names are
+// made printable here, as the dialog splits the message into lines: a name
+// with a newline in it would otherwise add lines of its own.
 func (m Model) deleteMessage() string {
 	dir := m.tab().CurrentPath
 	if len(m.pending) == 1 {
 		path := m.pending[0]
-		name := filepath.Base(path)
+		name := utils.Printable(filepath.Base(path))
 		where := ""
 		if filepath.Dir(path) != dir {
-			where = "\n\nIt is in another folder:\n" + utils.TruncateLeft(path, pathWidth)
+			where = "\n\nIt is in another folder:\n" + utils.TruncateLeft(utils.Printable(path), pathWidth)
 		}
 		info, err := os.Lstat(path)
 		switch {
@@ -365,23 +423,24 @@ func listPaths(paths []string, dir string, limit int) string {
 			break
 		}
 		if filepath.Dir(p) == dir {
-			lines = append(lines, filepath.Base(p))
+			lines = append(lines, utils.Printable(filepath.Base(p)))
 		} else {
-			lines = append(lines, utils.TruncateLeft(p, pathWidth))
+			lines = append(lines, utils.TruncateLeft(utils.Printable(p), pathWidth))
 		}
 	}
 	return strings.Join(lines, "\n")
 }
 
-// pasteMessage describes what the pending paste will overwrite
+// pasteMessage describes what the pending paste will overwrite, with the
+// names made printable, as deleteMessage does
 func (m Model) pasteMessage() string {
 	if len(m.pending) == 1 {
-		return fmt.Sprintf("'%s' already exists. Overwrite?", m.pending[0])
+		return fmt.Sprintf("'%s' already exists. Overwrite?", utils.Printable(m.pending[0]))
 	}
 	return fmt.Sprintf("%d items already exist here. Overwrite them?\n\n%s", len(m.pending), listNames(m.pending, 5))
 }
 
-// listNames lists up to limit base names, one per line
+// listNames lists up to limit base names, one per line, made printable
 func listNames(paths []string, limit int) string {
 	names := make([]string, 0, limit+1)
 	for i, p := range paths {
@@ -389,7 +448,7 @@ func listNames(paths []string, limit int) string {
 			names = append(names, fmt.Sprintf("…and %d more", len(paths)-limit))
 			break
 		}
-		names = append(names, filepath.Base(p))
+		names = append(names, utils.Printable(filepath.Base(p)))
 	}
 	return strings.Join(names, "\n")
 }

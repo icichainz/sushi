@@ -197,13 +197,15 @@ func (t *Task) addToZip(zw *zip.Writer, path, name string, info os.FileInfo) err
 // outside, or would once what it names is created, is removed. No file is
 // replaced: an archive with an entry twice fails. Zip archives are checked
 // in full before anything is written; tar archives can only be read in
-// order, so extraction stops at the first bad entry. If it fails or is
-// cancelled, what was extracted until then stays. Modes come from the
-// archive, without special bits and masked with the umask like those of
-// any new file.
+// order, so extraction stops at the first bad entry, and dir, with what
+// was written into it, is removed. If it fails otherwise or is cancelled,
+// what was extracted until then stays. Modes come from the archive,
+// without special bits and masked with the umask like those of any new
+// file.
 //
 // An error from before dir was created, say because something took its
-// name, matches ErrNotCreated: then nothing at dir is the extraction's.
+// name, or from a refused extraction whose dir was removed, matches
+// ErrNotCreated: then nothing at dir is the extraction's.
 func (t *Task) Extract(path, dir string) error {
 	x := newExtractor(t)
 	var err error
@@ -218,6 +220,14 @@ func (t *Task) Extract(path, dir string) error {
 		err = fmt.Errorf("%s is not a zip, tar or tar.gz archive", filepath.Base(path))
 	}
 	if err != nil && !x.made {
+		return notCreated{err}
+	}
+	// A tar archive refused part way has had some of it written. None of
+	// it is to be trusted, and the folder is new, so it all goes.
+	if r := (refusal{}); err != nil && !x.finished && errors.As(err, &r) {
+		if rerr := x.removeRefused(dir); rerr != nil {
+			return fmt.Errorf("%w; what was extracted before it is left in %s: %v", err, filepath.Base(dir), rerr)
+		}
 		return notCreated{err}
 	}
 	return err
@@ -380,11 +390,13 @@ func (c *countingReader) Read(p []byte) (int, error) {
 // extractor writes an archive's entries into a new folder, always through
 // an os.Root opened on it
 type extractor struct {
-	t     *Task
-	root  *os.Root
-	made  bool // The folder was created
-	links []pendingLink
-	dirs  []pendingDir
+	t        *Task
+	root     *os.Root
+	made     bool        // The folder was created
+	folder   os.FileInfo // The folder, to know it again
+	finished bool        // Every entry was written; only the links are left
+	links    []pendingLink
+	dirs     []pendingDir
 
 	// What the archive has held so far, by path below the root, so entries
 	// that lead through its symlinks are refused in whatever order they come
@@ -422,7 +434,29 @@ func (x *extractor) open(dir string) error {
 		return err
 	}
 	x.root = root
+	x.folder, _ = root.Stat(".")
 	return nil
+}
+
+// refusal is an entry that extraction refuses, as unsafe or ambiguous
+type refusal struct{ error }
+
+func (r refusal) Unwrap() error { return r.error }
+
+// refuse makes an error that says an entry was refused
+func refuse(format string, args ...any) error {
+	return refusal{fmt.Errorf(format, args...)}
+}
+
+// removeRefused removes the folder of an extraction refused part way, if
+// it is still the one the extraction made. Nothing but what the
+// extraction wrote can be in it, and no symlinks, which are made last.
+func (x *extractor) removeRefused(dir string) error {
+	info, err := os.Lstat(dir)
+	if err != nil || x.folder == nil || !os.SameFile(info, x.folder) {
+		return fmt.Errorf("%s is no longer the folder the extraction made", filepath.Base(dir))
+	}
+	return os.RemoveAll(dir)
 }
 
 func (x *extractor) close() {
@@ -436,7 +470,7 @@ func (x *extractor) close() {
 func local(name string) (string, error) {
 	rel := filepath.FromSlash(strings.TrimSuffix(name, "/"))
 	if !filepath.IsLocal(rel) {
-		return "", fmt.Errorf("unsafe path in archive: %q", name)
+		return "", refuse("unsafe path in archive: %q", name)
 	}
 	return filepath.Clean(rel), nil
 }
@@ -451,14 +485,14 @@ func (x *extractor) admit(name string, link, dir bool) (string, error) {
 	}
 	for p := filepath.Dir(rel); p != "."; p = filepath.Dir(p) {
 		if x.symlinks[p] {
-			return "", fmt.Errorf("unsafe path in archive: %q is inside the symlink %q", name, filepath.ToSlash(p))
+			return "", refuse("unsafe path in archive: %q is inside the symlink %q", name, filepath.ToSlash(p))
 		}
 	}
 	switch {
 	case link && (rel == "." || x.parents[rel]):
-		return "", fmt.Errorf("unsafe path in archive: the archive has entries inside the symlink %q", name)
+		return "", refuse("unsafe path in archive: the archive has entries inside the symlink %q", name)
 	case link && (x.symlinks[rel] || x.names[rel]), !link && x.symlinks[rel]:
-		return "", fmt.Errorf("%s is in the archive twice", name)
+		return "", refuse("%s is in the archive twice", name)
 	case link:
 		x.symlinks[rel] = true
 	default:
@@ -479,7 +513,7 @@ func (x *extractor) admit(name string, link, dir bool) (string, error) {
 func checkLinkTarget(name, target string) error {
 	rel := filepath.Join(filepath.Dir(filepath.FromSlash(name)), filepath.FromSlash(target))
 	if rooted(target) || !filepath.IsLocal(rel) {
-		return fmt.Errorf("symlink %s points outside the archive", name)
+		return refuse("symlink %s points outside the archive", name)
 	}
 	return nil
 }
@@ -518,7 +552,7 @@ func (x *extractor) file(name string, mode os.FileMode, mtime time.Time, r io.Re
 	}
 	f, err := x.root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("%s is in the archive twice", name)
+		return refuse("%s is in the archive twice", name)
 	}
 	if err != nil {
 		return err
@@ -559,7 +593,7 @@ func (x *extractor) hardlink(name, target string) error {
 		return err
 	}
 	if info, err := x.root.Lstat(src); err != nil || !info.Mode().IsRegular() {
-		return fmt.Errorf("%s links to %s, which isn't a file in the archive", name, target)
+		return refuse("%s links to %s, which isn't a file in the archive", name, target)
 	}
 	if err := x.root.MkdirAll(filepath.Dir(rel), 0700); err != nil {
 		return err
@@ -575,6 +609,7 @@ func (x *extractor) hardlink(name, target string) error {
 // finish creates the symlinks, removing any that lead outside the root, and
 // sets the directories' modes and times
 func (x *extractor) finish() error {
+	x.finished = true
 	var firstErr error
 	fail := func(err error) {
 		if firstErr == nil {

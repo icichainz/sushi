@@ -144,7 +144,7 @@ func LoadTheme(name string, overrides map[string]string) (Theme, []string) {
 	}
 	theme, ok := themes[name]
 	if !ok {
-		warnings = append(warnings, fmt.Sprintf("unknown theme %q, using default", name))
+		warnings = append(warnings, fmt.Sprintf("theme: unknown value %q, using default", name))
 		name = "default"
 		theme = themes[name]
 	}

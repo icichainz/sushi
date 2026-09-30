@@ -398,19 +398,23 @@ func (m Model) renderFileList(width, height int, divider bool) []string {
 	}
 	c := listColumns(inner, files)
 
-	// Heading, with an arrow on the sorted column
+	// Heading, with an arrow on the sorted column. The type has no column,
+	// nor has the size or date once the list is too narrow for it, so
+	// then the name's heading says what the order is.
 	arrow := func(col string) string {
-		by := m.sortBy
-		if by == col || (col == "name" && by == "type") {
-			return " " + strings.TrimPrefix(m.sortLabel(), by+" ")
+		if m.sortBy == col {
+			return " " + strings.TrimPrefix(m.sortLabel(), m.sortBy+" ")
 		}
 		return ""
 	}
-	nameHead := "Name"
-	if m.sortBy == "type" {
-		nameHead = "Name (by type)"
+	nameHead := "Name" + arrow("name")
+	switch by := m.sortBy; {
+	case by == "type":
+		nameHead = "Name (by type)" + arrow("type")
+	case by == "size" && !c.size, by == "modified" && !c.date:
+		nameHead = "Name (" + m.sortLabel() + ")"
 	}
-	head := strings.Repeat(" ", 3+c.iconW+2) + utils.Fit(nameHead+arrow("name"), c.nameW)
+	head := strings.Repeat(" ", 3+c.iconW+2) + utils.Fit(nameHead, c.nameW)
 	if c.size {
 		head += utils.FitRight("Size"+arrow("size"), sizeW)
 	}
@@ -696,44 +700,74 @@ func (m Model) renderStatusBar() string {
 		text  string
 		style lipgloss.Style
 	}
-	var segs []segment
-	// First, so it stays when the rest is cut short
-	if m.job != nil {
-		segs = append(segs, segment{m.job.status(), bar.Foreground(t.Highlight).Bold(true)})
-	}
-	if m.mode == ModeSearch {
-		segs = append(segs, segment{fmt.Sprintf("%d of %d match", len(visible), len(tab.Files)), bar})
-	} else {
-		segs = append(segs,
-			segment{fmt.Sprintf("%d items", len(tab.Files)), bar},
-			segment{utils.HumanizeSize(tab.TotalSize), bar.Foreground(t.Muted)})
-	}
-	if n := len(tab.Selected); n > 0 {
-		segs = append(segs, segment{fmt.Sprintf("%d selected", n), bar.Foreground(t.Selected)})
-	}
-	if n := len(m.clipboard); n > 0 {
-		segs = append(segs, segment{fmt.Sprintf("clipboard: %s %d", m.clipboardMode, n), bar.Foreground(t.Muted)})
-	}
+	// The message and the running job's progress come first: they are what
+	// the bar is for, so the counts, selection and clipboard give way
+	var first, rest []segment
 	if m.statusMsg != "" {
 		style := bar.Foreground(t.Highlight)
 		if isProblem(m.statusMsg) {
 			style = bar.Foreground(t.Danger)
 		}
-		segs = append(segs, segment{m.statusMsg, style})
+		first = append(first, segment{m.statusMsg, style})
+	}
+	if m.job != nil {
+		first = append(first, segment{m.job.status(), bar.Foreground(t.Highlight).Bold(true)})
+	}
+	if m.mode == ModeSearch {
+		rest = append(rest, segment{fmt.Sprintf("%d of %d match", len(visible), len(tab.Files)), bar})
+	} else {
+		rest = append(rest,
+			segment{plural(len(tab.Files), "item"), bar},
+			segment{utils.HumanizeSize(tab.TotalSize), bar.Foreground(t.Muted)})
+	}
+	if n := len(tab.Selected); n > 0 {
+		rest = append(rest, segment{fmt.Sprintf("%d selected", n), bar.Foreground(t.Selected)})
+	}
+	if n := len(m.clipboard); n > 0 {
+		rest = append(rest, segment{fmt.Sprintf("clipboard: %s %d", m.clipboardMode, n), bar.Foreground(t.Muted)})
 	}
 
-	// The message is last, so it is what gets cut when space runs out.
-	// Messages quote names, errors and plugin output, so may hold anything.
+	// Messages quote names, errors and plugin output, so may hold anything
+	shown := func(s segment) string { return "  " + utils.Printable(s.text) }
+	widths := func(segs []segment) int {
+		w := 0
+		for _, s := range segs {
+			w += utils.Width(shown(s))
+		}
+		return w
+	}
 	room := m.width - utils.Width(badge) - utils.Width(right)
+	// Short of room, the progress drops its bar
+	if m.job != nil && widths(first) > room-1 {
+		first[len(first)-1].text = m.job.shortStatus()
+	}
+
 	var b strings.Builder
 	used := 0
-	for _, s := range segs {
-		text := utils.Truncate("  "+utils.Printable(s.text), room-used-1)
-		if utils.Width(text) < 5 {
-			break
+	// Cut short, a segment keeps a few characters besides the "..."
+	add := func(s segment, width int) {
+		text := utils.Truncate(shown(s), width)
+		if text != shown(s) && utils.Width(text) < 10 {
+			return
 		}
 		b.WriteString(s.style.Render(text))
 		used += utils.Width(text)
+	}
+	// A message too long for both is cut short, keeping room for the
+	// progress after it
+	for i, s := range first {
+		width := room - used - 1
+		if after := widths(first[i+1:]); width-after >= 20 {
+			width -= after
+		}
+		add(s, width)
+	}
+	// The rest, as far as each fits whole: "clipbo..." helps no one
+	for _, s := range rest {
+		if utils.Width(shown(s)) > room-used-1 {
+			break
+		}
+		add(s, room-used-1)
 	}
 	gap := max(room-used, 0)
 	line := badge + b.String() + bar.Render(strings.Repeat(" ", gap)) + bar.Foreground(t.Muted).Render(right)
