@@ -15,6 +15,7 @@ type Config struct {
 	ShowHidden     bool   `yaml:"show_hidden"`     // Show hidden files by default
 	PreviewEnabled bool   `yaml:"preview_enabled"` // Enable preview pane by default
 	PreviewWidth   int    `yaml:"preview_width"`   // Preview pane width percentage (1-80)
+	Mouse          bool   `yaml:"mouse"`           // Clicks and the wheel; off leaves the mouse to the terminal
 
 	// Behavior settings
 	ConfirmDelete bool   `yaml:"confirm_delete"` // Require confirmation for delete
@@ -38,6 +39,7 @@ func DefaultConfig() *Config {
 		ShowHidden:     false,
 		PreviewEnabled: true,
 		PreviewWidth:   50,
+		Mouse:          true,
 		ConfirmDelete:  true,
 		Opener:         "auto",
 		SortBy:         "name",

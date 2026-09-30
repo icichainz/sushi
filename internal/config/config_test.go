@@ -36,6 +36,21 @@ func TestLoadConfigReadsAndValidates(t *testing.T) {
 	}
 }
 
+func TestMouseSetting(t *testing.T) {
+	dir := useTempHome(t)
+	if !DefaultConfig().Mouse {
+		t.Fatal("the mouse should be on by default")
+	}
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("show_hidden: true\n"), 0644)
+	if !LoadConfig().Mouse {
+		t.Fatal("a config file without mouse: should keep the mouse on")
+	}
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("mouse: false\n"), 0644)
+	if LoadConfig().Mouse {
+		t.Fatal("mouse: false was ignored")
+	}
+}
+
 func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
 	useTempHome(t)
 	if cfg := LoadConfig(); !reflect.DeepEqual(cfg, DefaultConfig()) {
