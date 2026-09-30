@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
 
 	"github.com/icichainz/sushi/internal/plugins"
 	"gopkg.in/yaml.v3"
@@ -72,8 +75,10 @@ func getConfigPath() (string, error) {
 	return filepath.Join(configDir, "config.yaml"), nil
 }
 
-// LoadConfig loads the configuration from the config file
-// Returns default config if file doesn't exist or on error
+// LoadConfig loads the configuration from the config file. Without one it
+// returns the defaults. Problems with it, such as a file that can't be
+// read, a setting of the wrong kind or an unknown one, are noted in
+// Problems, and the rest of the file still applies.
 func LoadConfig() *Config {
 	cfg := DefaultConfig()
 
@@ -81,16 +86,24 @@ func LoadConfig() *Config {
 	if err != nil {
 		return cfg
 	}
+	name := filepath.Base(configPath)
 
 	data, err := os.ReadFile(configPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return cfg
+	}
 	if err != nil {
-		// File doesn't exist, return defaults
+		// There, but not readable: say so rather than quietly ignore it
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) {
+			err = pathErr.Err
+		}
+		cfg.Problems = []string{fmt.Sprintf("%s: failed to read it (%v), so the defaults are used", name, err)}
 		return cfg
 	}
 
 	// Parse YAML, keep defaults for any missing fields
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		name := filepath.Base(configPath)
 		var typeErr *yaml.TypeError
 		if !errors.As(err, &typeErr) {
 			// Unreadable: use the defaults, and say why
@@ -103,11 +116,86 @@ func LoadConfig() *Config {
 			cfg.Problems = append(cfg.Problems, name+": "+e)
 		}
 	}
+	// Misspelt settings are otherwise ignored without a word
+	cfg.Problems = append(cfg.Problems, unknownSettings(name, data)...)
 
 	// Validate and clamp values
 	cfg.validate()
 
 	return cfg
+}
+
+// unknownSettings describes the top-level settings in the YAML data that
+// Config doesn't have, as in "config.yaml: line 2: unknown setting
+// shw_hidden (did you mean show_hidden?)". The file is read a second time
+// for this, as a decoder told to refuse unknown fields would stop at the
+// first and lose the settings after it.
+func unknownSettings(name string, data []byte) []string {
+	var doc yaml.Node
+	if yaml.Unmarshal(data, &doc) != nil || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil
+	}
+	known := settingNames()
+	var problems []string
+	pairs := doc.Content[0].Content
+	for i := 0; i+1 < len(pairs); i += 2 {
+		key := pairs[i]
+		if slices.Contains(known, key.Value) {
+			continue
+		}
+		problem := fmt.Sprintf("%s: line %d: unknown setting %s", name, key.Line, key.Value)
+		if near := nearest(key.Value, known); near != "" {
+			problem += fmt.Sprintf(" (did you mean %s?)", near)
+		}
+		problems = append(problems, problem)
+	}
+	return problems
+}
+
+// settingNames lists the settings of the config file, as their yaml tags
+func settingNames() []string {
+	var names []string
+	t := reflect.TypeOf(Config{})
+	for i := 0; i < t.NumField(); i++ {
+		if tag, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ","); tag != "" && tag != "-" {
+			names = append(names, tag)
+		}
+	}
+	return names
+}
+
+// nearest returns the name among names that s is a typo of, one or two
+// letters off, or ""
+func nearest(s string, names []string) string {
+	best, bestDist := "", 3
+	for _, name := range names {
+		if d := editDistance(strings.ToLower(s), name); d < bestDist {
+			best, bestDist = name, d
+		}
+	}
+	return best
+}
+
+// editDistance counts the letters to insert, delete or change to turn a
+// into b
+func editDistance(a, b string) int {
+	x, y := []rune(a), []rune(b)
+	row := make([]int, len(y)+1)
+	for j := range row {
+		row[j] = j
+	}
+	for i := 1; i <= len(x); i++ {
+		diag := row[0]
+		row[0] = i
+		for j := 1; j <= len(y); j++ {
+			cost := 1
+			if x[i-1] == y[j-1] {
+				cost = 0
+			}
+			diag, row[j] = row[j], min(row[j]+1, row[j-1]+1, diag+cost)
+		}
+	}
+	return row[len(y)]
 }
 
 // Save writes the configuration to the config file
@@ -139,37 +227,28 @@ func (c *Config) Save() error {
 	return os.WriteFile(configPath, data, 0644)
 }
 
-// validate ensures config values are within acceptable ranges
+// validate replaces values out of range with ones that work, noting each
+// in Problems. An empty value is taken as unset. The theme is checked
+// where themes are, by ui.LoadTheme.
 func (c *Config) validate() {
-	// Validate icon_mode
-	switch c.IconMode {
-	case "nerd", "bootstrap", "ascii":
-		// Valid
-	default:
-		c.IconMode = "nerd"
+	choose := func(setting string, value *string, choices ...string) {
+		if *value == "" {
+			*value = choices[0]
+			return
+		}
+		if !slices.Contains(choices, *value) {
+			c.Problems = append(c.Problems, fmt.Sprintf("%s: unknown value %q, using %s", setting, *value, choices[0]))
+			*value = choices[0]
+		}
 	}
+	choose("icon_mode", &c.IconMode, "nerd", "bootstrap", "ascii")
+	choose("opener", &c.Opener, "auto", "editor", "system")
+	choose("sort_by", &c.SortBy, "name", "size", "modified", "type")
 
-	// Validate preview_width (1-80%)
-	if c.PreviewWidth < 1 {
-		c.PreviewWidth = 1
-	} else if c.PreviewWidth > 80 {
-		c.PreviewWidth = 80
-	}
-
-	// Validate opener
-	switch c.Opener {
-	case "auto", "editor", "system":
-		// Valid
-	default:
-		c.Opener = "auto"
-	}
-
-	// Validate sort_by
-	switch c.SortBy {
-	case "name", "size", "modified", "type":
-		// Valid
-	default:
-		c.SortBy = "name"
+	// A share of the screen, in percent
+	if width := min(max(c.PreviewWidth, 1), 80); width != c.PreviewWidth {
+		c.Problems = append(c.Problems, fmt.Sprintf("preview_width: invalid value %d, using %d (it is 1 to 80)", c.PreviewWidth, width))
+		c.PreviewWidth = width
 	}
 }
 

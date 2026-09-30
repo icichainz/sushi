@@ -991,7 +991,7 @@ func TestConfigProblemsShownAtStartup(t *testing.T) {
 
 	// Just one is shown as it is
 	cfg.SyntaxTheme, cfg.Problems = "", nil
-	if m = newTestModel(t, t.TempDir(), cfg); m.statusMsg != `unknown theme "neon", using default` {
+	if m = newTestModel(t, t.TempDir(), cfg); m.statusMsg != `theme: unknown value "neon", using default` {
 		t.Fatalf("statusMsg = %q", m.statusMsg)
 	}
 

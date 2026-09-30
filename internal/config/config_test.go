@@ -37,6 +37,91 @@ func TestLoadConfigReadsAndValidates(t *testing.T) {
 	}
 }
 
+func TestReplacedValuesAreReported(t *testing.T) {
+	dir := useTempHome(t)
+	yaml := "icon_mode: emoji\nsort_by: date\nopener: vim\npreview_width: 0\nshow_hidden: true\ntheme: neon\n"
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0644)
+
+	cfg := LoadConfig()
+	want := []string{
+		`icon_mode: unknown value "emoji", using nerd`,
+		`opener: unknown value "vim", using auto`,
+		`sort_by: unknown value "date", using name`,
+		`preview_width: invalid value 0, using 1 (it is 1 to 80)`,
+	}
+	if !reflect.DeepEqual(cfg.Problems, want) {
+		t.Fatalf("problems = %q, want %q", cfg.Problems, want)
+	}
+	if cfg.IconMode != "nerd" || cfg.SortBy != "name" || cfg.Opener != "auto" || cfg.PreviewWidth != 1 || !cfg.ShowHidden {
+		t.Fatalf("got %+v", cfg)
+	}
+	// The theme is left for the app to check against the themes it has
+	if cfg.Theme != "neon" {
+		t.Fatalf("theme = %q", cfg.Theme)
+	}
+
+	// Values that are fine, or left empty, aren't problems
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("icon_mode: ascii\nsort_by: \"\"\npreview_width: 80\n"), 0644)
+	if cfg := LoadConfig(); len(cfg.Problems) != 0 || cfg.IconMode != "ascii" || cfg.SortBy != "name" {
+		t.Fatalf("problems = %q, icon_mode=%s sort_by=%s", cfg.Problems, cfg.IconMode, cfg.SortBy)
+	}
+}
+
+func TestUnknownSettingsAreReported(t *testing.T) {
+	dir := useTempHome(t)
+	yaml := "shw_hidden: true\nsort_by: size\ncolour:\n  accent: red\nwhatever: 1\n"
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0644)
+
+	// Reported by line, with the setting meant if it is a typo, and the
+	// settings after them still apply
+	cfg := LoadConfig()
+	want := []string{
+		"config.yaml: line 1: unknown setting shw_hidden (did you mean show_hidden?)",
+		"config.yaml: line 3: unknown setting colour (did you mean colors?)",
+		"config.yaml: line 5: unknown setting whatever",
+	}
+	if !reflect.DeepEqual(cfg.Problems, want) {
+		t.Fatalf("problems = %q, want %q", cfg.Problems, want)
+	}
+	if cfg.ShowHidden || cfg.SortBy != "size" {
+		t.Fatalf("show_hidden=%v sort_by=%s", cfg.ShowHidden, cfg.SortBy)
+	}
+
+	// Every setting the file can have is known
+	for _, name := range settingNames() {
+		if strings.Contains(name, " ") || name == "problems" {
+			t.Errorf("setting %q", name)
+		}
+	}
+	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("keys:\n  up: k\nplugins: []\ncolors: {}\nwatch: false\n"), 0644)
+	if cfg := LoadConfig(); len(cfg.Problems) != 0 {
+		t.Fatalf("problems = %q", cfg.Problems)
+	}
+}
+
+func TestUnreadableConfigIsReported(t *testing.T) {
+	dir := useTempHome(t)
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte("show_hidden: true\n"), 0644)
+	os.Chmod(path, 0)
+	t.Cleanup(func() { os.Chmod(path, 0644) })
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("the file can be read without permission here, as by root")
+	}
+
+	cfg := LoadConfig()
+	if len(cfg.Problems) != 1 || !strings.Contains(cfg.Problems[0], "config.yaml: failed to read it") || cfg.ShowHidden {
+		t.Fatalf("problems = %q, show_hidden = %v; want the defaults, and why", cfg.Problems, cfg.ShowHidden)
+	}
+
+	// A folder in its place can't be read either
+	os.Remove(path)
+	os.Mkdir(path, 0755)
+	if cfg := LoadConfig(); len(cfg.Problems) != 1 || !strings.Contains(cfg.Problems[0], "failed to read it") {
+		t.Fatalf("problems = %q", cfg.Problems)
+	}
+}
+
 func TestMouseSetting(t *testing.T) {
 	dir := useTempHome(t)
 	if !DefaultConfig().Mouse {
