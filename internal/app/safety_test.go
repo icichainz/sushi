@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,6 +243,48 @@ func TestUndoStillRemovesACopyWhoseOriginalIsThere(t *testing.T) {
 	m = undoNow(t, m)
 	if fs.Exists(filepath.Join(backup, "notes.txt")) || m.statusMsg != "Undone: copy notes.txt" {
 		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+}
+
+func TestCancelledUndoCarriesOnWhereItStopped(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "album")
+	os.Mkdir(src, 0755)
+	for _, name := range []string{"a.jpg", "b.jpg", "c.jpg"} {
+		writeTestFile(t, filepath.Join(src, name), name)
+	}
+	copied := filepath.Join(root, "backup")
+	if err := fs.CopyPath(src, copied); err != nil {
+		t.Fatal(err)
+	}
+	e := undoEntry{label: "copy album"}
+	e.addCopied(copied, src)
+
+	// Cancelled once the undo has deleted one file of the copy
+	ctx, cancel := context.WithCancel(context.Background())
+	task := fs.NewTask(ctx, 0, func(p fs.Progress) {
+		if p.Files > 0 {
+			cancel()
+		}
+	})
+	done := undoWork(task, e, false)
+	if !strings.Contains(done.op.message, "undoing again carries on") {
+		t.Fatalf("message = %q, err = %v", done.op.message, done.op.err)
+	}
+	if done.undo == nil || len(done.undo.steps) != 1 {
+		t.Fatal("the step that was running was dropped, though the status says undoing again carries on")
+	}
+	if left := dirNames(t, copied); len(left) != 2 {
+		t.Fatalf("left %v, want the cancelled undo to have removed one file", left)
+	}
+
+	// Undoing again carries on, although the copy is not as it was made
+	done = undoWork(fs.NewTask(context.Background(), 0, nil), *done.undo, false)
+	if done.op.err != nil || fs.Exists(copied) {
+		t.Fatalf("second undo: %v, %q", done.op.err, done.op.message)
+	}
+	if len(dirNames(t, src)) != 3 {
+		t.Fatal("the original was touched")
 	}
 }
 

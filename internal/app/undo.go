@@ -142,6 +142,18 @@ func undoWork(t *fs.Task, e undoEntry, useTrash bool) jobDoneMsg {
 			continue
 		}
 		moved, err := s.undo(t, useTrash)
+		if err != nil && t.Err() != nil {
+			// Cancelled part way: kept, so undoing again carries on. A
+			// removal cut short has deleted some of what it removes, so it
+			// is stamped again as it now is, or it would look changed
+			if s.kind == stepRemove {
+				if stamp, err := fs.TakeStamp(s.path); err == nil {
+					s.stamp = stamp
+				}
+			}
+			kept = append(kept, s)
+			continue
+		}
 		if err != nil {
 			failures++
 			if errors.Is(err, os.ErrExist) {
