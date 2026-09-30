@@ -135,42 +135,15 @@ func (m Model) renderTabBar() string {
 	active := lipgloss.NewStyle().Background(t.Accent).Foreground(t.TabActiveFg).Bold(true)
 	inactive := lipgloss.NewStyle().Background(t.TabInactiveBg).Foreground(t.TabInactiveFg)
 
-	labels := make([]string, len(m.tabs))
-	for i, tab := range m.tabs {
-		name := filepath.Base(tab.CurrentPath)
-		labels[i] = fmt.Sprintf(" %d %s ", i+1, utils.Truncate(name, 15))
-	}
-
-	// Skip leading tabs when needed so the active one is always visible
-	start := 0
-	for start < m.activeTabIdx {
-		w := 0
-		for _, label := range labels[start : m.activeTabIdx+1] {
-			w += utils.Width(label)
-		}
-		if w <= m.width {
-			break
-		}
-		start++
-	}
-
 	var b strings.Builder
 	used := 0
-	for i := start; i < len(labels); i++ {
-		label := labels[i]
-		if i == start {
-			label = utils.Clip(label, m.width)
-		}
-		w := utils.Width(label)
-		if used+w > m.width {
-			break
-		}
-		if i == m.activeTabIdx {
-			b.WriteString(active.Render(label))
+	for _, span := range m.tabSpans() {
+		if span.index == m.activeTabIdx {
+			b.WriteString(active.Render(span.label))
 		} else {
-			b.WriteString(inactive.Render(label))
+			b.WriteString(inactive.Render(span.label))
 		}
-		used += w
+		used += span.width
 	}
 
 	right := "P run  b bookmarks "
@@ -289,14 +262,8 @@ func (m Model) renderParent(width, height int) []string {
 	out := make([]string, 0, height)
 	out = append(out, utils.Fit(" "+m.fg(t.Faint).Render(utils.Truncate(name, width-2)), width))
 
-	here := 0
-	for i, f := range tab.ParentFiles {
-		if f.Path == tab.CurrentPath {
-			here = i
-		}
-	}
 	rows := height - 1
-	start := window(here, len(tab.ParentFiles), rows)
+	start := m.parentStart(rows)
 	for i := start; i < start+rows; i++ {
 		if i >= len(tab.ParentFiles) {
 			out = append(out, strings.Repeat(" ", width))
@@ -415,13 +382,7 @@ func (m Model) renderFileList(width, height int, divider bool) []string {
 		return out
 	}
 
-	cursorPos := 0
-	for i, idx := range visible {
-		if idx == tab.Cursor {
-			cursorPos = i
-		}
-	}
-	start := window(cursorPos, len(visible), rows)
+	start := m.listStart(visible, rows)
 	renaming := m.mode == ModeInput && m.prompt.action == promptRename
 	for i := start; i < start+rows; i++ {
 		if i >= len(visible) {
@@ -829,12 +790,8 @@ func (m Model) withDialog(lines, box []string) []string {
 		return lines
 	}
 	out := append(m.dim(lines[:body]), lines[body:]...)
-	if len(box) > body {
-		box = box[:body]
-	}
-	x := max((m.width-utils.Width(box[0]))/2, 0)
-	y := max((body-len(box))/2, 0)
-	return m.place(out, box, x, y)
+	x, y, shown := m.dialogFrame(box)
+	return m.place(out, shown, x, y)
 }
 
 // dialog builds a bordered box: a colored title bar, the body, and a footer
