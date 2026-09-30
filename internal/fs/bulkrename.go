@@ -88,7 +88,7 @@ func RenameAll(pairs []RenamePair) error {
 	}
 
 	for _, p := range pairs {
-		tmp := tempName(filepath.Dir(p.From))
+		tmp := tempName(filepath.Dir(p.From), ".sushi-rename-")
 		if err := os.Rename(p.From, tmp); err != nil {
 			rollback(0)
 			return fmt.Errorf("cannot rename %s: %w", filepath.Base(p.From), err)
@@ -108,10 +108,10 @@ func RenameAll(pairs []RenamePair) error {
 	return nil
 }
 
-// tempName returns an unused hidden name in dir
-func tempName(dir string) string {
+// tempName returns an unused hidden name in dir, starting with prefix
+func tempName(dir, prefix string) string {
 	for {
-		path := filepath.Join(dir, fmt.Sprintf(".sushi-rename-%016x", rand.Uint64()))
+		path := filepath.Join(dir, fmt.Sprintf("%s%016x", prefix, rand.Uint64()))
 		if !Exists(path) {
 			return path
 		}

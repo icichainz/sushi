@@ -62,6 +62,43 @@ func TestPluginSelectedLinkWithSlashDeletesOnlyTheLink(t *testing.T) {
 	}
 }
 
+func TestPasteOverALinkedFolderLeavesItsTargetAlone(t *testing.T) {
+	for _, mode := range []string{"c", "x"} {
+		root := t.TempDir()
+		src := filepath.Join(root, "src")
+		os.MkdirAll(filepath.Join(src, "photos"), 0755)
+		writeTestFile(t, filepath.Join(src, "photos", "beach.jpg"), "sand")
+		elsewhere := filepath.Join(root, "elsewhere")
+		os.Mkdir(elsewhere, 0755)
+		writeTestFile(t, filepath.Join(elsewhere, "mine.txt"), "untouched")
+		dst := filepath.Join(root, "dst")
+		os.Mkdir(dst, 0755)
+		symlinkOrSkip(t, elsewhere, filepath.Join(dst, "photos"))
+
+		// dst/photos is a link to elsewhere/: pasting used to copy into
+		// elsewhere/ and, for a cut, then delete the source
+		m := newTestModel(t, src, nil)
+		m, _ = press(t, m, mode)
+		m.tab().CurrentPath = dst
+		m, _ = press(t, m, "v")
+		if m.mode != ModeConfirm {
+			t.Fatalf("%s: pasting over the link should ask first", mode)
+		}
+		m, cmd := press(t, m, "y")
+		m = drain(t, m, cmd)
+
+		if got := dirNames(t, elsewhere); len(got) != 1 || got[0] != "mine.txt" {
+			t.Fatalf("%s: the paste wrote into the link's target: %v (%q)", mode, got, m.statusMsg)
+		}
+		if readTestFile(t, filepath.Join(dst, "photos", "beach.jpg")) != "sand" {
+			t.Fatalf("%s: the paste isn't where it was asked to go: %q", mode, m.statusMsg)
+		}
+		if moved := !fs.Exists(filepath.Join(src, "photos")); moved != (mode == "x") {
+			t.Fatalf("%s: source moved = %v", mode, moved)
+		}
+	}
+}
+
 func TestTargetsAreCleaned(t *testing.T) {
 	dir := t.TempDir()
 	m := newTestModel(t, dir, nil)

@@ -118,11 +118,13 @@ func (t *Task) count(bytes bool, paths []string) error {
 	return nil
 }
 
-// Copy copies src to dst. A file at dst is replaced only once the copy is
-// complete, and a directory at dst is merged into. Symlinks are copied as
-// links, and modes and modification times are kept. If the task is
-// cancelled, the file being copied is removed, files already copied stay,
-// and the error is the context's.
+// Copy copies src to dst. A file or symlink at dst is replaced only once
+// the copy is complete, and a directory at dst is merged into; a symlink
+// where a directory is copied is replaced, never followed. Anything that
+// turns up at dst while the copy runs is kept, and the copy of that entry
+// fails. Symlinks are copied as links, and modes and modification times
+// are kept. If the task is cancelled, the file being copied is removed,
+// files already copied stay, and the error is the context's.
 func (t *Task) Copy(src, dst string) error {
 	src, dst = filepath.Clean(src), filepath.Clean(dst)
 	if err := CheckTransfer(src, dst); err != nil {
@@ -131,7 +133,8 @@ func (t *Task) Copy(src, dst string) error {
 	return t.copyPath(src, dst)
 }
 
-// copyPath does the recursive copy once CheckTransfer has passed
+// copyPath does the recursive copy once CheckTransfer has passed. What is
+// at dst now may be replaced; see Copy.
 func (t *Task) copyPath(src, dst string) error {
 	if err := t.ctx.Err(); err != nil {
 		return err
@@ -140,14 +143,21 @@ func (t *Task) copyPath(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("cannot access source: %w", err)
 	}
+	_, dstErr := os.Lstat(dst)
+	return t.copyEntry(src, dst, info, dstErr == nil)
+}
 
+// copyEntry copies src, which info describes, to dst. Unless replace is
+// set, dst must not exist, and nothing that turns up there is replaced.
+func (t *Task) copyEntry(src, dst string, info os.FileInfo, replace bool) error {
+	var err error
 	switch {
 	case info.Mode()&os.ModeSymlink != 0:
-		err = copySymlink(src, dst)
+		err = copySymlink(src, dst, replace)
 	case info.IsDir():
 		return t.copyDir(src, dst, info)
 	case info.Mode().IsRegular():
-		err = t.copyFile(src, dst, info)
+		err = t.copyFile(src, dst, info, replace)
 	default:
 		// Opening a named pipe would wait forever for a writer
 		return fmt.Errorf("%s is not a regular file", filepath.Base(src))
@@ -160,22 +170,40 @@ func (t *Task) copyPath(src, dst string) error {
 	return nil
 }
 
-// copyDir copies a directory's contents into dst, creating it if needed
+// copyDir copies a directory's contents into dst, creating it if needed. A
+// directory at dst is merged into. A symlink at dst is replaced by a new
+// directory rather than followed, which would put the copy, and for a move
+// the files it then deletes, wherever the link leads.
 func (t *Task) copyDir(src, dst string, info os.FileInfo) error {
-	created := false
-	if existing, err := os.Stat(dst); err == nil {
-		if !existing.IsDir() {
-			return fmt.Errorf("cannot create destination directory: %s is not a directory", filepath.Base(dst))
+	existing, err := os.Lstat(dst)
+	if err == nil && existing.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(dst); err != nil {
+			return fmt.Errorf("cannot replace the symlink %s: %w", filepath.Base(dst), err)
 		}
-	} else {
-		// Writable until the contents are in, whatever the source's mode
-		if err := os.Mkdir(dst, 0700); err != nil {
-			return fmt.Errorf("cannot create destination directory: %w", err)
-		}
-		created = true
+		err = os.ErrNotExist
 	}
+	switch {
+	case err == nil && !existing.IsDir():
+		return fmt.Errorf("cannot create destination directory: %s is not a directory", filepath.Base(dst))
+	case err == nil:
+		return t.copyInto(src, dst, info, false)
+	case !errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("cannot access destination: %w", err)
+	}
+	// Writable until the contents are in, whatever the source's mode
+	if err := os.Mkdir(dst, 0700); err != nil {
+		return fmt.Errorf("cannot create destination directory: %w", err)
+	}
+	return t.copyInto(src, dst, info, true)
+}
 
-	entries, err := os.ReadDir(src)
+// readDir lists a directory; tests replace it to fail as a bad disk would
+var readDir = os.ReadDir
+
+// copyInto copies the contents of the directory src into the directory
+// dst. If created is set, dst is new, and gets src's mode and time.
+func (t *Task) copyInto(src, dst string, info os.FileInfo, created bool) error {
+	entries, err := readDir(src)
 	if err != nil {
 		err = fmt.Errorf("cannot read source directory: %w", err)
 	}
@@ -199,8 +227,9 @@ func (t *Task) copyDir(src, dst string, info os.FileInfo) error {
 
 // copyFile copies a regular file, writing it beside dst and renaming it
 // into place, so a failed or cancelled copy never leaves a partial file
-// under dst's name or damages the file it would replace
-func (t *Task) copyFile(src, dst string, info os.FileInfo) error {
+// under dst's name or damages the file it would replace. Unless replace is
+// set, it is renamed into place only if nothing has taken the name.
+func (t *Task) copyFile(src, dst string, info os.FileInfo, replace bool) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("cannot open source: %w", err)
@@ -223,7 +252,7 @@ func (t *Task) copyFile(src, dst string, info os.FileInfo) error {
 		// Times before the mode, which may make the file read-only
 		os.Chtimes(tmp.Name(), time.Time{}, info.ModTime())
 		os.Chmod(tmp.Name(), info.Mode().Perm())
-		err = os.Rename(tmp.Name(), dst)
+		err = place(tmp.Name(), dst, replace)
 	}
 	if err != nil {
 		os.Remove(tmp.Name())
@@ -233,6 +262,20 @@ func (t *Task) copyFile(src, dst string, info os.FileInfo) error {
 		return fmt.Errorf("copy failed: %w", err)
 	}
 	return nil
+}
+
+// place renames tmp, a finished copy, to dst. It replaces what is at dst
+// only if replace is set; otherwise something that has turned up at dst is
+// kept, and the error says it is in the way.
+func place(tmp, dst string, replace bool) error {
+	if replace {
+		return os.Rename(tmp, dst)
+	}
+	err := renameNoReplace(tmp, dst)
+	if errors.Is(err, os.ErrExist) {
+		return inTheWay(dst)
+	}
+	return err
 }
 
 // copyData copies r to w a chunk at a time, stopping if the task is
@@ -264,23 +307,33 @@ func (t *Task) copyData(w io.Writer, r io.Reader, count bool) error {
 	}
 }
 
-// copySymlink recreates the symlink at src as dst, replacing any existing file
-func copySymlink(src, dst string) error {
+// copySymlink recreates the symlink at src as dst. It is made under a
+// hidden name and renamed into place, so whatever it replaces is there
+// until it is; unless replace is set, it replaces nothing.
+func copySymlink(src, dst string, replace bool) error {
 	target, err := os.Readlink(src)
 	if err != nil {
 		return fmt.Errorf("cannot read symlink: %w", err)
 	}
-
-	if info, err := os.Lstat(dst); err == nil && !info.IsDir() {
-		if err := os.Remove(dst); err != nil {
-			return fmt.Errorf("cannot replace destination: %w", err)
-		}
+	tmp := tempName(filepath.Dir(dst), partialPrefix)
+	if err := os.Symlink(target, tmp); err != nil {
+		return fmt.Errorf("cannot create symlink: %w", err)
 	}
-
-	if err := os.Symlink(target, dst); err != nil {
+	if err := place(tmp, dst, replace); err != nil {
+		os.Remove(tmp)
 		return fmt.Errorf("cannot create symlink: %w", err)
 	}
 	return nil
+}
+
+// renameForMove is Move's first try, a rename that replaces what is at dst
+// only if replace is set. Tests replace it to fail as renames do across
+// filesystems.
+var renameForMove = func(src, dst string, replace bool) error {
+	if replace {
+		return os.Rename(src, dst)
+	}
+	return renameNoReplace(src, dst)
 }
 
 // Move moves src to dst. On one filesystem this is a rename. Across
@@ -288,27 +341,64 @@ func copySymlink(src, dst string) error {
 // deleted; if the copy fails or is cancelled, what it created is removed
 // and src is left as it was. Deleting src can't be cancelled, so a move
 // never stops with the files only half in either place.
-func (t *Task) Move(src, dst string) error {
+//
+// What is at dst when the move starts is what the caller chose to
+// replace: a file, a symlink, which is never followed, or an empty
+// directory is replaced, and a directory with something in it is merged
+// into. Anything that turns up at dst after that is kept, and the move
+// fails.
+func (t *Task) Move(src, dst string) (err error) {
 	src, dst = filepath.Clean(src), filepath.Clean(dst)
 	if err := CheckTransfer(src, dst); err != nil {
 		return err
 	}
+	srcInfo, err := os.Lstat(src)
+	if err != nil {
+		return fmt.Errorf("cannot access source: %w", err)
+	}
+	existing, dstErr := os.Lstat(dst)
+	if dstErr != nil && !errors.Is(dstErr, os.ErrNotExist) {
+		return fmt.Errorf("cannot access destination: %w", dstErr)
+	}
+	replace := dstErr == nil
+	if replace && srcInfo.IsDir() && existing.Mode()&os.ModeSymlink != 0 {
+		// A directory can't be renamed over a link, and moving it into the
+		// link would put it wherever the link leads, so the link makes way,
+		// and is put back if the move fails
+		target, lerr := os.Readlink(dst)
+		if lerr == nil {
+			lerr = os.Remove(dst)
+		}
+		if lerr != nil {
+			return fmt.Errorf("cannot replace the symlink %s: %w", filepath.Base(dst), lerr)
+		}
+		defer func() {
+			if err != nil {
+				os.Symlink(target, dst)
+			}
+		}()
+		replace = false
+	}
 
-	err := os.Rename(src, dst)
+	err = renameForMove(src, dst, replace)
 	if err == nil {
 		return nil
 	}
-	existing, statErr := os.Stat(dst)
-	merge := statErr == nil && existing.IsDir()
+	merge := replace && srcInfo.IsDir() && existing.IsDir()
 	if !merge && !isCrossDevice(err) {
+		if !replace && errors.Is(err, os.ErrExist) {
+			return inTheWay(dst)
+		}
 		return err
 	}
 
 	t.Count(src)
-	if err := t.copyPath(src, dst); err != nil {
-		if statErr != nil {
-			os.RemoveAll(dst)
-		}
+	if merge || !srcInfo.IsDir() {
+		err = t.copyEntry(src, dst, srcInfo, replace)
+	} else {
+		err = t.copyAside(src, dst, srcInfo)
+	}
+	if err != nil {
 		if cerr := t.ctx.Err(); cerr != nil {
 			return cerr
 		}
@@ -318,6 +408,26 @@ func (t *Task) Move(src, dst string) error {
 		return fmt.Errorf("move failed during cleanup: %w", err)
 	}
 	return nil
+}
+
+// copyAside copies the directory src into a new hidden directory beside
+// dst and renames that to dst once it is complete, so the copy never
+// merges into, or replaces, something that turns up at dst meanwhile, and
+// a copy cut short is never left under dst's name. If it fails, the
+// hidden directory is removed.
+func (t *Task) copyAside(src, dst string, info os.FileInfo) error {
+	tmp, err := os.MkdirTemp(filepath.Dir(dst), partialPrefix+"*")
+	if err != nil {
+		return fmt.Errorf("cannot create destination directory: %w", err)
+	}
+	err = t.copyInto(src, tmp, info, true)
+	if err == nil {
+		err = place(tmp, dst, false)
+	}
+	if err != nil {
+		os.RemoveAll(tmp)
+	}
+	return err
 }
 
 // isCrossDevice reports whether a rename failed because the paths are on

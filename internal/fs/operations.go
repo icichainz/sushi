@@ -93,7 +93,7 @@ func CopyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("cannot open source: %w", err)
 	}
-	return background().copyFile(src, dst, info)
+	return background().copyFile(src, dst, info, Exists(dst))
 }
 
 // CopyPath copies a file or directory from src to dst.
