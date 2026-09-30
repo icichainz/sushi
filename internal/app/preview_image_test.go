@@ -34,8 +34,9 @@ func TestImagePreviewFollowsTheTerminalSize(t *testing.T) {
 	png.Encode(f, img)
 	f.Close()
 
-	// Startup leaves the decoding to Init, so it doesn't hold things up
-	m := newTestModel(t, dir, nil)
+	// Startup leaves the decoding to Init, so it doesn't hold things up.
+	// Watching is off, as its listener would keep Init's batch from draining.
+	m := newTestModel(t, dir, noWatch())
 	if !m.tab().Preview.Pending {
 		t.Fatal("the first preview decoded the image before startup finished")
 	}

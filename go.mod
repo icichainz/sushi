@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.10.1
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/muesli/termenv v0.16.0
 	golang.org/x/image v0.44.0
 	gopkg.in/yaml.v3 v3.0.1

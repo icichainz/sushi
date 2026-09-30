@@ -9,8 +9,26 @@ import (
 	"github.com/icichainz/sushi/internal/app"
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/fonts"
+	"github.com/icichainz/sushi/internal/shell"
 	"github.com/icichainz/sushi/internal/ui"
 )
+
+// optionalString is a flag that can be given alone or with a value, as in
+// --print-shell-wrapper or --print-shell-wrapper=zsh
+type optionalString struct {
+	set   bool
+	value string
+}
+
+func (o *optionalString) String() string   { return o.value }
+func (o *optionalString) IsBoolFlag() bool { return true }
+func (o *optionalString) Set(s string) error {
+	o.set = true
+	if s != "true" {
+		o.value = s
+	}
+	return nil
+}
 
 func main() {
 	// Parse command line flags
@@ -20,6 +38,9 @@ func main() {
 	fontName := flag.String("font", "", "Nerd Font to install with --install-font (see --list-fonts)")
 	listFonts := flag.Bool("list-fonts", false, "List available Nerd Fonts to install")
 	initConfig := flag.Bool("init-config", false, "Create default configuration file")
+	cwdFile := flag.String("cwd-file", "", "On quit, write the directory shown to this `file` (Q quits without writing)")
+	var wrapperShell optionalString
+	flag.Var(&wrapperShell, "print-shell-wrapper", "Print the sushicd shell function for zsh, bash or fish (default: $SHELL)")
 	showHelp := flag.Bool("help", false, "Show help message")
 	flag.BoolVar(showHelp, "h", false, "Show help message")
 
@@ -39,6 +60,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nConfiguration:\n")
 		fmt.Fprintf(os.Stderr, "  --init-config: Create default config file at ~/.config/sushi/config.yaml\n")
 		fmt.Fprintf(os.Stderr, "  Config file settings: icon_mode, preview_enabled, preview_width, etc.\n")
+		fmt.Fprintf(os.Stderr, "\nShell Integration:\n")
+		fmt.Fprintf(os.Stderr, "  A program can't change its shell's directory, so sushicd runs sushi and cds\n")
+		fmt.Fprintf(os.Stderr, "  to the directory it was showing when you quit with q (Q quits without).\n")
+		fmt.Fprintf(os.Stderr, "  eval \"$(sushi --print-shell-wrapper zsh)\"   # in ~/.zshrc (bash: ~/.bashrc)\n")
+		fmt.Fprintf(os.Stderr, "  sushi --print-shell-wrapper fish | source    # in ~/.config/fish/config.fish\n")
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  sushi              # Open current directory (Nerd Font icons)\n")
 		fmt.Fprintf(os.Stderr, "  sushi ~/projects   # Open specific directory\n")
@@ -51,6 +77,25 @@ func main() {
 
 	if *showHelp {
 		flag.Usage()
+		os.Exit(0)
+	}
+
+	// Print the shell function, for the shell named after the flag or in
+	// $SHELL
+	if wrapperShell.set {
+		name := wrapperShell.value
+		if name == "" && flag.NArg() > 0 {
+			name = flag.Arg(0)
+		}
+		if name == "" {
+			name = os.Getenv("SHELL")
+		}
+		script, err := shell.Wrapper(name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(script)
 		os.Exit(0)
 	}
 
@@ -171,7 +216,18 @@ func main() {
 		opts = append(opts, tea.WithMouseCellMotion())
 	}
 	p := tea.NewProgram(m, opts...)
-	if _, err := p.Run(); err != nil {
+	final, err := p.Run()
+	if model, ok := final.(app.Model); ok {
+		model.Close()
+		// For the shell function to cd to; see --print-shell-wrapper
+		if err == nil && *cwdFile != "" {
+			if err := model.WriteExitDir(*cwdFile); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	}
+	if err != nil {
 		fmt.Printf("Error running program: %v\n", err)
 		os.Exit(1)
 	}

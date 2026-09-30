@@ -90,6 +90,16 @@ type Model struct {
 	// Configuration
 	config     *config.Config
 	showHidden bool // Starts from config, toggled at runtime
+
+	// Sort order; starts from config, changed at runtime with s and S
+	sortBy      string
+	sortReverse bool
+	sortCursor  int // Row of the sort menu
+
+	find         finder      // Recursive search palette (f, F)
+	jump         previewJump // Preview line to show once a search result's file loads
+	watch        *dirWatcher // Reloads tabs when their directories change; nil when off
+	keepShellDir bool        // Quit with Q: don't tell the shell to change directory
 }
 
 // tab returns a pointer to the active tab
@@ -111,8 +121,8 @@ func (m *Model) tabByID(id int) *Tab {
 func (m *Model) scanOptions() fs.ScanOptions {
 	return fs.ScanOptions{
 		ShowHidden:  m.showHidden,
-		SortBy:      m.config.SortBy,
-		SortReverse: m.config.SortReverse,
+		SortBy:      m.sortBy,
+		SortReverse: m.sortReverse,
 	}
 }
 
@@ -149,6 +159,8 @@ const (
 	ModeConfirm
 	ModeBookmarks
 	ModePlugins
+	ModeSort
+	ModeFind
 )
 
 // KeyMap defines all key bindings
@@ -200,6 +212,12 @@ type KeyMap struct {
 	NextTab     key.Binding
 	PrevTab     key.Binding
 	CloseTab    key.Binding
+	Refresh     key.Binding
+	Sort        key.Binding
+	Reverse     key.Binding
+	Find        key.Binding
+	Grep        key.Binding
+	QuitNoCd    key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings
@@ -394,6 +412,30 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("ctrl+w"),
 			key.WithHelp("ctrl+w", "close tab"),
 		),
+		Refresh: key.NewBinding(
+			key.WithKeys("ctrl+r"),
+			key.WithHelp("ctrl+r", "refresh"),
+		),
+		Sort: key.NewBinding(
+			key.WithKeys("s"),
+			key.WithHelp("s", "sort by"),
+		),
+		Reverse: key.NewBinding(
+			key.WithKeys("S"),
+			key.WithHelp("S", "reverse sort"),
+		),
+		Find: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "find by name"),
+		),
+		Grep: key.NewBinding(
+			key.WithKeys("F"),
+			key.WithHelp("F", "find in files"),
+		),
+		QuitNoCd: key.NewBinding(
+			key.WithKeys("Q"),
+			key.WithHelp("Q", "quit without cd"),
+		),
 	}
 }
 
@@ -425,12 +467,17 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	}
 
 	m := Model{
-		theme:      theme,
-		keys:       DefaultKeyMap(),
-		mode:       ModeNormal,
-		bookmarks:  config.LoadBookmarks(),
-		config:     cfg,
-		showHidden: cfg.ShowHidden,
+		theme:       theme,
+		keys:        DefaultKeyMap(),
+		mode:        ModeNormal,
+		bookmarks:   config.LoadBookmarks(),
+		config:      cfg,
+		showHidden:  cfg.ShowHidden,
+		sortBy:      cfg.SortBy,
+		sortReverse: cfg.SortReverse,
+	}
+	if cfg.Watch {
+		m.watch = newDirWatcher()
 	}
 
 	// Create initial tab with config settings
@@ -463,8 +510,9 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{m.initCmd, m.watch.listen()}
 	if m.tab().Preview.Pending {
-		return tea.Batch(m.initCmd, m.previewCmd(m.tab()))
+		cmds = append(cmds, m.previewCmd(m.tab()))
 	}
-	return m.initCmd
+	return tea.Batch(cmds...)
 }

@@ -20,8 +20,9 @@ const statusDuration = 3 * time.Second
 // don't wait on real timers
 var statusTimer = tea.Tick
 
-// Update handles all state updates
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+// update handles the messages of the browser itself; Update, in
+// dispatch.go, routes the rest
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKeyPress(msg)
@@ -222,6 +223,14 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePluginMode(msg)
 	}
 
+	// Handle the sort menu and the recursive search palette
+	if m.mode == ModeSort {
+		return m.handleSortMode(msg)
+	}
+	if m.mode == ModeFind {
+		return m.handleFindMode(msg)
+	}
+
 	// Plugin shortcuts; bindPluginKeys keeps them clear of built-in keys
 	if i, ok := m.pluginKeys[msg.String()]; ok {
 		return m.runPlugin(m.plugins[i])
@@ -239,6 +248,25 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
+
+	case key.Matches(msg, m.keys.QuitNoCd):
+		m.keepShellDir = true
+		return m, tea.Quit
+
+	case key.Matches(msg, m.keys.Refresh):
+		return m.refresh()
+
+	case key.Matches(msg, m.keys.Sort):
+		return m.openSortMenu()
+
+	case key.Matches(msg, m.keys.Reverse):
+		return m.reverseSort()
+
+	case key.Matches(msg, m.keys.Find):
+		return m.openFind(false)
+
+	case key.Matches(msg, m.keys.Grep):
+		return m.openFind(true)
 
 	case key.Matches(msg, m.keys.Help):
 		m.mode = ModeHelp
@@ -581,6 +609,7 @@ func (m *Model) jumpToFirstMatch() tea.Cmd {
 		return nil
 	}
 	tab.Cursor = tab.SearchResults[0]
+	tab.SearchResultIdx = 0
 	return m.previewCmd(tab)
 }
 
@@ -604,6 +633,10 @@ func (m *Model) updateSearchResults() {
 	query := strings.ToLower(tab.SearchQuery)
 	for i, file := range tab.Files {
 		if fuzzyMatch(query, strings.ToLower(file.Name)) {
+			// A reload keeps the cursor, so ↑ and ↓ go on from where it is
+			if i == tab.Cursor {
+				tab.SearchResultIdx = len(tab.SearchResults)
+			}
 			tab.SearchResults = append(tab.SearchResults, i)
 			tab.SearchMatchSet[i] = struct{}{}
 		}

@@ -22,6 +22,7 @@ type Config struct {
 	Opener        string `yaml:"opener"`         // How Enter opens files: "auto", "editor", "system"
 	SortBy        string `yaml:"sort_by"`        // "name", "size", "modified", "type"
 	SortReverse   bool   `yaml:"sort_reverse"`   // Reverse sort order
+	Watch         bool   `yaml:"watch"`          // Reload when files change on disk
 
 	// d moves files to the trash, which ctrl+z can undo; D always deletes
 	DeleteToTrash bool `yaml:"delete_to_trash"`
@@ -48,6 +49,7 @@ func DefaultConfig() *Config {
 		Opener:         "auto",
 		SortBy:         "name",
 		SortReverse:    false,
+		Watch:          true,
 		Theme:          "default",
 	}
 }
