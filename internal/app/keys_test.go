@@ -156,10 +156,10 @@ func TestRemappedKeysTriggerActions(t *testing.T) {
 	if m, _ = press(t, m, "j"); m.tab().Cursor != 0 {
 		t.Fatal("j still moves down")
 	}
-	if m, _ = pressKey(t, m, tea.KeyCtrlN); m.tab().Cursor != 1 {
+	if m, _ = ctrl(t, m, tea.KeyCtrlN); m.tab().Cursor != 1 {
 		t.Fatal("ctrl+n doesn't move down")
 	}
-	if m, _ = pressKey(t, m, tea.KeyDown); m.tab().Cursor != 2 {
+	if m, _ = ctrl(t, m, tea.KeyDown); m.tab().Cursor != 2 {
 		t.Fatal("the down arrow doesn't move down")
 	}
 
@@ -173,7 +173,7 @@ func TestRemappedKeysTriggerActions(t *testing.T) {
 	if _, cmd := press(t, m, "q"); cmd != nil {
 		t.Fatal("q still quits")
 	}
-	if _, cmd := pressKey(t, m, tea.KeyCtrlQ); cmd == nil || cmd() != tea.Quit() {
+	if _, cmd := ctrl(t, m, tea.KeyCtrlQ); cmd == nil || cmd() != tea.Quit() {
 		t.Fatal("ctrl+q doesn't quit")
 	}
 
@@ -183,7 +183,7 @@ func TestRemappedKeysTriggerActions(t *testing.T) {
 	}
 	m, _ = press(t, m, "b")
 	m, _ = press(t, m, "j")
-	m, _ = pressKey(t, m, tea.KeyCtrlN)
+	m, _ = ctrl(t, m, tea.KeyCtrlN)
 	if m.bookmarkCursor != 1 {
 		t.Fatalf("bookmarkCursor = %d, want 1: j shouldn't move, ctrl+n should", m.bookmarkCursor)
 	}
@@ -338,7 +338,7 @@ func TestPanelAndHintsShowRemaps(t *testing.T) {
 	}
 
 	// ctrl+n scrolls it, j is no longer special, and the help key closes it
-	if m, _ = pressKey(t, m, tea.KeyCtrlN); m.mode != ModeHelp || m.helpScroll != 1 {
+	if m, _ = ctrl(t, m, tea.KeyCtrlN); m.mode != ModeHelp || m.helpScroll != 1 {
 		t.Fatalf("ctrl+n: mode=%v scroll=%d", m.mode, m.helpScroll)
 	}
 	if m, _ = press(t, m, "H"); m.mode != ModeNormal {
@@ -380,6 +380,44 @@ func TestPanelAndHintsShowRemaps(t *testing.T) {
 	}
 }
 
+func TestLabelsFollowRemaps(t *testing.T) {
+	m := withKeys(t, threeFiles(t), map[string]config.KeyList{
+		"plugins": {"alt+p"}, "bookmark": {"ctrl+b"}, "reverse": {"alt+s"}, "find": {"ctrl+f"}, "grep": {"alt+f"},
+	})
+	if m.statusMsg != "" {
+		t.Fatalf("unexpected problems: %s", m.statusMsg)
+	}
+	if bar := ansi.Strip(m.renderTabBar()); !strings.Contains(bar, "alt+p run  ctrl+b bookmarks") || strings.Contains(bar, "P run") {
+		t.Errorf("tab bar = %q", bar)
+	}
+	if menu := ansi.Strip(strings.Join(m.sortBox(), "\n")); !strings.Contains(menu, "alt+s reverses") || strings.Contains(menu, "S reverses") {
+		t.Errorf("sort menu:\n%s", menu)
+	}
+	// The search palette is marked with the key that opens it
+	for _, c := range []struct {
+		key  tea.KeyMsg
+		mark string
+	}{
+		{tea.KeyMsg{Type: tea.KeyCtrlF}, " ctrl+f "},
+		{tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}, Alt: true}, " alt+f "},
+	} {
+		palette, _ := send(t, m, c.key)
+		if box := ansi.Strip(strings.Join(palette.findBox(), "\n")); palette.mode != ModeFind || !strings.Contains(box, c.mark) {
+			t.Errorf("palette opened with %s:\n%s", c.key, box)
+		}
+		assertFills(t, "palette opened with "+c.key.String(), palette)
+	}
+
+	// Unbound, they are left out
+	m = withKeys(t, threeFiles(t), map[string]config.KeyList{"plugins": {}, "bookmark": {}, "reverse": {}})
+	if bar := ansi.Strip(m.renderTabBar()); strings.Contains(bar, "run") || strings.Contains(bar, "bookmarks") {
+		t.Errorf("tab bar = %q", bar)
+	}
+	if menu := ansi.Strip(strings.Join(m.sortBox(), "\n")); strings.Contains(menu, "reverses") {
+		t.Errorf("sort menu:\n%s", menu)
+	}
+}
+
 func TestQuitKeyInTheKeyPanel(t *testing.T) {
 	// q closes the panel rather than quitting; ctrl+c still quits
 	m := newTestModel(t, threeFiles(t), nil)
@@ -387,7 +425,7 @@ func TestQuitKeyInTheKeyPanel(t *testing.T) {
 	if closed, cmd := press(t, m, "q"); closed.mode != ModeNormal || cmd != nil {
 		t.Fatal("q should close the panel, and only that")
 	}
-	if _, cmd := pressKey(t, m, tea.KeyCtrlC); cmd == nil || cmd() != tea.Quit() {
+	if _, cmd := ctrl(t, m, tea.KeyCtrlC); cmd == nil || cmd() != tea.Quit() {
 		t.Fatal("ctrl+c should quit from the panel")
 	}
 
@@ -468,5 +506,87 @@ func TestWriteKeys(t *testing.T) {
 	}
 	if len(parsed.Keys) != len(again.actions()) {
 		t.Errorf("%d actions listed, want %d", len(parsed.Keys), len(again.actions()))
+	}
+}
+
+func TestCtrlCAlwaysQuits(t *testing.T) {
+	dir := threeFiles(t)
+
+	// From every mode, whatever the mode does with other keys
+	m := newTestModel(t, dir, nil)
+	m.bookmarks.Add("a", dir)
+	for _, keys := range []string{"", "/a", "r", "n", "D", "b", "P", "!", "s", "f", "Fx", "?"} {
+		screen := typeText(t, detach(m), keys)
+		if _, cmd := ctrl(t, screen, tea.KeyCtrlC); !quits(cmd) {
+			t.Errorf("ctrl+c after %q (mode %v) doesn't quit", keys, screen.mode)
+		}
+	}
+
+	// Quit on another key: ctrl+c still quits, and that is no problem
+	m = withKeys(t, dir, map[string]config.KeyList{"quit": {"ctrl+q"}})
+	if m.statusMsg != "" {
+		t.Fatalf("unexpected problems: %s", m.statusMsg)
+	}
+	for _, k := range []tea.KeyType{tea.KeyCtrlQ, tea.KeyCtrlC} {
+		if _, cmd := ctrl(t, m, k); !quits(cmd) {
+			t.Errorf("%v doesn't quit", k)
+		}
+	}
+
+	// No quit key at all is a problem, at startup and for --list-keys, but
+	// ctrl+c still quits
+	none := map[string]config.KeyList{"quit": {}, "quit_no_cd": {}, "close_tab": {}}
+	m = withKeys(t, dir, none)
+	wantProblems(t, m, "keys: invalid: quit has no key; only ctrl+c quits")
+	if !isProblem(m.statusMsg) {
+		t.Error("a missing quit key should be shown as a problem")
+	}
+	if _, cmd := ctrl(t, m, tea.KeyCtrlC); !quits(cmd) {
+		t.Error("ctrl+c doesn't quit without a quit key")
+	}
+	cfg := config.DefaultConfig()
+	cfg.Keys = none
+	var out strings.Builder
+	if problems, _ := WriteKeys(&out, cfg); len(problems) != 1 || !strings.Contains(problems[0], "quit has no key") {
+		t.Errorf("--list-keys problems = %q", problems)
+	}
+	if !strings.Contains(out.String(), "ctrl+c always quits") {
+		t.Errorf("--list-keys doesn't say ctrl+c always quits:\n%s", out.String())
+	}
+
+	// Another action can't take ctrl+c
+	m = withKeys(t, dir, map[string]config.KeyList{"copy": {"ctrl+c", "C"}})
+	wantProblems(t, m, `keys: conflict: "ctrl+c" for copy is ignored, as it always quits`)
+	if !slices.Equal(m.keys.Copy.Keys(), []string{"C"}) {
+		t.Errorf("copy = %q", m.keys.Copy.Keys())
+	}
+	if _, cmd := ctrl(t, m, tea.KeyCtrlC); !quits(cmd) {
+		t.Error("ctrl+c copies rather than quitting")
+	}
+
+	// Listed first, ctrl+c isn't the quit key the panel shows and closes
+	// with: q is. ctrl+c quits from the panel.
+	m = withKeys(t, dir, map[string]config.KeyList{"quit": {"ctrl+c", "q"}})
+	if h := keyHint("quit", m.keys.Quit); h.key != "q" {
+		t.Errorf("quit is labelled %q, want q", h.key)
+	}
+	m, _ = press(t, m, "?")
+	if closed, cmd := press(t, m, "q"); closed.mode != ModeNormal || cmd != nil {
+		t.Error("q should close the panel, and only that")
+	}
+	if _, cmd := ctrl(t, m, tea.KeyCtrlC); !quits(cmd) {
+		t.Error("ctrl+c should quit from the panel")
+	}
+
+	// While a job runs, ctrl+c does what the quit key does, in the browser
+	// and in a dialog: the job is stopped first
+	m = newTestModel(t, dir, nil)
+	m, _ = press(t, m, "d") // Started, but its command isn't run
+	viaQ, qCmd := press(t, detach(m), "q")
+	for _, keys := range []string{"", "s", "?"} {
+		viaC, cCmd := ctrl(t, typeText(t, detach(m), keys), tea.KeyCtrlC)
+		if quits(cCmd) != quits(qCmd) || (viaC.job == nil) != (viaQ.job == nil) || viaC.job != nil && viaC.job.quit != viaQ.job.quit {
+			t.Errorf("busy, after %q: ctrl+c quits=%v job=%+v; q quits=%v job=%+v", keys, quits(cCmd), viaC.job, quits(qCmd), viaQ.job)
+		}
 	}
 }

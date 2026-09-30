@@ -42,13 +42,6 @@ func find(t *testing.T, m Model, key, query string) Model {
 	return drain(t, m, cmd)
 }
 
-// pressKey sends a key that press doesn't name, such as an arrow
-func pressKey(t *testing.T, m Model, k tea.KeyType) (Model, tea.Cmd) {
-	t.Helper()
-	updated, cmd := m.Update(tea.KeyMsg{Type: k})
-	return updated.(Model), cmd
-}
-
 // cursorName returns the name of the file under the active tab's cursor
 func cursorName(m Model) string {
 	return m.tab().Files[m.tab().Cursor].Name
@@ -104,7 +97,7 @@ func TestFindByNameInSubfolders(t *testing.T) {
 	}
 
 	// Enter goes to the file's directory with the cursor on it
-	m, _ = pressKey(t, m, tea.KeyDown)
+	m, _ = ctrl(t, m, tea.KeyDown)
 	m, cmd := press(t, m, "enter")
 	m = drain(t, m, cmd)
 	if m.mode != ModeNormal || m.tab().CurrentPath != filepath.Join(root, "src", "app") || cursorName(m) != "main.go" {
@@ -187,6 +180,40 @@ func TestFindInFilesJumpsToTheLine(t *testing.T) {
 	}
 	if m.jump != (previewJump{}) {
 		t.Fatal("the jump should be used up")
+	}
+}
+
+func TestFindInFilesJumpsPastTheUsualPreviewLines(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 6000; i++ {
+		if i == 4500 {
+			b.WriteString("the NEEDLE is here\n")
+			continue
+		}
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	root := makeTree(t, map[string]string{"big.txt": b.String()})
+
+	// The preview reads 2000 lines, or as far as a result being opened
+	m := find(t, newTestModel(t, root, nil), "F", "needle")
+	m, cmd := press(t, m, "enter")
+	m = drain(t, m, cmd)
+	shown := false
+	for _, line := range plain(m.View()) {
+		shown = shown || strings.Contains(line, " 4500 ") && strings.Contains(line, "the NEEDLE is here")
+	}
+	if !shown || m.statusMsg != "" {
+		t.Fatalf("line 4500 is not in the preview (status %q):\n%s", m.statusMsg, strings.Join(plain(m.View()), "\n"))
+	}
+
+	// Past the most it reads, the status bar says why the line isn't shown
+	maxPreviewLines = 3000
+	t.Cleanup(func() { maxPreviewLines = 20000 })
+	m = find(t, newTestModel(t, root, nil), "F", "needle")
+	m, cmd = press(t, m, "enter")
+	m = drain(t, m, cmd)
+	if want := "Line 4500 is past the first 3000 lines, which is as far as the preview reads"; m.statusMsg != want {
+		t.Fatalf("status = %q, want %q", m.statusMsg, want)
 	}
 }
 
@@ -289,16 +316,16 @@ func TestFindTabSwitchesKind(t *testing.T) {
 func TestFindCursorMoves(t *testing.T) {
 	m := find(t, newTestModel(t, manyFiles(t), nil), "f", "a")
 	for _, k := range []tea.KeyType{tea.KeyDown, tea.KeyDown, tea.KeyCtrlN, tea.KeyUp} {
-		m, _ = pressKey(t, m, k)
+		m, _ = ctrl(t, m, k)
 	}
 	if m.find.cursor != 2 {
 		t.Fatalf("cursor = %d, want 2", m.find.cursor)
 	}
-	if m, _ = pressKey(t, m, tea.KeyPgDown); m.find.cursor <= 2 {
+	if m, _ = ctrl(t, m, tea.KeyPgDown); m.find.cursor <= 2 {
 		t.Fatal("page down did not move")
 	}
 	for range 100 {
-		m, _ = pressKey(t, m, tea.KeyPgUp)
+		m, _ = ctrl(t, m, tea.KeyPgUp)
 	}
 	if m.find.cursor != 0 {
 		t.Fatalf("cursor = %d after paging up past the top", m.find.cursor)

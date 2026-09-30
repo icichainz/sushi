@@ -88,14 +88,16 @@ func (t *TextInput) Update(msg tea.KeyMsg) bool {
 // View renders the text with a block cursor within width cells, scrolling
 // so the cursor stays visible
 func (t TextInput) View(width int, style, cursorStyle lipgloss.Style) string {
+	// Typing drops control characters, but a name being renamed may start
+	// with some
 	at, after := " ", ""
 	if t.cursor < len(t.value) {
-		at = string(t.value[t.cursor])
-		after = string(t.value[t.cursor+1:])
+		at = utils.Printable(string(t.value[t.cursor]))
+		after = utils.Printable(string(t.value[t.cursor+1:]))
 	}
 	atWidth := max(ansi.StringWidth(at), 1)
 
-	before := utils.TruncateLeft(string(t.value[:t.cursor]), max(width-atWidth, 0))
+	before := utils.TruncateLeft(utils.Printable(string(t.value[:t.cursor])), max(width-atWidth, 0))
 	after = utils.Clip(after, max(width-ansi.StringWidth(before)-atWidth, 0))
 	return style.Render(before) + cursorStyle.Render(at) + style.Render(after)
 }

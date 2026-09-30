@@ -28,6 +28,7 @@ type prompt struct {
 	label  string
 	input  components.TextInput
 	target string // File being renamed
+	dir    string // Directory shown when the prompt opened, where new files go
 	err    string // Shown next to the input until the text changes
 
 	// For promptTool: the mode's name in the status bar, and what Enter does
@@ -35,11 +36,62 @@ type prompt struct {
 	submit func(m Model, value string) (tea.Model, tea.Cmd)
 }
 
-// openPrompt switches to input mode
+// openPrompt switches to input mode. The directory shown now is kept, as
+// the list can move on while the name is typed: a watcher reload moves up
+// from a directory that was deleted.
 func (m Model) openPrompt(p prompt) (tea.Model, tea.Cmd) {
+	if p.dir == "" {
+		p.dir = m.tab().CurrentPath
+	}
 	m.prompt = p
 	m.mode = ModeInput
 	return m, nil
+}
+
+// promptGone says why the open prompt can no longer do what it was opened
+// for, or returns "": the file being renamed isn't listed any more, or the
+// directory for a new file has gone or is no longer the one shown
+func (m *Model) promptGone() string {
+	p := m.prompt
+	switch p.action {
+	case promptRename:
+		for _, f := range m.tab().Files {
+			if f.Path == p.target {
+				return ""
+			}
+		}
+		return filepath.Base(p.target) + " is gone, so it wasn't renamed"
+	case promptNewFile, promptNewDir:
+		if info, err := os.Stat(p.dir); err != nil || !info.IsDir() {
+			return filepath.Base(p.dir) + " is gone, so nothing was created"
+		}
+		if m.tab().CurrentPath != p.dir {
+			return "The folder shown changed, so nothing was created"
+		}
+	}
+	return ""
+}
+
+// checkPrompt closes a rename or new-file prompt, with a message, once the
+// active tab's list shows that what it was opened on has gone, and keeps
+// the cursor, and so the rename field, on the file being renamed
+func (m *Model) checkPrompt() tea.Cmd {
+	if m.mode != ModeInput || m.prompt.submit != nil {
+		return nil
+	}
+	if gone := m.promptGone(); gone != "" {
+		m.mode = ModeNormal
+		return m.setStatus(gone)
+	}
+	if m.prompt.action == promptRename {
+		tab := m.tab()
+		for i, f := range tab.Files {
+			if f.Path == m.prompt.target {
+				tab.Cursor = i
+			}
+		}
+	}
+	return nil
 }
 
 // startRename prompts for a new name for the file under the cursor
@@ -76,9 +128,18 @@ func (m Model) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // open with the error, so the name can be corrected.
 func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	value := m.prompt.input.Value()
-	dir := m.tab().CurrentPath
+	dir := m.prompt.dir
 	if m.prompt.submit != nil {
 		return m.prompt.submit(m, value)
+	}
+	// Not into whatever the list shows now, such as the parent of a
+	// directory deleted meanwhile
+	if m.prompt.action != promptRename {
+		if gone := m.promptGone(); gone != "" {
+			m.mode = ModeNormal
+			cmd := m.setStatus(gone)
+			return m, cmd
+		}
 	}
 
 	var path, status string
@@ -168,6 +229,9 @@ func (m *Model) retarget(oldPath, newPath string) {
 	for i, p := range m.clipboard {
 		m.clipboard[i] = move(p)
 	}
+	// A job finishing may move what an open prompt is about
+	m.prompt.target = move(m.prompt.target)
+	m.prompt.dir = move(m.prompt.dir)
 	for i := range m.tabs {
 		tab := &m.tabs[i]
 		tab.CurrentPath = move(tab.CurrentPath)

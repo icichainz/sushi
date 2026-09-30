@@ -27,7 +27,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd = m.update(msg)
 		m = updated.(Model)
 		if msg, ok := msg.(previewLoadedMsg); ok {
-			m.showJump(msg)
+			cmd = tea.Batch(cmd, m.showJump(msg))
 		}
 	}
 	m.watchTabs()

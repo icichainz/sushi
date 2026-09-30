@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -269,17 +268,23 @@ func (m Model) openFindResult() (tea.Model, tea.Cmd) {
 }
 
 // showJump scrolls the preview to a search result's line once the file's
-// preview has loaded
-func (m *Model) showJump(msg previewLoadedMsg) {
+// preview has loaded; previewCmd reads that far into the file, up to
+// maxPreviewLines. Past that, the preview shows its last lines and the
+// status bar says why the line isn't there.
+func (m *Model) showJump(msg previewLoadedMsg) tea.Cmd {
 	j := m.jump
 	tab := m.tabByID(msg.tabID)
 	if j.line == 0 || j.tabID != msg.tabID || j.path != msg.preview.Path || tab == nil || tab.Preview.Path != j.path {
-		return
+		return nil
 	}
 	// Centred, so the lines around it show too
 	rows := m.previewRows()
 	tab.PreviewScroll = max(min(j.line-1-(rows-1)/2, tab.Preview.MaxScroll(rows)), 0)
 	m.jump = previewJump{}
+	if p := tab.Preview; p.IsText && j.line > len(p.Lines) {
+		return m.setStatus(fmt.Sprintf("Line %d is past the first %d lines, which is as far as the preview reads", j.line, len(p.Lines)))
+	}
+	return nil
 }
 
 // findQuery prepares a name query: lowercase, with slashes as separators,
@@ -363,12 +368,17 @@ func (m Model) findBox() []string {
 	inner := width - 2
 	rows, roomy := m.findRows()
 
-	title, key := "Find files", "f"
+	// Marked with the key that opens this kind of search, as bound; tab
+	// switches kind even when it has none
+	title, key := "Find files", shownKey(m.keys.Find)
 	if f.content {
-		title, key = "Find in files", "F"
+		title, key = "Find in files", shownKey(m.keys.Grep)
+	}
+	if key == "" {
+		key = ">"
 	}
 	prompt := " " + m.fg(t.Title).Bold(true).Render(key) + " "
-	body := []string{prompt + f.input.View(max(inner-4, 1), m.fg(t.Text), lipgloss.NewStyle().Reverse(true))}
+	body := []string{prompt + f.input.View(max(inner-utils.Width(prompt)-1, 1), m.fg(t.Text), lipgloss.NewStyle().Reverse(true))}
 	if roomy {
 		body = append(body, m.fg(t.Border).Render(strings.Repeat(g.hline, inner)))
 	}
@@ -383,7 +393,7 @@ func (m Model) findBox() []string {
 			if f.err != nil {
 				style = m.fg(t.Danger)
 			}
-			body = append(body, " "+style.Render(utils.Truncate(m.findEmpty(), inner-2)))
+			body = append(body, " "+style.Render(utils.Truncate(utils.Printable(m.findEmpty()), inner-2)))
 		default:
 			body = append(body, "")
 		}
@@ -461,7 +471,7 @@ func (m Model) findRow(r search.Result, chosen bool, width int) string {
 		text, muted, faint, accent = sel.Bold(r.IsDir), sel, sel, sel
 	}
 
-	rel := []rune(printable(filepath.ToSlash(r.Rel)))
+	rel := []rune(utils.Printable(filepath.ToSlash(r.Rel)))
 	var row string
 	if r.Line == 0 {
 		icon := ui.GetFileIcon(fs.FileInfo{Name: filepath.Base(r.Path), IsDir: r.IsDir})
@@ -500,7 +510,7 @@ func (m Model) findRow(r search.Result, chosen bool, width int) string {
 		room := width - utils.Width(row) - 1
 
 		// Keep the match in view on long lines
-		line := []rune(r.Text)
+		line := []rune(utils.Printable(r.Text))
 		size := utf8.RuneCountInString(m.find.input.Value())
 		from, ellipsis := 0, ""
 		if utils.Width(string(line[:min(r.Col+size, len(line))])) > room {
@@ -517,17 +527,6 @@ func (m Model) findRow(r search.Result, chosen bool, width int) string {
 
 	pad := max(width-utils.Width(row), 0)
 	return utils.Cells(row+muted.Render(strings.Repeat(" ", pad)), 0, width)
-}
-
-// printable replaces control characters, which would break the layout or
-// draw over it, one for one so positions in the text still hold
-func printable(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return '?'
-		}
-		return r
-	}, s)
 }
 
 // paint draws runes, which start at position offset of the whole text,

@@ -437,6 +437,52 @@ func TestMouseInDialogs(t *testing.T) {
 	}
 }
 
+func TestMouseInTheSortMenuAndSearchPalette(t *testing.T) {
+	root := makeTree(t, map[string]string{"alpha/one.txt": "1", "alpha/two.txt": "22", "beta.txt": "333"})
+	fakeClock(t)
+
+	for _, size := range sizes {
+		label := fmt.Sprintf("%dx%d", size.Width, size.Height)
+		m := resize(newTestModel(t, root, nil), size)
+
+		// The sort menu: a click on an order sorts by it, and clicking
+		// outside closes the menu without sorting
+		m, _ = press(t, m, "s")
+		x, y := findOnScreen(t, m, " size ", 0, m.width)
+		m, cmd := clickAt(m, x+1, y)
+		if m = drain(t, m, cmd); m.mode != ModeNormal || m.sortBy != "size" {
+			t.Fatalf("%s: clicking size: mode=%v sortBy=%s", label, m.mode, m.sortBy)
+		}
+		m, _ = press(t, m, "s")
+		if m, _ = mouseAt(m, x, y, tea.MouseButtonWheelDown, false); m.sortCursor != 2 {
+			t.Fatalf("%s: the wheel left the sort cursor at %d", label, m.sortCursor)
+		}
+		if m, _ = clickAt(m, 0, m.height-2); m.mode != ModeNormal || m.sortBy != "size" {
+			t.Fatalf("%s: clicking outside: mode=%v sortBy=%s", label, m.mode, m.sortBy)
+		}
+
+		// The search palette: a click picks a result, a double-click goes
+		// to it, and clicking outside closes the palette
+		m = find(t, m, "f", ".txt")
+		x, y = findOnScreen(t, m, "alpha/two", 0, m.width)
+		if m, _ = clickAt(m, x, y); m.mode != ModeFind || m.find.results[m.find.cursor].Rel != filepath.Join("alpha", "two.txt") {
+			t.Fatalf("%s: clicking a result: mode=%v cursor=%d", label, m.mode, m.find.cursor)
+		}
+		if m, _ = mouseAt(m, x, y, tea.MouseButtonWheelUp, false); m.find.cursor != 0 {
+			t.Fatalf("%s: the wheel left the result cursor at %d", label, m.find.cursor)
+		}
+		m, _ = clickAt(m, x, y)
+		m, cmd = clickAt(m, x, y)
+		if m = drain(t, m, cmd); m.mode != ModeNormal || filepath.Base(m.tab().CurrentPath) != "alpha" || cursorName(m) != "two.txt" {
+			t.Fatalf("%s: double-clicking a result: mode=%v in %s on %s", label, m.mode, m.tab().CurrentPath, cursorName(m))
+		}
+		m, _ = press(t, m, "f")
+		if m, _ = clickAt(m, 0, m.height-2); m.mode != ModeNormal {
+			t.Fatalf("%s: clicking outside the palette left it open", label)
+		}
+	}
+}
+
 func TestPromptsIgnoreTheMouse(t *testing.T) {
 	dir := t.TempDir()
 	numberedFiles(t, dir, 5)

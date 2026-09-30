@@ -11,6 +11,7 @@ import (
 	"github.com/icichainz/sushi/internal/fonts"
 	"github.com/icichainz/sushi/internal/shell"
 	"github.com/icichainz/sushi/internal/ui"
+	"github.com/icichainz/sushi/internal/utils"
 )
 
 // optionalString is a flag that can be given alone or with a value, as in
@@ -184,8 +185,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+		// Problems quote plugin names, which could hold escape codes
 		for _, p := range problems {
-			fmt.Fprintln(os.Stderr, p)
+			fmt.Fprintln(os.Stderr, utils.Printable(p))
 		}
 		if len(problems) > 0 {
 			os.Exit(1)

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/icichainz/sushi/internal/fs"
 	"github.com/icichainz/sushi/internal/utils"
 )
 
@@ -66,7 +67,7 @@ func (l *archiveListing) add(name string, dir bool, size int64) {
 	l.count++
 	l.unpacked += size
 	if len(l.entries) < maxArchiveEntries {
-		l.entries = append(l.entries, Entry{Name: cleanText(name), IsDir: dir, Size: size})
+		l.entries = append(l.entries, Entry{Name: utils.Printable(name), IsDir: dir, Size: size})
 	}
 }
 
@@ -74,6 +75,10 @@ func (l *archiveListing) add(name string, dir bool, size int64) {
 func loadArchivePreview(p PreviewContent, config PreviewConfig) PreviewContent {
 	format := archiveFormat(p.FileInfo.Name)
 	p.Kind = archiveKinds[format]
+	// The preview lists more formats (jar, tar.bz2) than sushi extracts
+	if fs.ArchiveKind(p.FileInfo.Name) == "" {
+		p.Details = append(p.Details, "preview only")
+	}
 	if config.Quick {
 		p.Pending = true
 		return detailsView(p, "Loading...")
@@ -97,7 +102,7 @@ func loadArchivePreview(p PreviewContent, config PreviewConfig) PreviewContent {
 	p.Partial = l.partial
 	p.More = l.partial || l.count > len(l.entries)
 	if !l.partial {
-		p.Details = []string{utils.HumanizeSize(l.unpacked) + " unpacked"}
+		p.Details = append(p.Details, utils.HumanizeSize(l.unpacked)+" unpacked")
 	}
 	names := make([]string, len(l.entries))
 	for i, e := range l.entries {

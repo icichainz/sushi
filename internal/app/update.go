@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -33,6 +34,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// A taller pane scrolls less far; every tab's pane is as tall
+		for i := range m.tabs {
+			tab := &m.tabs[i]
+			tab.PreviewScroll = min(tab.PreviewScroll, tab.Preview.MaxScroll(m.previewRows()))
+		}
 		return m, nil
 
 	case dirLoadedMsg:
@@ -43,8 +49,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		tab.Loading = false
 		if msg.err != nil {
-			// Keep showing the previous directory rather than an empty one
-			cmd := m.setStatus(fmt.Sprintf("Error: %v", msg.err))
+			// Keep showing the previous directory rather than an empty
+			// one. The file to focus was in the directory that failed, and
+			// mustn't move the cursor at the next load of this one.
+			tab.focusPath = ""
+			cmd := tea.Batch(m.setStatus(fmt.Sprintf("Error: %v", msg.err)), m.reloadIfWanted(tab))
 			return m, cmd
 		}
 
@@ -75,10 +84,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		var prompt tea.Cmd
+		if tab.ID == m.tab().ID {
+			prompt = m.checkPrompt()
+		}
 		if m.mode == ModeSearch && tab.ID == m.tab().ID {
 			m.updateSearchResults()
+			m.cursorToMatch()
 		}
-		return m, m.previewCmd(tab)
+		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt)
+		return m, cmd
 
 	case previewLoadedMsg:
 		tab := m.tabByID(msg.tabID)
@@ -144,19 +159,65 @@ func (m *Model) setStatusFor(msg string, d time.Duration) tea.Cmd {
 	})
 }
 
-// loadDir starts loading path into tab, superseding any load already in flight
+// loadDir starts loading path into tab, superseding any load already in
+// flight. A load starting now sees every change so far, so no reload is
+// wanted after it.
 func (m *Model) loadDir(tab *Tab, path string) tea.Cmd {
 	tab.Loading = true
+	tab.reloadWanted = false
 	tab.loadSeq++
 	return loadDirectory(tab.ID, tab.loadSeq, path, m.scanOptions())
 }
 
-// previewCmd loads the preview for the file under the tab's cursor, if shown
+// reloadIfWanted reloads a tab whose load has just come in, once, if its
+// directory changed or a refresh was asked for while it loaded
+func (m *Model) reloadIfWanted(tab *Tab) tea.Cmd {
+	if !tab.reloadWanted {
+		return nil
+	}
+	return m.reloadTab(tab)
+}
+
+// maxPreviewLines is the most lines of a text file a preview reads, to
+// show a search result far into it; a variable so tests can lower it
+var maxPreviewLines = 20000
+
+// previewCmd loads the preview for the file under the tab's cursor, if
+// shown. A text preview reads its usual lines, or enough to show the line
+// of a search result being opened, and on a reload as many as it had.
 func (m *Model) previewCmd(tab *Tab) tea.Cmd {
 	if !tab.PreviewEnabled || len(tab.Files) == 0 {
 		return nil
 	}
-	return loadPreview(tab.ID, tab.Files[tab.Cursor], m.theme.Syntax)
+	file := tab.Files[tab.Cursor]
+	cfg := previewConfig(m.theme.Syntax)
+	if m.jumpingTo(tab, file.Path) {
+		cfg.MaxLines = max(cfg.MaxLines, min(m.jump.line+m.previewRows(), maxPreviewLines))
+	}
+	if p := tab.Preview; p.Path == file.Path && p.IsText {
+		cfg.MaxLines = max(cfg.MaxLines, len(p.Lines))
+	}
+	return loadPreviewWith(tab.ID, file, cfg)
+}
+
+// refreshPreview loads the preview again once a directory load is in,
+// unless it already shows the file under the cursor as it is: the watcher
+// reloads every couple of seconds while files change nearby, and each
+// preview could run pdftotext, read an archive or highlight a file again
+func (m *Model) refreshPreview(tab *Tab) tea.Cmd {
+	if len(tab.Files) > 0 {
+		file := tab.Files[tab.Cursor]
+		if previewShows(tab.Preview, file) && !m.jumpingTo(tab, file.Path) {
+			return nil
+		}
+	}
+	return m.previewCmd(tab)
+}
+
+// jumpingTo reports whether a search result's line is waiting to be shown
+// in the tab's preview of path
+func (m *Model) jumpingTo(tab *Tab, path string) bool {
+	return m.jump.line > 0 && m.jump.tabID == tab.ID && m.jump.path == path
 }
 
 // loadPreviewNow loads a preview synchronously using the theme's syntax
@@ -177,13 +238,26 @@ func previewConfig(syntax string) components.PreviewConfig {
 
 // handleKeyPress processes keyboard input
 func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// ctrl+c quits from every mode, prompts and dialogs included, whatever
+	// the config binds. It is always a quit key (see loadKeyMap), so a
+	// running job is stopped first, as with the quit key.
+	if msg.String() == alwaysQuit {
+		if m.job != nil {
+			if model, cmd, handled := m.whileBusy(msg); handled {
+				return model, cmd
+			}
+		}
+		return m, tea.Quit
+	}
+
 	// The key panel: the down and up keys scroll it when it doesn't fit,
 	// and esc and the help key close it. So does the quit key it shows (q),
-	// as people press it to leave the panel, not sushi. Any other key
-	// closes it and does what the panel says it does.
+	// as people press it to leave the panel, not sushi; ctrl+c, handled
+	// above, still quits. Any other key closes it and does what the panel
+	// says it does.
 	if m.mode == ModeHelp {
 		scrolls := m.maxHelpScroll() > 0
-		quit := shownKey(m.keys.Quit)
+		quit := shownKey(m.keys.Quit) // Never ctrl+c while quit has another key
 		switch s := msg.String(); {
 		case s == "esc", key.Matches(msg, m.keys.Help), quit != "" && keyName(s) == quit:
 			m.mode = ModeNormal
@@ -286,7 +360,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.PreviewUp):
-		tab.PreviewScroll = max(tab.PreviewScroll-m.previewStep(), 0)
+		// From where the pane is actually scrolled to, which can be less
+		// than the offset if the preview got shorter
+		tab.PreviewScroll = max(min(tab.PreviewScroll, tab.Preview.MaxScroll(m.previewRows()))-m.previewStep(), 0)
 		return m, nil
 
 	case key.Matches(msg, m.keys.Preview):
@@ -658,6 +734,27 @@ func (m *Model) updateSearchResults() {
 	}
 }
 
+// cursorToMatch puts the cursor on the nearest match when a reload has
+// left it on a file the search hides, such as the one after a match that
+// was deleted
+func (m *Model) cursorToMatch() {
+	tab := m.tab()
+	res := tab.SearchResults
+	if tab.SearchQuery == "" || len(res) == 0 {
+		return
+	}
+	if _, ok := tab.SearchMatchSet[tab.Cursor]; ok {
+		return
+	}
+	// Results are in list order: the first below the cursor, or the one
+	// above if that is as near
+	i, _ := slices.BinarySearch(res, tab.Cursor)
+	if i == len(res) || i > 0 && tab.Cursor-res[i-1] <= res[i]-tab.Cursor {
+		i--
+	}
+	tab.Cursor, tab.SearchResultIdx = res[i], i
+}
+
 // navigateSearchResults moves cursor through search results (O(1) using tracked index)
 func (m *Model) navigateSearchResults(direction int) {
 	tab := &m.tabs[m.activeTabIdx]
@@ -773,6 +870,15 @@ func (m Model) previewStep() int {
 	return max((m.previewRows()-1)/2, 1)
 }
 
+// previewShows reports whether p is a preview of file as it is now: the
+// same size, modification time and permissions (shown in the heading), and
+// complete
+func previewShows(p components.PreviewContent, file fs.FileInfo) bool {
+	f := p.FileInfo
+	return p.Path == file.Path && !p.Pending && p.Error == nil && f.Size == file.Size &&
+		f.ModTime.Equal(file.ModTime) && f.Perms == file.Perms && f.IsDir == file.IsDir && f.IsSymlink == file.IsSymlink
+}
+
 // previewLoadedMsg is sent when preview content has been loaded
 type previewLoadedMsg struct {
 	tabID   int
@@ -805,10 +911,15 @@ func loadDirectory(tabID, seq int, path string, opts fs.ScanOptions) tea.Cmd {
 
 // loadPreview loads preview content asynchronously
 func loadPreview(tabID int, file fs.FileInfo, syntax string) tea.Cmd {
+	return loadPreviewWith(tabID, file, previewConfig(syntax))
+}
+
+// loadPreviewWith loads preview content asynchronously with cfg
+func loadPreviewWith(tabID int, file fs.FileInfo, cfg components.PreviewConfig) tea.Cmd {
 	return func() tea.Msg {
 		return previewLoadedMsg{
 			tabID:   tabID,
-			preview: components.LoadPreviewWithConfig(file, previewConfig(syntax)),
+			preview: components.LoadPreviewWithConfig(file, cfg),
 		}
 	}
 }

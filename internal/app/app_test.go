@@ -2,14 +2,17 @@ package app
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -72,6 +75,25 @@ func press(t *testing.T, m Model, k string) (Model, tea.Cmd) {
 	}
 	updated, cmd := m.Update(msg)
 	return updated.(Model), cmd
+}
+
+// detach returns a copy of m that shares no tab or file state with it, so
+// keys pressed on the copy leave m as it was. A plain copy shares the tabs
+// slice, and with it every tab's lists and maps.
+func detach(m Model) Model {
+	m.tabs = slices.Clone(m.tabs)
+	for i := range m.tabs {
+		tab := &m.tabs[i]
+		tab.Files = slices.Clone(tab.Files)
+		tab.ParentFiles = slices.Clone(tab.ParentFiles)
+		tab.Selected = maps.Clone(tab.Selected)
+		tab.SearchResults = slices.Clone(tab.SearchResults)
+		tab.SearchMatchSet = maps.Clone(tab.SearchMatchSet)
+	}
+	m.clipboard = slices.Clone(m.clipboard)
+	m.pending = slices.Clone(m.pending)
+	m.undo = slices.Clone(m.undo)
+	return m
 }
 
 func writeTestFile(t *testing.T, path, content string) {
@@ -214,6 +236,23 @@ func TestFailedLoadKeepsCurrentDir(t *testing.T) {
 	}
 }
 
+func TestFailedLoadForgetsWhatItWasToFocus(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt"} {
+		writeTestFile(t, filepath.Join(dir, name), "")
+	}
+	m := newTestModel(t, dir, noWatch())
+
+	// As when opening a search result, or clicking a file in the parent
+	// pane, whose directory then fails to load
+	m.tab().focusPath = filepath.Join(dir, "b.txt")
+	m = run(t, m, m.loadDir(m.tab(), filepath.Join(dir, "missing")))
+	m = run(t, m, m.loadDir(m.tab(), dir)) // A reload, say
+	if cursorName(m) != "a.txt" || m.tab().focusPath != "" {
+		t.Fatalf("after the failed load, a reload put the cursor on %s", cursorName(m))
+	}
+}
+
 func TestStatusClearsOnlyItsOwnMessage(t *testing.T) {
 	m := newTestModel(t, t.TempDir(), nil)
 	m.setStatus("first")
@@ -305,21 +344,21 @@ func TestEveryScreenFillsTheTerminal(t *testing.T) {
 		assertFills(t, label+" preview off", m)
 		m.tab().PreviewEnabled = true
 
-		long := m
+		long := detach(m)
 		long.statusMsg = strings.Repeat("a long status message ", 10)
 		assertFills(t, label+" long status", long)
 
 		for _, keys := range []string{"/" + strings.Repeat("query", 20), "/a", " j ", "r" + strings.Repeat("name", 30), "nnew", "d", "D", "m",
 			"a" + strings.Repeat("archive", 20), "y", "b", "P", "!" + strings.Repeat("echo ", 30), "?",
 			"s", "f" + strings.Repeat("query", 30), "F" + strings.Repeat("text", 30)} {
-			screen := m
+			screen := detach(m)
 			for _, r := range keys {
 				screen, _ = press(t, screen, string(r))
 			}
 			assertFills(t, label+" after "+keys[:1], screen)
 		}
 
-		withTabs := m
+		withTabs := detach(m)
 		for i := 0; i < 12; i++ {
 			updated, _ := withTabs.createTab(deep)
 			withTabs = updated.(Model)
@@ -328,6 +367,74 @@ func TestEveryScreenFillsTheTerminal(t *testing.T) {
 		if !strings.Contains(lines[0], " 13 ") {
 			t.Errorf("%s: active tab 13 not visible in %q", label, lines[0])
 		}
+	}
+}
+
+// sgr matches the color codes the interface draws with; nothing else may
+// reach the terminal as an escape code
+var sgr = regexp.MustCompile("\x1b\\[[0-9;:]*m")
+
+// assertNoControls fails if a screen holds a control character outside a
+// color code: an escape code from a file name, a newline within a line
+func assertNoControls(t *testing.T, label, view string) {
+	t.Helper()
+	for i, line := range strings.Split(view, "\n") {
+		for _, r := range sgr.ReplaceAllString(line, "") {
+			if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || r == utf8.RuneError {
+				t.Errorf("%s: line %d carries %U: %q", label, i, r, line)
+				break
+			}
+		}
+	}
+}
+
+func TestHostileNamesCantBreakTheScreen(t *testing.T) {
+	root := t.TempDir()
+	here := filepath.Join(root, "dir\x1b[2J\nwith\tcontrols")
+	sub := filepath.Join(here, "sub\rdir\x1b]0;title\x07")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Skipf("this file system refuses control characters in names: %v", err)
+	}
+	writeTestFile(t, filepath.Join(sub, "in\nside\x1b[31m.txt"), "")
+	writeTestFile(t, filepath.Join(root, "sibling\x1b[2J\n.txt"), "")
+	writeTestFile(t, filepath.Join(here, "esc\x1b[2Jclear.txt"), "match \x1b[2J\x1b]0;x\x07 here\n")
+	for _, name := range []string{"two\nlines.txt", "c1\u009b31m.txt", "sep\u2028line\u2029para.txt", "bell\a\x7f.txt", "bad\xff.txt"} {
+		// Some file systems refuse invalid UTF-8; the rest are enough
+		os.WriteFile(filepath.Join(here, name), []byte("x"), 0644)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Plugins = []plugins.Plugin{{Name: "plug\x1b[2J\nin", Key: "ctrl+g", Command: "true", Description: "does\nthings\x1b[31m"}}
+	var keys strings.Builder
+	WriteKeys(&keys, cfg)
+	assertNoControls(t, "--list-keys", keys.String())
+
+	for _, size := range []tea.WindowSizeMsg{{Width: 140, Height: 40}, {Width: 100, Height: 24}, {Width: 80, Height: 24}, {Width: 60, Height: 15}} {
+		m := resize(newTestModel(t, here, cfg), size)
+		m.bookmarks.Add("mark\x1b[2J\n", here)
+		m.statusMsg = "Error: open two\nlines.txt: \x1b[2Jdenied"
+		label := fmt.Sprintf("%dx%d", size.Width, size.Height)
+		check := func(what string, m Model) {
+			t.Helper()
+			assertFills(t, label+" "+what, m)
+			assertNoControls(t, label+" "+what, m.View())
+			assertNoControls(t, label+" "+what+" unclipped", m.renderMainView())
+		}
+		check("browse", m)
+
+		// Every file under the cursor: the directory's preview lists its
+		// entries, the text file's shows its contents
+		for i, f := range m.tab().Files {
+			screen := detach(m)
+			screen.tab().Cursor = i
+			screen = drain(t, screen, screen.previewCmd(screen.tab()))
+			check(fmt.Sprintf("on %q", f.Name), screen)
+		}
+		for _, keys := range []string{"r", "/e", "b", "P", "?", "D"} {
+			check("after "+keys, typeText(t, detach(m), keys))
+		}
+		check("find", find(t, detach(m), "f", "t"))
+		check("grep", find(t, detach(m), "F", "match"))
 	}
 }
 
@@ -429,7 +536,7 @@ func TestStatusBarShowsMode(t *testing.T) {
 		{"P", "RUN", "run"},
 		{"?", "KEYS", "close"},
 	} {
-		screen := m
+		screen := detach(m)
 		for _, r := range c.keys {
 			screen, _ = press(t, screen, string(r))
 		}
@@ -543,6 +650,39 @@ func TestPreviewScrollKeys(t *testing.T) {
 	m = drain(t, m, cmd)
 	if m.tab().PreviewScroll != 0 {
 		t.Fatalf("scroll = %d after moving to another file", m.tab().PreviewScroll)
+	}
+}
+
+func TestPreviewScrollStaysInRange(t *testing.T) {
+	dir := t.TempDir()
+	var b strings.Builder
+	for i := 1; i <= 60; i++ {
+		fmt.Fprintf(&b, "line number %d\n", i)
+	}
+	writeTestFile(t, filepath.Join(dir, "a.txt"), b.String())
+	m := newTestModel(t, dir, nil)
+	updated, _ := m.createTab(dir)
+	m = updated.(Model)
+	m.activeTabIdx = 0
+
+	// Scrolled to the end, then the terminal grows: every tab's preview
+	// scrolls back to what the taller pane can show
+	for i := range m.tabs {
+		m.tabs[i].Preview = m.tabs[0].Preview
+		m.tabs[i].PreviewScroll = m.tabs[0].Preview.MaxScroll(m.previewRows())
+	}
+	m = resize(m, tea.WindowSizeMsg{Width: 100, Height: 50})
+	for i, tab := range m.tabs {
+		if want := tab.Preview.MaxScroll(m.previewRows()); tab.PreviewScroll != want {
+			t.Fatalf("tab %d scroll = %d after growing, want %d", i+1, tab.PreviewScroll, want)
+		}
+	}
+
+	// K goes up from where the pane is scrolled to, even from past the end
+	m.tab().PreviewScroll = 500
+	m, _ = press(t, m, "K")
+	if want := max(m.tab().Preview.MaxScroll(m.previewRows())-m.previewStep(), 0); m.tab().PreviewScroll != want {
+		t.Fatalf("K from past the end: scroll = %d, want %d", m.tab().PreviewScroll, want)
 	}
 }
 
@@ -821,6 +961,16 @@ func TestConfigProblemsShownAtStartup(t *testing.T) {
 	cfg.Theme = "neon"
 	cfg.SyntaxTheme = "nope"
 	cfg.Problems = []string{"config.yaml: line 3: bad value"} // As LoadConfig reports them
+	cfg.Watch = false                                         // Its listener would keep Init's batch from draining
+
+	// Timers fire at once, with the message that clears the status
+	var shownFor time.Duration
+	old := statusTimer
+	statusTimer = func(d time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
+		shownFor = d
+		return func() tea.Msg { return fn(time.Time{}) }
+	}
+	t.Cleanup(func() { statusTimer = old })
 
 	m := newTestModel(t, t.TempDir(), cfg)
 	for _, want := range []string{"neon", "nope", "line 3: bad value"} {
@@ -828,8 +978,9 @@ func TestConfigProblemsShownAtStartup(t *testing.T) {
 			t.Fatalf("statusMsg = %q, want every problem", m.statusMsg)
 		}
 	}
-	if m.Init() == nil {
-		t.Fatal("Init should schedule clearing the startup warning")
+	// Init clears them, after long enough to read them
+	if m = drain(t, m, m.Init()); m.statusMsg != "" || shownFor != 10*time.Second {
+		t.Fatalf("after Init: status %q, shown for %v; want it cleared after 10s", m.statusMsg, shownFor)
 	}
 }
 

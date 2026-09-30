@@ -128,6 +128,25 @@ func TestArchivePreviewListsEntries(t *testing.T) {
 	}
 }
 
+func TestArchivesThatCantBeExtractedArePreviewOnly(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{"a.txt": "a"}
+	writeZip(t, filepath.Join(dir, "project.zip"), files)
+	writeZip(t, filepath.Join(dir, "app.jar"), files)
+	writeTar(t, filepath.Join(dir, "project.tgz"), true, files)
+	bz2, _ := base64.StdEncoding.DecodeString(tarBz2)
+	os.WriteFile(filepath.Join(dir, "docs.tar.bz2"), bz2, 0644)
+
+	// X extracts what fs.ArchiveKind names; the preview lists more
+	for name, previewOnly := range map[string]bool{"project.zip": false, "project.tgz": false, "app.jar": true, "docs.tar.bz2": true} {
+		p := LoadPreview(fileInfo(t, filepath.Join(dir, name)), 100)
+		heading := render(t, p, 110, 3, 0)[0]
+		if !p.Archive || strings.Contains(heading, "preview only") != previewOnly || !strings.Contains(heading, "unpacked") {
+			t.Errorf("%s: heading %q, want preview only: %v", name, heading, previewOnly)
+		}
+	}
+}
+
 func TestLongArchivesAreCut(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "many.zip")
 	files := make(map[string]string)

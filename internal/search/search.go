@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/utils"
 )
 
 // DefaultSkip lists directories a search doesn't enter: they are large and
@@ -195,9 +196,9 @@ func grep(ctx context.Context, path string, needle []byte, fold bool, found func
 }
 
 // excerpt returns line ready to display and the match position within it:
-// without its indentation, with control characters (tabs, and escape codes
-// that would draw over the interface) as spaces, and cut to a window
-// around the match if very long
+// without its indentation, with tabs as spaces and other control
+// characters (escape codes that would draw over the interface) replaced as
+// utils.Printable does, and cut to a window around the match if very long
 func excerpt(line []rune, col int) (string, int) {
 	start := 0
 	for start < col && unicode.IsSpace(line[start]) {
@@ -208,12 +209,6 @@ func excerpt(line []rune, col int) (string, int) {
 	}
 	end := min(len(line), start+maxText)
 
-	var b strings.Builder
-	for _, r := range line[start:end] {
-		if unicode.IsControl(r) {
-			r = ' '
-		}
-		b.WriteRune(r)
-	}
-	return b.String(), col - start
+	text := strings.ReplaceAll(string(line[start:end]), "\t", " ")
+	return utils.Printable(text), col - start
 }

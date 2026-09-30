@@ -141,7 +141,7 @@ func LoadPreviewWithConfig(file fs.FileInfo, config PreviewConfig) PreviewConten
 	// The heading shows where a link points, for directories too
 	if file.IsSymlink {
 		if target, err := os.Readlink(file.Path); err == nil {
-			preview.LinkTarget = cleanText(target)
+			preview.LinkTarget = utils.Printable(target)
 		}
 	}
 
@@ -395,8 +395,10 @@ func RenderPreview(p PreviewContent, width, height, scroll int, st PreviewStyles
 	if posW+12 > inner {
 		pos, posW = "", 0
 	}
-	name := utils.Truncate(p.FileInfo.Name, max(inner-posW-1, 0))
-	rest := utils.Truncate("  "+strings.Join(details, "  "), max(inner-posW-1-utils.Width(name), 0))
+	// Names, link targets and details come from outside, so they may hold
+	// newlines or escape codes
+	name := utils.Truncate(utils.Printable(p.FileInfo.Name), max(inner-posW-1, 0))
+	rest := utils.Truncate(utils.Printable("  "+strings.Join(details, "  ")), max(inner-posW-1-utils.Width(name), 0))
 	gap := max(inner-utils.Width(name)-utils.Width(rest)-posW, 0)
 	out = append(out, utils.Fit(" "+st.Title.Render(name)+st.Faint.Render(rest)+strings.Repeat(" ", gap)+st.Faint.Render(pos), width))
 
@@ -415,7 +417,7 @@ func RenderPreview(p PreviewContent, width, height, scroll int, st PreviewStyles
 		switch {
 		case i >= total:
 		case p.Error != nil:
-			line = " " + st.Error.Render(utils.Truncate(p.Lines[i], inner))
+			line = " " + st.Error.Render(utils.Truncate(utils.Printable(p.Lines[i]), inner))
 		case p.listing():
 			line = " " + renderEntry(p, i, inner, st)
 		case p.IsText && i < len(p.Lines):
@@ -426,7 +428,7 @@ func RenderPreview(p PreviewContent, width, height, scroll int, st PreviewStyles
 		case p.IsText:
 			line = " " + st.Faint.Render(utils.Truncate(fmt.Sprintf("%d more lines not shown", p.Total-len(p.Lines)), inner))
 		default:
-			line = " " + st.Text.Render(utils.Truncate(p.Lines[i], inner))
+			line = " " + st.Text.Render(utils.Truncate(utils.Printable(p.Lines[i]), inner))
 		}
 		out = append(out, utils.Fit(line, width))
 	}
@@ -448,15 +450,16 @@ func renderEntry(p PreviewContent, i, width int, st PreviewStyles) string {
 		return st.Faint.Render(utils.Truncate("and more", width))
 	}
 	e := p.Entries[i]
+	name := utils.Printable(e.Name)
 	if e.IsDir {
-		return st.Dir.Render(utils.Truncate(ui.GetDirIcon()+"  "+e.Name, width))
+		return st.Dir.Render(utils.Truncate(ui.GetDirIcon()+"  "+name, width))
 	}
 	icon := ui.GetFileIcon(fs.FileInfo{Name: e.Name})
 	// Archive entries have their size on the right, when there is room
 	if p.Archive && width >= 30 {
 		const sizeW = 10
-		return st.Text.Render(utils.Fit(icon+"  "+e.Name, width-sizeW)) +
+		return st.Text.Render(utils.Fit(icon+"  "+name, width-sizeW)) +
 			st.Faint.Render(utils.FitRight(utils.HumanizeSize(e.Size), sizeW))
 	}
-	return st.Text.Render(utils.Truncate(icon+"  "+e.Name, width))
+	return st.Text.Render(utils.Truncate(icon+"  "+name, width))
 }

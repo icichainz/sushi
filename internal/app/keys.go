@@ -15,11 +15,16 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/plugins"
+	"github.com/icichainz/sushi/internal/utils"
 )
 
 // Keys are remapped under keys: in the config file, by action. Actions are
 // named after the KeyMap fields in snake_case (HardDelete is hard_delete),
 // so a new field can be remapped, listed and checked with no more work.
+
+// alwaysQuit quits from anywhere, whatever the config binds, so no config
+// and no open dialog can leave sushi without a way out
+const alwaysQuit = "ctrl+c"
 
 // keyAction is one action of the key map
 type keyAction struct {
@@ -177,6 +182,10 @@ func loadKeyMap(remap map[string]config.KeyList) (KeyMap, []string) {
 				problems = append(problems, fmt.Sprintf("keys: %s: %v", name, err))
 				continue
 			}
+			if parsed == alwaysQuit && name != "quit" {
+				problems = append(problems, fmt.Sprintf("keys: conflict: %q for %s is ignored, as it always quits", alwaysQuit, name))
+				continue
+			}
 			if !slices.Contains(keys, parsed) {
 				keys = append(keys, parsed)
 			}
@@ -212,6 +221,16 @@ func loadKeyMap(remap map[string]config.KeyList) (KeyMap, []string) {
 				a.binding.SetKeys(kept...)
 			}
 		}
+	}
+
+	// ctrl+c quits whatever the config says (see handleKeyPress), so it is
+	// always one of quit's keys: the quit action stops a running job first.
+	// Quit still needs a key of its own, one the key panel can show.
+	if len(k.Quit.Keys()) == 0 {
+		problems = append(problems, fmt.Sprintf("keys: invalid: quit has no key; only %s quits", alwaysQuit))
+	}
+	if !slices.Contains(k.Quit.Keys(), alwaysQuit) {
+		k.Quit.SetKeys(append(slices.Clone(k.Quit.Keys()), alwaysQuit)...)
 	}
 
 	// The digits jump to bookmarks, unless an action has taken one
@@ -279,11 +298,12 @@ func dialogKeys() []dialogKey {
 var navKeys = map[string]bool{"up": true, "down": true, "left": true, "right": true, "pgup": true, "pgdown": true, "home": true, "end": true}
 
 // shownKey returns the key a binding is labelled with: its first, passing
-// over arrow and paging keys if it has another. It is empty if unbound.
+// over arrow and paging keys, and ctrl+c, which quits everywhere anyway,
+// if it has another. It is empty if unbound.
 func shownKey(b key.Binding) string {
 	keys := b.Keys()
 	for _, s := range keys {
-		if !navKeys[s] {
+		if !navKeys[s] && s != alwaysQuit {
 			return keyName(s)
 		}
 	}
@@ -385,12 +405,12 @@ keys:
 		fmt.Fprintf(&b, "%-*s  # %s\n", width, lines[i], a.binding.Help().Desc)
 	}
 
-	fmt.Fprintf(&b, "\n# Fixed: 1-9 jump to bookmarks, dialogs keep esc, enter and tab, the sort\n"+
-		"# menu its letters (%s), and confirmations y and n.\n", sortLetters())
+	fmt.Fprintf(&b, "\n# Fixed: %s always quits, 1-9 jump to bookmarks, dialogs keep esc, enter\n"+
+		"# and tab, the sort menu its letters (%s), and confirmations y and n.\n", alwaysQuit, sortLetters())
 	var pluginLines []string
 	for i, p := range m.plugins {
 		if j, ok := m.pluginKeys[p.Key]; ok && j == i {
-			pluginLines = append(pluginLines, fmt.Sprintf("#   %s  %s", yamlKey(p.Key), p.Name))
+			pluginLines = append(pluginLines, fmt.Sprintf("#   %s  %s", yamlKey(p.Key), utils.Printable(p.Name)))
 		}
 	}
 	if len(pluginLines) > 0 {

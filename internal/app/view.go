@@ -22,6 +22,9 @@ const (
 	minWidthPreview = 72
 	// chromeRows is the rows around the panes: tabs, breadcrumb, status, hints
 	chromeRows = 4
+	// minPathWidth is the least of the breadcrumb's path a note beside it
+	// may leave
+	minPathWidth = 12
 )
 
 // glyphs are the drawing characters, with plain ASCII ones for --ascii
@@ -151,8 +154,15 @@ func (m Model) renderTabBar() string {
 		used += span.width
 	}
 
-	right := "P run  b bookmarks "
-	if rw := utils.Width(right); used+rw+2 <= m.width {
+	// The keys as bound, leaving out actions without one
+	var labels []string
+	for _, l := range []hint{{shownKey(m.keys.Plugins), "run"}, {shownKey(m.keys.Bookmark), "bookmarks"}} {
+		if l.key != "" {
+			labels = append(labels, l.key+" "+l.label)
+		}
+	}
+	right := strings.Join(labels, "  ") + " "
+	if rw := utils.Width(right); len(labels) > 0 && used+rw+2 <= m.width {
 		b.WriteString(bar.Render(strings.Repeat(" ", m.width-used-rw)))
 		b.WriteString(bar.Foreground(t.TabInactiveFg).Render(right))
 	} else {
@@ -175,8 +185,19 @@ func (m Model) sortLabel() string {
 	return m.sortBy + " " + g.up
 }
 
-// pathSegments splits a path for the breadcrumb, with the home directory as "~"
+// pathSegments splits a path for display, with the home directory as "~"
+// and each name made printable
 func pathSegments(path string) []string {
+	segs := splitPath(path)
+	for i := range segs {
+		segs[i] = utils.Printable(segs[i])
+	}
+	return segs
+}
+
+// splitPath splits a path into its directories, with the home directory
+// as "~"
+func splitPath(path string) []string {
 	sep := string(filepath.Separator)
 	if home, err := os.UserHomeDir(); err == nil && home != sep {
 		if path == home {
@@ -209,16 +230,46 @@ func (m Model) renderHeader() string {
 	if m.showHidden {
 		hidden = "on"
 	}
-	right := fmt.Sprintf("sort %s %s hidden %s", m.sortLabel(), g.dot, hidden)
-	rightW := utils.Width(right)
+	info := fmt.Sprintf("sort %s %s hidden %s", m.sortLabel(), g.dot, hidden)
+	// Changes to a directory that isn't watched show only after a refresh
+	note := ""
+	if m.watch.unwatched(tab.CurrentPath) {
+		note = "not watched"
+		if k := keysLabel(" ", m.keys.Refresh); k != "" {
+			note += ": " + k + " refreshes"
+		}
+		info = note + " " + g.dot + " " + info
+	}
 
-	// Drop leading directories until the path fits, keeping the current one
+	// The sort order shows only where the whole path fits beside it. The
+	// note matters more than the path's leading directories, which make
+	// room for it.
 	segs := pathSegments(tab.CurrentPath)
 	width := func(s []string) int { return utils.Width(strings.Join(s, " / ")) }
-	if width(segs)+2+rightW > inner {
-		right, rightW = "", 0
+	warn := m.fg(t.Highlight)
+	right, rightW := "", 0
+	switch {
+	case width(segs)+2+utils.Width(info) <= inner:
+		if note != "" {
+			right = warn.Render(note)
+		}
+		right += m.fg(t.Muted).Render(strings.TrimPrefix(info, note))
+		rightW = utils.Width(info)
+	case note != "":
+		for _, text := range []string{note, "not watched"} {
+			if utils.Width(text)+2+minPathWidth <= inner {
+				right, rightW = warn.Render(text), utils.Width(text)
+				break
+			}
+		}
 	}
-	for len(segs) > 1 && width(segs) > inner {
+	room := inner
+	if rightW > 0 {
+		room -= rightW + 2
+	}
+
+	// Drop leading directories until the path fits, keeping the current one
+	for len(segs) > 1 && width(segs) > room {
 		segs = append([]string{g.more}, segs[2:]...)
 		if len(segs) == 1 {
 			break
@@ -230,7 +281,7 @@ func (m Model) renderHeader() string {
 	for i, seg := range segs {
 		last := i == len(segs)-1
 		if last {
-			seg = utils.TruncateLeft(seg, max(inner-used, 0))
+			seg = utils.TruncateLeft(seg, max(room-used, 0))
 			b.WriteString(m.fg(t.HeaderFg).Bold(true).Render(seg))
 		} else {
 			b.WriteString(m.fg(t.Muted).Render(seg) + m.fg(t.Faint).Render(" / "))
@@ -239,7 +290,7 @@ func (m Model) renderHeader() string {
 		used += utils.Width(seg)
 	}
 	gap := max(inner-used-rightW, 0)
-	return utils.Fit(" "+b.String()+strings.Repeat(" ", gap)+m.fg(t.Muted).Render(right), m.width)
+	return utils.Fit(" "+b.String()+strings.Repeat(" ", gap)+right, m.width)
 }
 
 // divider returns the line drawn on the left edge of a pane
@@ -262,7 +313,7 @@ func (m Model) renderParent(width, height int) []string {
 	t := m.theme
 	tab := m.tabs[m.activeTabIdx]
 	parentPath := filepath.Dir(tab.CurrentPath)
-	name := filepath.Base(parentPath)
+	name := utils.Printable(filepath.Base(parentPath))
 
 	out := make([]string, 0, height)
 	out = append(out, utils.Fit(" "+m.fg(t.Faint).Render(utils.Truncate(name, width-2)), width))
@@ -275,7 +326,7 @@ func (m Model) renderParent(width, height int) []string {
 			continue
 		}
 		f := tab.ParentFiles[i]
-		text := utils.Fit(" "+ui.GetFileIcon(f)+"  "+f.Name, width)
+		text := utils.Fit(" "+ui.GetFileIcon(f)+"  "+utils.Printable(f.Name), width)
 		style := m.fg(t.Faint)
 		if f.Path == tab.CurrentPath {
 			style = lipgloss.NewStyle().Foreground(t.Text).Background(t.Raised).Bold(true)
@@ -396,7 +447,8 @@ func (m Model) renderFileList(width, height int, divider bool) []string {
 		}
 		idx := visible[i]
 		file := tab.Files[idx]
-		if renaming && idx == tab.Cursor {
+		// On the file being renamed, wherever the cursor is
+		if renaming && file.Path == m.prompt.target {
 			out = append(out, edge+m.renderRenameRow(file, c))
 			continue
 		}
@@ -447,11 +499,13 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, matched map[int]b
 	b.WriteString(markStyle.Render(" " + marker + " "))
 	b.WriteString(iconStyle.Render(utils.Fit(ui.GetFileIcon(file), c.iconW) + "  "))
 
-	// Underline the letters the search matched
-	name := utils.Truncate(file.Name, c.nameW)
+	// Underline the letters the search matched. Printable replaces rune
+	// for rune, so the matched positions still hold.
+	full := utils.Printable(file.Name)
+	name := utils.Truncate(full, c.nameW)
 	shown := []rune(name)
 	kept := len(shown)
-	if name != file.Name {
+	if name != full {
 		kept -= 3 // The ellipsis
 	}
 	for i := 0; i < len(shown); {
@@ -490,7 +544,7 @@ func (m Model) renderRenameRow(file fs.FileInfo, c columns) string {
 	room := max(c.inner-utils.Width(lead)-1, 1)
 	errText := ""
 	if m.prompt.err != "" {
-		errText = utils.Truncate(m.prompt.err, room/2)
+		errText = utils.Truncate(utils.Printable(m.prompt.err), room/2)
 		room -= utils.Width(errText) + 2
 	}
 	input := m.prompt.input.View(room, base.Foreground(t.Text), base.Foreground(t.Text).Reverse(true))
@@ -559,7 +613,7 @@ func (m Model) renderSelection(width, height int) []string {
 			lines = append(lines, " "+m.fg(t.Faint).Render(fmt.Sprintf("and %d more", len(here)-i)))
 			break
 		}
-		name := utils.Fit(g.mark+" "+ui.GetFileIcon(f)+"  "+f.Name, max(width-sizeW-3, 4))
+		name := utils.Fit(g.mark+" "+ui.GetFileIcon(f)+"  "+utils.Printable(f.Name), max(width-sizeW-3, 4))
 		lines = append(lines, " "+m.fg(t.Selected).Render(name)+m.fg(t.Muted).Render(utils.FitRight(utils.HumanizeSize(f.Size), sizeW)))
 	}
 	total := fmt.Sprintf("%s in %d here", utils.HumanizeSize(size), len(here))
@@ -668,12 +722,13 @@ func (m Model) renderStatusBar() string {
 		segs = append(segs, segment{m.statusMsg, style})
 	}
 
-	// The message is last, so it is what gets cut when space runs out
+	// The message is last, so it is what gets cut when space runs out.
+	// Messages quote names, errors and plugin output, so may hold anything.
 	room := m.width - utils.Width(badge) - utils.Width(right)
 	var b strings.Builder
 	used := 0
 	for _, s := range segs {
-		text := utils.Truncate("  "+s.text, room-used-1)
+		text := utils.Truncate("  "+utils.Printable(s.text), room-used-1)
 		if utils.Width(text) < 5 {
 			break
 		}
@@ -767,8 +822,9 @@ func (m Model) renderSearchBar() string {
 	}
 	room -= utils.Width(right)
 
-	// Keep the end of a long query (where the user is typing) visible
-	query := utils.TruncateLeft(tab.SearchQuery, max(room, 1))
+	// Keep the end of a long query (where the user is typing) visible.
+	// Pasted text can bring control characters with it.
+	query := utils.TruncateLeft(utils.Printable(tab.SearchQuery), max(room, 1))
 	left := " " + m.fg(t.Title).Bold(true).Render("/") + " " + m.fg(t.Text).Render(query) + lipgloss.NewStyle().Reverse(true).Render(" ")
 	gap := max(m.width-utils.Width(left)-utils.Width(right), 0)
 	return utils.Cells(left+strings.Repeat(" ", gap)+m.fg(t.Faint).Render(right), 0, m.width)
@@ -777,11 +833,11 @@ func (m Model) renderSearchBar() string {
 // renderPromptBar renders the prompt used to create files and directories
 func (m Model) renderPromptBar() string {
 	t := m.theme
-	label := " " + m.fg(t.Title).Bold(true).Render(m.prompt.label) + " "
+	label := " " + m.fg(t.Title).Bold(true).Render(utils.Printable(m.prompt.label)) + " "
 
 	errText := ""
 	if m.prompt.err != "" {
-		errText = "  " + m.fg(t.Danger).Render(utils.Truncate(m.prompt.err, m.width/2))
+		errText = "  " + m.fg(t.Danger).Render(utils.Truncate(utils.Printable(m.prompt.err), m.width/2))
 	}
 
 	// The input gets whatever room the label and error leave
@@ -860,7 +916,7 @@ func (m Model) confirmBox() []string {
 
 	var body []string
 	for _, line := range strings.Split(message, "\n") {
-		body = append(body, " "+m.fg(t.Text).Render(line))
+		body = append(body, " "+m.fg(t.Text).Render(utils.Printable(line)))
 	}
 	if m.confirmAction == "delete" {
 		body = append(body, "", " "+m.fg(t.Muted).Render("This is permanent. There is no undo."))
@@ -904,7 +960,7 @@ func (m Model) bookmarksBox() []string {
 		}
 		// Keep the end of long paths visible
 		path := utils.TruncateLeft(strings.Join(pathSegments(bm.Path), string(filepath.Separator)), max(inner-22, 8))
-		body = append(body, m.pickerRow(i == m.bookmarkCursor, inner, num, utils.Fit(bm.Name, 16), path))
+		body = append(body, m.pickerRow(i == m.bookmarkCursor, inner, num, utils.Fit(utils.Printable(bm.Name), 16), path))
 	}
 	return m.dialog("Bookmarks", t.Accent, body, width)
 }
@@ -923,7 +979,7 @@ func (m Model) runBox() []string {
 		cursor := lipgloss.NewStyle().Reverse(true)
 		body = append(body, prompt+m.runInput.View(max(inner-4, 1), m.fg(t.Text), cursor))
 	case m.runInput.Value() != "":
-		body = append(body, prompt+m.fg(t.Muted).Render(utils.Truncate(m.runInput.Value(), inner-4)))
+		body = append(body, prompt+m.fg(t.Muted).Render(utils.Truncate(utils.Printable(m.runInput.Value()), inner-4)))
 	default:
 		body = append(body, prompt+m.fg(t.Faint).Render(utils.Truncate("press tab to type a shell command", inner-4)))
 	}
@@ -935,16 +991,18 @@ func (m Model) runBox() []string {
 			" "+m.fg(t.Muted).Render("or executable scripts to ~/.config/sushi/plugins/"))
 	}
 	descW := max(inner-10-18-12-4, 0)
+	// Plugins are described by config files and scripts' comments
 	for i, p := range m.plugins {
 		body = append(body, m.pickerRow(!m.runTyping && i == m.pluginCursor, inner,
-			utils.Fit(p.Key, 10), utils.Fit(p.Name, 18), utils.Fit(p.Description, descW), utils.FitRight(p.Mode, 10)))
+			utils.Fit(utils.Printable(p.Key), 10), utils.Fit(utils.Printable(p.Name), 18),
+			utils.Fit(utils.Printable(p.Description), descW), utils.FitRight(utils.Printable(p.Mode), 10)))
 	}
 
 	target := describe(m.targets())
 	if len(m.targets()) == 0 {
 		target = "this directory"
 	}
-	body = append(body, "", " "+m.fg(t.Muted).Render(utils.Truncate("Runs on "+target, inner-2)))
+	body = append(body, "", " "+m.fg(t.Muted).Render(utils.Truncate("Runs on "+utils.Printable(target), inner-2)))
 	return m.dialog("Run", t.Accent, body, width)
 }
 
