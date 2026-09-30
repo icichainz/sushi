@@ -372,11 +372,14 @@ func keyHint(desc string, bindings ...key.Binding) hint {
 
 // WriteKeys writes every action with the keys cfg binds it to, as a keys:
 // section for the config file, and then the keys that can't be changed and
-// those of plugins. It returns the problems found with the config's keys
-// and plugins, which sushi would show in the status bar.
+// those of plugins. It returns every problem found with the config, its
+// theme, keys and plugins, in the order sushi finds them at startup, where
+// the status bar has room for only the first.
 func WriteKeys(w io.Writer, cfg *config.Config) ([]string, error) {
-	keys, problems := loadKeyMap(cfg.Keys)
+	_, problems := loadTheme(cfg)
 	problems = append(slices.Clone(cfg.Problems), problems...)
+	keys, keyProblems := loadKeyMap(cfg.Keys)
+	problems = append(problems, keyProblems...)
 	loaded, warnings := plugins.Load(cfg.Plugins, config.PluginDir())
 	m := Model{keys: keys, plugins: loaded}
 	problems = append(problems, warnings...)

@@ -972,15 +972,33 @@ func TestConfigProblemsShownAtStartup(t *testing.T) {
 	}
 	t.Cleanup(func() { statusTimer = old })
 
+	// The first is shown whole, with how many more there are: all of them
+	// on one line were cut short
 	m := newTestModel(t, t.TempDir(), cfg)
-	for _, want := range []string{"neon", "nope", "line 3: bad value"} {
-		if !strings.Contains(m.statusMsg, want) {
-			t.Fatalf("statusMsg = %q, want every problem", m.statusMsg)
-		}
+	if want := "config.yaml: line 3: bad value (+2 more, see sushi --list-keys)"; m.statusMsg != want {
+		t.Fatalf("statusMsg = %q, want %q", m.statusMsg, want)
+	}
+	// Which lists them all
+	var out strings.Builder
+	problems, _ := WriteKeys(&out, cfg)
+	if found := strings.Join(problems, "\n"); len(problems) != 3 || !strings.Contains(found, "neon") || !strings.Contains(found, "nope") {
+		t.Fatalf("--list-keys problems:\n%s", found)
 	}
 	// Init clears them, after long enough to read them
 	if m = drain(t, m, m.Init()); m.statusMsg != "" || shownFor != 10*time.Second {
 		t.Fatalf("after Init: status %q, shown for %v; want it cleared after 10s", m.statusMsg, shownFor)
+	}
+
+	// Just one is shown as it is
+	cfg.SyntaxTheme, cfg.Problems = "", nil
+	if m = newTestModel(t, t.TempDir(), cfg); m.statusMsg != `unknown theme "neon", using default` {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+
+	// A folder that can't be read comes first, as --list-keys can't say it
+	m = newTestModel(t, filepath.Join(t.TempDir(), "missing"), cfg)
+	if !strings.HasPrefix(m.statusMsg, "Error: ") || !strings.HasSuffix(m.statusMsg, "(+1 more, see sushi --list-keys)") {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
 	}
 }
 
@@ -1464,9 +1482,7 @@ func TestPluginKeyConflictsAreReported(t *testing.T) {
 	}
 	m := newTestModel(t, t.TempDir(), cfg)
 
-	if !strings.Contains(m.statusMsg, `key "q" is used by sushi`) || !strings.Contains(m.statusMsg, "already used by first") {
-		t.Fatalf("statusMsg = %q", m.statusMsg)
-	}
+	wantProblems(t, m, `key "q" is used by sushi`, "already used by first")
 	if _, ok := m.pluginKeys["q"]; ok {
 		t.Fatal("a plugin took over q")
 	}
