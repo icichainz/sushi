@@ -1489,6 +1489,17 @@ func TestPluginKeyConflictsAreReported(t *testing.T) {
 	if m.plugins[m.pluginKeys["Z"]].Name != "first" {
 		t.Fatal("Z should stay with the first plugin")
 	}
+
+	// The Run palette shows no key for those refused one, rather than a
+	// key that does something else
+	m, _ = press(t, m, "P")
+	for _, line := range strings.Split(ansi.Strip(strings.Join(m.runBox(), "\n")), "\n") {
+		for name, key := range map[string]string{"quitter": "", "first": "Z", "second": ""} {
+			if i := strings.Index(line, name); i >= 0 && strings.TrimSpace(line[strings.LastIndex(line[:i], "│")+len("│"):i]) != key {
+				t.Errorf("%s is shown as %q, want the key %q", name, strings.TrimSpace(line), key)
+			}
+		}
+	}
 }
 
 func TestScriptPluginsAreDiscovered(t *testing.T) {

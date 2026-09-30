@@ -60,7 +60,9 @@ func (c *cmdFiles) removeAll() {
 }
 
 // bindPluginKeys maps plugin shortcuts to plugins. Built-in keys can't be
-// taken over, so conflicts are reported instead.
+// taken over, so conflicts are reported instead, and the plugin is left
+// without a key, so the Run palette doesn't show one that does something
+// else.
 func (m *Model) bindPluginKeys() []string {
 	// The keys as remapped in the config, so a plugin can have a key an
 	// action has given up
@@ -71,15 +73,18 @@ func (m *Model) bindPluginKeys() []string {
 	for i, p := range m.plugins {
 		switch {
 		case p.Key == "":
+			continue
 		case used[p.Key] != "":
 			warnings = append(warnings, fmt.Sprintf("plugin %s: key %q is used by sushi for %s", p.Name, p.Key, used[p.Key]))
 		default:
-			if other, taken := m.pluginKeys[p.Key]; taken {
-				warnings = append(warnings, fmt.Sprintf("plugin %s: key %q is already used by %s", p.Name, p.Key, m.plugins[other].Name))
+			other, taken := m.pluginKeys[p.Key]
+			if !taken {
+				m.pluginKeys[p.Key] = i
 				continue
 			}
-			m.pluginKeys[p.Key] = i
+			warnings = append(warnings, fmt.Sprintf("plugin %s: key %q is already used by %s", p.Name, p.Key, m.plugins[other].Name))
 		}
+		m.plugins[i].Key = ""
 	}
 	return warnings
 }
