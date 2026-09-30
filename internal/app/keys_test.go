@@ -381,16 +381,23 @@ func TestPanelAndHintsShowRemaps(t *testing.T) {
 }
 
 func TestQuitKeyInTheKeyPanel(t *testing.T) {
-	// q closes the panel rather than quitting
+	// q closes the panel rather than quitting; ctrl+c still quits
 	m := newTestModel(t, threeFiles(t), nil)
 	m, _ = press(t, m, "?")
-	if m, cmd := press(t, m, "q"); m.mode != ModeNormal || cmd != nil {
+	if closed, cmd := press(t, m, "q"); closed.mode != ModeNormal || cmd != nil {
 		t.Fatal("q should close the panel, and only that")
 	}
+	if _, cmd := pressKey(t, m, tea.KeyCtrlC); cmd == nil || cmd() != tea.Quit() {
+		t.Fatal("ctrl+c should quit from the panel")
+	}
 
-	// Once q does something else, it does that from the panel too
-	m = withKeys(t, threeFiles(t), map[string]config.KeyList{"quit": {"ctrl+c"}, "find": {"q"}})
+	// The quit key the panel shows does that, whatever it is, and q does
+	// what it is bound to
+	m = withKeys(t, threeFiles(t), map[string]config.KeyList{"quit": {"x", "ctrl+c"}, "cut": {"ctrl+k"}, "find": {"q"}})
 	m, _ = press(t, m, "?")
+	if closed, cmd := press(t, m, "x"); closed.mode != ModeNormal || cmd != nil {
+		t.Fatal("x, the quit key, should close the panel, and only that")
+	}
 	if m, _ = press(t, m, "q"); m.mode != ModeFind {
 		t.Fatalf("q bound to find: mode=%v", m.mode)
 	}

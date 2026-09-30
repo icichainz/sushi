@@ -178,14 +178,14 @@ func previewConfig(syntax string) components.PreviewConfig {
 // handleKeyPress processes keyboard input
 func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The key panel: the down and up keys scroll it when it doesn't fit,
-	// esc and the help key close it, and so does q unless q is bound to
-	// something other than quitting. Any other key closes it and does what
-	// the panel says it does.
+	// and esc and the help key close it. So does the quit key it shows (q),
+	// as people press it to leave the panel, not sushi. Any other key
+	// closes it and does what the panel says it does.
 	if m.mode == ModeHelp {
 		scrolls := m.maxHelpScroll() > 0
-		s := msg.String()
-		switch {
-		case s == "esc", key.Matches(msg, m.keys.Help):
+		quit := shownKey(m.keys.Quit)
+		switch s := msg.String(); {
+		case s == "esc", key.Matches(msg, m.keys.Help), quit != "" && keyName(s) == quit:
 			m.mode = ModeNormal
 			m.helpScroll = 0
 			return m, nil
@@ -198,9 +198,6 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.mode = ModeNormal
 		m.helpScroll = 0
-		if action := m.keys.actionFor(s); s == "q" && (action == "" || action == "quit") {
-			return m, nil
-		}
 		return m.handleKeyPress(msg)
 	}
 

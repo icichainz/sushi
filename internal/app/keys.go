@@ -257,8 +257,9 @@ type dialogKey struct {
 
 // dialogKeys lists the dialogs that follow the key map. Esc and Enter keep
 // their meaning in all of them, and the sort menu's letters are what it
-// shows. The Run palette's q and the key panel's q close them only when
-// no action there has taken q, so they are left out.
+// shows. The sort menu and the Run palette close on q only when no action
+// there has taken q, so q is left out, as is the key panel's quit key,
+// which belongs to the quit action.
 func dialogKeys() []dialogKey {
 	sortMenu := map[string]string{"esc": "closes it", "enter": "sorts"}
 	for _, f := range sortFields {
