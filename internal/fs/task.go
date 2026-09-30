@@ -44,6 +44,15 @@ type Task struct {
 	last   time.Time
 	p      Progress
 	buf    []byte
+	copied *[]copied // What a move has copied so far, while it copies
+}
+
+// copied is an entry of a move's source that has been copied, as it was
+// before the copy: once the whole copy is done, it is deleted if it is
+// still as it was
+type copied struct {
+	path string
+	info os.FileInfo
 }
 
 // NewTask returns a task that stops when ctx is done and passes its
@@ -165,9 +174,18 @@ func (t *Task) copyEntry(src, dst string, info os.FileInfo, replace bool) error 
 	if err != nil {
 		return err
 	}
+	t.done(src, info)
 	t.p.Files++
 	t.update()
 	return nil
+}
+
+// done records that src, as info describes it from before the copy, has
+// been copied, when a move is copying
+func (t *Task) done(src string, info os.FileInfo) {
+	if t.copied != nil {
+		*t.copied = append(*t.copied, copied{src, info})
+	}
 }
 
 // copyDir copies a directory's contents into dst, creating it if needed. A
@@ -203,14 +221,22 @@ var readDir = os.ReadDir
 // copyInto copies the contents of the directory src into the directory
 // dst. If created is set, dst is new, and gets src's mode and time.
 func (t *Task) copyInto(src, dst string, info os.FileInfo, created bool) error {
-	entries, err := readDir(src)
-	if err != nil {
-		err = fmt.Errorf("cannot read source directory: %w", err)
-	}
+	// ReadDir can fail part way and still return the entries it read: they
+	// are copied, but the copy is incomplete and must fail, or a move would
+	// go on to delete what was never read
+	entries, readErr := readDir(src)
+	var err error
 	for _, entry := range entries {
 		if err = t.copyPath(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
 			break
 		}
+	}
+	if err == nil && readErr != nil {
+		err = fmt.Errorf("cannot read source directory: %w", readErr)
+	}
+	if err == nil {
+		// After its contents, so a move deletes them before it
+		t.done(src, info)
 	}
 
 	// Keeping the mode and time is best effort: some filesystems have neither.
@@ -338,9 +364,11 @@ var renameForMove = func(src, dst string, replace bool) error {
 
 // Move moves src to dst. On one filesystem this is a rename. Across
 // filesystems, or onto an existing directory, src is copied and then
-// deleted; if the copy fails or is cancelled, what it created is removed
-// and src is left as it was. Deleting src can't be cancelled, so a move
-// never stops with the files only half in either place.
+// deleted; if the copy fails in any way or is cancelled, what it created
+// is removed and src is left as it was. Only what was copied is deleted,
+// and only if it hasn't changed since, so files added to src during the
+// copy stay. Deleting can't be cancelled, so a move never stops with the
+// files only half in either place.
 //
 // What is at dst when the move starts is what the caller chose to
 // replace: a file, a symlink, which is never followed, or an empty
@@ -393,21 +421,70 @@ func (t *Task) Move(src, dst string) (err error) {
 	}
 
 	t.Count(src)
+	var list []copied
+	t.copied = &list
 	if merge || !srcInfo.IsDir() {
 		err = t.copyEntry(src, dst, srcInfo, replace)
 	} else {
 		err = t.copyAside(src, dst, srcInfo)
 	}
+	t.copied = nil
 	if err != nil {
 		if cerr := t.ctx.Err(); cerr != nil {
 			return cerr
 		}
 		return fmt.Errorf("move failed during copy: %w", err)
 	}
-	if err := DeletePath(src); err != nil {
+	if err := deleteCopied(list); err != nil {
 		return fmt.Errorf("move failed during cleanup: %w", err)
 	}
 	return nil
+}
+
+// deleteCopied deletes the entries a move copied from its source, and only
+// those: files added to the source while the copy ran, and entries changed
+// since they were copied, are left where they are, with the folders
+// holding them, and the error says so
+func deleteCopied(list []copied) error {
+	var left []string
+	var firstErr error
+	for _, c := range list {
+		now, err := os.Lstat(c.path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err == nil && !c.info.IsDir() && !sameVersion(now, c.info) {
+			left = append(left, c.path)
+			continue
+		}
+		if err == nil {
+			err = os.Remove(c.path)
+		}
+		switch {
+		case err == nil:
+		case c.info.IsDir() && errors.Is(err, os.ErrExist):
+			// Not empty: something in it was added or left
+			left = append(left, c.path)
+		case firstErr == nil:
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		return firstErr
+	}
+	switch len(left) {
+	case 0:
+		return nil
+	case 1:
+		return fmt.Errorf("%s changed during the move, so it was left where it was", filepath.Base(left[0]))
+	}
+	return fmt.Errorf("%d items, %s among them, changed during the move, so they were left where they were", len(left), filepath.Base(left[0]))
+}
+
+// sameVersion reports whether now is the entry was describes, unchanged
+func sameVersion(now, was os.FileInfo) bool {
+	return os.SameFile(now, was) && now.Mode() == was.Mode() &&
+		(!was.Mode().IsRegular() || now.Size() == was.Size() && now.ModTime().Equal(was.ModTime()))
 }
 
 // copyAside copies the directory src into a new hidden directory beside

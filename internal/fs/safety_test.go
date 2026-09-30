@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -123,6 +124,112 @@ func TestFailedMoveOntoALinkPutsTheLinkBack(t *testing.T) {
 	}
 	if readFile(t, filepath.Join(src, "beach.jpg")) != "sand" || len(leftovers(t, filepath.Dir(dst))) != 0 {
 		t.Fatal("a failed move should leave the source as it was and nothing half-copied")
+	}
+}
+
+// readDirHook makes readDir call hook after reading a directory, which can
+// change what it returns
+func readDirHook(t *testing.T, hook func(dir string, entries []os.DirEntry, err error) ([]os.DirEntry, error)) {
+	t.Helper()
+	real := readDir
+	readDir = func(dir string) ([]os.DirEntry, error) {
+		entries, err := real(dir)
+		return hook(dir, entries, err)
+	}
+	t.Cleanup(func() { readDir = real })
+}
+
+// album makes a folder src with a.txt, b.txt and sub/c.txt
+func album(t *testing.T) (src, dst string) {
+	t.Helper()
+	root := t.TempDir()
+	src = filepath.Join(root, "album")
+	os.MkdirAll(filepath.Join(src, "sub"), 0755)
+	for _, name := range []string{"a.txt", "b.txt", filepath.Join("sub", "c.txt")} {
+		writeFile(t, filepath.Join(src, name), name)
+	}
+	os.Mkdir(filepath.Join(root, "dst"), 0755)
+	return src, filepath.Join(root, "dst", "album")
+}
+
+func TestPartlyReadFolderFailsTheCopyAndKeepsTheSource(t *testing.T) {
+	// A folder that fails part way through being listed, as on a bad disk
+	// or network share: ReadDir returns what it read and an error, which
+	// the copy used to drop, so a move then deleted the rest unread
+	readDirHook(t, func(dir string, entries []os.DirEntry, err error) ([]os.DirEntry, error) {
+		if filepath.Base(dir) == "album" && err == nil && len(entries) > 1 {
+			return entries[:1], errors.New("input/output error")
+		}
+		return entries, err
+	})
+
+	src, dst := album(t)
+	if err := CopyPath(src, dst); err == nil || !strings.Contains(err.Error(), "input/output error") {
+		t.Fatalf("copy: err = %v, want the read error", err)
+	}
+
+	acrossFilesystems(t)
+	src, dst = album(t)
+	if err := MovePath(src, dst); err == nil {
+		t.Fatal("move: want the read error")
+	}
+	for _, name := range []string{"a.txt", "b.txt", filepath.Join("sub", "c.txt")} {
+		if readFile(t, filepath.Join(src, name)) != name {
+			t.Fatalf("move: %s was deleted", name)
+		}
+	}
+	if Exists(dst) || len(leftovers(t, filepath.Dir(dst))) != 0 {
+		t.Fatal("move: the partial copy was left behind")
+	}
+}
+
+func TestUnreadableFolderFailsTheMoveAndKeepsTheSource(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs Unix permissions that apply to the user")
+	}
+	acrossFilesystems(t)
+	src, dst := album(t)
+	locked := filepath.Join(src, "sub")
+	os.Chmod(locked, 0)
+	t.Cleanup(func() { os.Chmod(locked, 0755) })
+
+	if err := MovePath(src, dst); err == nil {
+		t.Fatal("want the move to fail")
+	}
+	os.Chmod(locked, 0755)
+	for _, name := range []string{"a.txt", "b.txt", filepath.Join("sub", "c.txt")} {
+		if readFile(t, filepath.Join(src, name)) != name {
+			t.Fatalf("%s was deleted", name)
+		}
+	}
+}
+
+func TestMoveAcrossFilesystemsKeepsWhatChangesMeanwhile(t *testing.T) {
+	acrossFilesystems(t)
+	src, dst := album(t)
+	// Once the copy reaches sub, a file is added to the source and one it
+	// has already copied is changed
+	readDirHook(t, func(dir string, entries []os.DirEntry, err error) ([]os.DirEntry, error) {
+		if filepath.Base(dir) == "sub" {
+			writeFile(t, filepath.Join(src, "added.txt"), "new")
+			writeFile(t, filepath.Join(src, "a.txt"), "a.txt, edited")
+		}
+		return entries, err
+	})
+
+	err := MovePath(src, dst)
+	if err == nil || !strings.Contains(err.Error(), "changed during the move") {
+		t.Fatalf("err = %v, want what changed reported", err)
+	}
+	if readFile(t, filepath.Join(src, "added.txt")) != "new" || readFile(t, filepath.Join(src, "a.txt")) != "a.txt, edited" {
+		t.Fatal("what changed during the move was deleted")
+	}
+	// What was copied and didn't change is moved
+	if Exists(filepath.Join(src, "b.txt")) || Exists(filepath.Join(src, "sub")) {
+		t.Fatalf("unchanged files are still in the source: %v", dirEntries(t, src))
+	}
+	if readFile(t, filepath.Join(dst, "b.txt")) != "b.txt" || readFile(t, filepath.Join(dst, "sub", "c.txt")) != filepath.Join("sub", "c.txt") {
+		t.Fatal("the copy is incomplete")
 	}
 }
 
