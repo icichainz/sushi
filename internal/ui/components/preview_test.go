@@ -50,9 +50,18 @@ func TestRenderPreviewIsExactlyPaneSized(t *testing.T) {
 	binary := filepath.Join(dir, "a.png")
 	os.WriteFile(binary, []byte{0, 1, 2}, 0644)
 
+	var previews []PreviewContent
 	for _, path := range []string{long, empty, binary, dir} {
-		p := LoadPreview(fileInfo(t, path), 2000)
-		for _, size := range [][2]int{{40, 12}, {12, 3}, {3, 1}, {120, 40}} {
+		previews = append(previews, LoadPreview(fileInfo(t, path), 2000))
+	}
+	link := filepath.Join(dir, "link.go")
+	if os.Symlink(long, link) == nil {
+		info, _ := os.Lstat(link)
+		previews = append(previews, LoadPreview(fs.NewFileInfo(link, info), 2000))
+	}
+
+	for _, p := range previews {
+		for _, size := range [][2]int{{40, 12}, {12, 3}, {3, 1}, {120, 40}, {1, 1}, {2, 5}, {7, 30}} {
 			render(t, p, size[0], size[1], 0)
 			render(t, p, size[0], size[1], 9999)
 		}

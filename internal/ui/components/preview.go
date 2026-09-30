@@ -74,16 +74,17 @@ type Entry struct {
 
 // PreviewContent represents the content to preview
 type PreviewContent struct {
-	Path     string
-	FileInfo fs.FileInfo
-	Kind     string   // "Go", "Markdown", "Directory", "PNG Image", ...
-	IsText   bool     // A text file, shown with line numbers
-	Lines    []string // Text lines (highlighted), or the message for other kinds
-	Total    int      // Lines in the file; more than len(Lines) if it was cut
-	Entries  []Entry  // Directory contents
-	More     bool     // The directory has more entries than listed
-	Content  string   // Lines as plain text, for searching and tests
-	Error    error
+	Path       string
+	FileInfo   fs.FileInfo
+	Kind       string   // "Go", "Markdown", "Directory", "PNG Image", ...
+	LinkTarget string   // Where a symbolic link points
+	IsText     bool     // A text file, shown with line numbers
+	Lines      []string // Text lines (highlighted), or the message for other kinds
+	Total      int      // Lines in the file; more than len(Lines) if it was cut
+	Entries    []Entry  // Directory contents
+	More       bool     // The directory has more entries than listed
+	Content    string   // Lines as plain text, for searching and tests
+	Error      error
 }
 
 // PreviewConfig holds preview configuration
@@ -124,6 +125,13 @@ func LoadPreviewWithConfig(file fs.FileInfo, config PreviewConfig) PreviewConten
 		return preview
 	}
 
+	// The heading shows where a link points, for directories too
+	if file.IsSymlink {
+		if target, err := os.Readlink(file.Path); err == nil {
+			preview.LinkTarget = cleanText(target)
+		}
+	}
+
 	// Handle directories
 	if file.IsDir {
 		entries, more, err := loadDirectoryPreview(file.Path)
@@ -161,27 +169,14 @@ func LoadPreviewWithConfig(file fs.FileInfo, config PreviewConfig) PreviewConten
 			"Cannot preview binary content")
 	}
 
-	// It's a text file, read full content
-	content, err := os.ReadFile(file.Path)
+	// It's a text file: read the lines shown, and only count the rest
+	lines, total, err := readLines(file.Path, config.MaxLines)
 	if err != nil {
 		preview.Error = err
 		return message("File", fmt.Sprintf("Error reading file: %v", err))
 	}
-
-	// Tabs and carriage returns have no fixed width in a terminal
-	text := strings.ReplaceAll(string(content), "\r", "")
-	text = strings.ReplaceAll(text, "\t", "    ")
-	text = strings.TrimSuffix(text, "\n")
-
-	lines := strings.Split(text, "\n")
-	if text == "" {
-		lines = nil
-	}
 	preview.IsText = true
-	preview.Total = len(lines)
-	if len(lines) > config.MaxLines {
-		lines = lines[:config.MaxLines]
-	}
+	preview.Total = total
 	preview.Content = strings.Join(lines, "\n")
 	preview.Kind = "Text"
 	preview.Lines = lines
@@ -333,7 +328,15 @@ func RenderPreview(p PreviewContent, width, height, scroll int, st PreviewStyles
 	total := p.bodyLen()
 
 	// Heading: name and details on the left, position on the right
-	details := []string{p.Kind}
+	var details []string
+	if p.LinkTarget != "" {
+		arrow := "→"
+		if ui.GetIconMode() == ui.IconModeASCII {
+			arrow = "->"
+		}
+		details = append(details, arrow+" "+p.LinkTarget)
+	}
+	details = append(details, p.Kind)
 	if !p.FileInfo.IsDir {
 		details = append(details, utils.HumanizeSize(p.FileInfo.Size))
 	}
