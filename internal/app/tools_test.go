@@ -1,6 +1,7 @@
 package app
 
 import (
+	"archive/tar"
 	"archive/zip"
 	"bytes"
 	"fmt"
@@ -940,5 +941,29 @@ func TestExtractReportsUnsafeArchives(t *testing.T) {
 	m = cursorTo(t, m, "notes.txt")
 	if m, _ = press(t, m, "X"); !strings.Contains(m.statusMsg, "Nothing to extract") {
 		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+
+	// A tar archive is read in order, so its good entries are written
+	// before the bad one is found; then they go, with the folder
+	buf.Reset()
+	tw := tar.NewWriter(&buf)
+	for _, e := range []struct{ name, body string }{{"fine.txt", "fine"}, {"../escaped.txt", "pwned"}} {
+		tw.WriteHeader(&tar.Header{Name: e.name, Mode: 0644, Size: int64(len(e.body)), Typeflag: tar.TypeReg})
+		tw.Write([]byte(e.body))
+	}
+	tw.Close()
+	os.WriteFile(filepath.Join(dir, "evil.tar"), buf.Bytes(), 0644)
+	m = cursorTo(t, drain(t, m, m.reloadAll()), "evil.tar")
+	undos := len(m.undo)
+	m, cmd = press(t, m, "X")
+	m = drain(t, m, cmd)
+	if !strings.Contains(m.statusMsg, "unsafe path") || fs.Exists(filepath.Join(root, "escaped.txt")) {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+	if got := dirNames(t, dir); strings.Join(got, " ") != "evil.tar evil.zip notes.txt" {
+		t.Fatalf("left behind: %v", got)
+	}
+	if len(m.undo) != undos {
+		t.Fatal("a refused extraction was left to undo")
 	}
 }
