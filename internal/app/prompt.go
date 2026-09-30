@@ -2,8 +2,10 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/fs"
@@ -72,6 +74,7 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	dir := m.tab().CurrentPath
 
 	var path, status string
+	var undo *undoEntry
 	var err error
 	switch m.prompt.action {
 	case promptRename:
@@ -83,8 +86,10 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 			}
 			m.retarget(old, path)
 			status = fmt.Sprintf("Renamed %s → %s", filepath.Base(old), filepath.Base(path))
+			undo = renameUndo(old, path)
 		}
 	case promptNewFile:
+		created := createdRoot(dir, value)
 		// A trailing separator asks for a directory, as in "build/"
 		if strings.HasSuffix(value, "/") || strings.HasSuffix(value, string(filepath.Separator)) {
 			path, err = fs.CreateDir(dir, value)
@@ -92,9 +97,12 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 			path, err = fs.CreateFile(dir, value)
 		}
 		status = "Created " + value
+		undo = createUndo("create "+value, created)
 	case promptNewDir:
+		created := createdRoot(dir, value)
 		path, err = fs.CreateDir(dir, value)
 		status = "Created " + value
+		undo = createUndo("create "+value, created)
 	}
 
 	if err != nil {
@@ -103,9 +111,27 @@ func (m Model) submitPrompt() (tea.Model, tea.Cmd) {
 	}
 
 	m.mode = ModeNormal
+	m.pushUndo(undo)
 	m.tab().focusPath = topLevelEntry(dir, path)
 	cmd := tea.Batch(m.setStatus(status), m.reloadAll())
 	return m, cmd
+}
+
+// createdRoot returns the first part of name, a new entry in dir, that
+// doesn't exist yet: what undoing its creation removes. Creating
+// "src/main.go" creates src too if it is new.
+func createdRoot(dir, name string) string {
+	path := dir
+	parts := strings.FieldsFunc(name, func(r rune) bool {
+		return r < utf8.RuneSelf && (r == '/' || os.IsPathSeparator(uint8(r)))
+	})
+	for _, part := range parts {
+		path = filepath.Join(path, part)
+		if !fs.Exists(path) {
+			break
+		}
+	}
+	return path
 }
 
 // topLevelEntry returns the entry of dir that contains path, so creating

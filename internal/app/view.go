@@ -670,6 +670,10 @@ func (m Model) renderStatusBar() string {
 		style lipgloss.Style
 	}
 	var segs []segment
+	// First, so it stays when the rest is cut short
+	if m.job != nil {
+		segs = append(segs, segment{m.job.status(), bar.Foreground(t.Highlight).Bold(true)})
+	}
 	if m.mode == ModeSearch {
 		segs = append(segs, segment{fmt.Sprintf("%d of %d match", len(visible), len(tab.Files)), bar})
 	} else {
@@ -752,6 +756,10 @@ func (m Model) renderBottomRow() string {
 			return m.renderHints([]hint{{"esc", "close"}, {"j/k", "scroll"}, {"any other key", "does what it says"}})
 		}
 		return m.renderHints([]hint{{"esc", "close"}, {"any other key", "does what it says"}})
+	}
+	if m.job != nil {
+		return m.renderHints([]hint{{"ctrl+x", "cancel " + strings.ToLower(m.job.doing)}, {"enter", "open"}, {"space", "select"},
+			{"c", "copy"}, {"x", "cut"}, {"/", "search"}, {"?", "all keys"}})
 	}
 	if len(m.tabs[m.activeTabIdx].Selected) > 0 {
 		return m.renderHints([]hint{{"space", "toggle"}, {"*", "invert"}, {"u", "clear"}, {"c", "copy"}, {"x", "cut"},
@@ -963,7 +971,8 @@ var helpGroups = []struct {
 	keys  []hint
 }{
 	{"Move", []hint{{"j k", "down, up"}, {"h l", "parent, open"}, {"g G", "first, last"}, {"ctrl+u d", "page up, down"}, {"J K", "scroll preview"}}},
-	{"Files", []hint{{"enter", "open"}, {"e o", "edit, default app"}, {"r", "rename"}, {"n N", "new file, folder"}, {"d", "delete"}}},
+	{"Files", []hint{{"enter", "open"}, {"e o", "edit, default app"}, {"r", "rename"}, {"n N", "new file, folder"}, {"d D", "trash, delete"}}},
+	{"Tools", []hint{{"ctrl+z", "undo"}, {"ctrl+x", "cancel operation"}}},
 	{"Select", []hint{{"space", "toggle"}, {"*", "invert"}, {"u", "clear"}, {"c x v", "copy, cut, paste"}}},
 	{"View", []hint{{"/", "search"}, {"p", "preview"}, {".", "hidden files"}, {"?", "this panel"}}},
 	{"Tabs", []hint{{"t T", "new here, home"}, {"tab", "next"}, {"shift+tab", "previous"}, {"ctrl+w", "close"}}},

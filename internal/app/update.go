@@ -109,6 +109,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pluginDoneMsg:
 		return m.handlePluginDone(msg)
 
+	case selfApplying:
+		// Background operations and file tools; see jobs.go and tools.go
+		return msg.apply(m)
+
 	case clearStatusMsg:
 		if msg.id == m.statusID {
 			m.statusMsg = ""
@@ -214,6 +218,13 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Plugin shortcuts; bindPluginKeys keeps them clear of built-in keys
 	if i, ok := m.pluginKeys[msg.String()]; ok {
 		return m.runPlugin(m.plugins[i])
+	}
+
+	// While an operation runs, ctrl+x cancels it and changing files waits
+	if m.job != nil {
+		if model, cmd, handled := m.whileBusy(msg); handled {
+			return model, cmd
+		}
 	}
 
 	tab := &m.tabs[m.activeTabIdx]
@@ -356,6 +367,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Paste):
 		return m.startPaste()
+
+	case m.keys.isToolKey(msg):
+		return m.handleToolKey(msg)
 
 	case key.Matches(msg, m.keys.Search):
 		m.mode = ModeSearch
