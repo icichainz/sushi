@@ -113,3 +113,21 @@ func cleanText(s string) string {
 		return r
 	}, s)
 }
+
+// withLines sets the lines of a preview that isn't a file's text
+func withLines(p PreviewContent, lines ...string) PreviewContent {
+	p.Lines = lines
+	p.Content = strings.Join(lines, "\n")
+	return p
+}
+
+// detailsView shows what is known about a file whose content isn't shown:
+// when it was modified, and why
+func detailsView(p PreviewContent, note string) PreviewContent {
+	return withLines(p, "Modified  "+p.FileInfo.ModTime.Format("2006-01-02 15:04:05"), "", note)
+}
+
+// spaces returns n spaces, or none for n <= 0
+func spaces(n int) string {
+	return strings.Repeat(" ", max(n, 0))
+}

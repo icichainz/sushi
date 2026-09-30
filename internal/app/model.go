@@ -412,5 +412,8 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
+	if m.tab().Preview.Pending {
+		return tea.Batch(m.initCmd, m.previewCmd(m.tab()))
+	}
 	return m.initCmd
 }

@@ -25,10 +25,13 @@ var fileTypeMap = map[string]string{
 	".jpeg": "JPEG Image",
 	".png":  "PNG Image",
 	".gif":  "GIF Image",
+	".webp": "WebP Image",
+	".bmp":  "BMP Image",
 	".pdf":  "PDF Document",
 	".zip":  "ZIP Archive",
 	".tar":  "TAR Archive",
 	".gz":   "GZIP Archive",
+	".tgz":  "TAR.GZ Archive",
 	".mp3":  "MP3 Audio",
 	".mp4":  "MP4 Video",
 	".exe":  "Executable",
@@ -66,10 +69,11 @@ func init() {
 	}))
 }
 
-// Entry is one item of a previewed directory
+// Entry is one item of a previewed directory or archive
 type Entry struct {
 	Name  string
 	IsDir bool
+	Size  int64 // Archive entries only
 }
 
 // PreviewContent represents the content to preview
@@ -77,13 +81,19 @@ type PreviewContent struct {
 	Path       string
 	FileInfo   fs.FileInfo
 	Kind       string   // "Go", "Markdown", "Directory", "PNG Image", ...
+	Details    []string // More for the heading, e.g. "1920x1080" or "12 pages"
 	LinkTarget string   // Where a symbolic link points
 	IsText     bool     // A text file, shown with line numbers
 	Lines      []string // Text lines (highlighted), or the message for other kinds
 	Total      int      // Lines in the file; more than len(Lines) if it was cut
-	Entries    []Entry  // Directory contents
-	More       bool     // The directory has more entries than listed
-	Content    string   // Lines as plain text, for searching and tests
+	Entries    []Entry  // Directory or archive contents
+	More       bool     // The directory or archive has more entries than listed
+	Archive    bool     // Entries are an archive's contents
+	Count      int      // Entries in the archive
+	Partial    bool     // The archive wasn't read to the end, so Count is a minimum
+	Image      *ImagePreview
+	Pending    bool   // Slow work was skipped (PreviewConfig.Quick); load again to finish
+	Content    string // Lines as plain text, for searching and tests
 	Error      error
 }
 
@@ -93,6 +103,8 @@ type PreviewConfig struct {
 	SyntaxHighlight bool
 	SyntaxTheme     string
 	MaxPreviewSize  int64
+	Images          ImageColors // How images are drawn, if at all
+	Quick           bool        // Skip slow work (images, archives, PDFs) and mark the preview Pending
 }
 
 // DefaultPreviewConfig returns default preview settings
@@ -102,6 +114,7 @@ func DefaultPreviewConfig() PreviewConfig {
 		SyntaxHighlight: true,
 		SyntaxTheme:     "sushi",
 		MaxPreviewSize:  10 * 1024 * 1024, // 10MB
+		Images:          DetectImageColors(),
 	}
 }
 
@@ -148,6 +161,18 @@ func LoadPreviewWithConfig(file fs.FileInfo, config PreviewConfig) PreviewConten
 		}
 		preview.Content = strings.Join(names, "\n")
 		return preview
+	}
+
+	// Images, archives and PDFs read only what they need, so the size
+	// limit for text doesn't apply
+	name := strings.ToLower(file.Name)
+	switch {
+	case imageExts[filepath.Ext(name)]:
+		return loadImagePreview(preview, config)
+	case archiveFormat(name) != "":
+		return loadArchivePreview(preview, config)
+	case filepath.Ext(name) == ".pdf":
+		return loadPDFPreview(preview, config)
 	}
 
 	// Check if file is too large
@@ -295,10 +320,15 @@ type PreviewStyles struct {
 	Error lipgloss.Style
 }
 
+// listing reports whether the body lists entries, of a directory or archive
+func (p PreviewContent) listing() bool {
+	return (p.Kind == "Directory" || p.Archive) && p.Error == nil
+}
+
 // bodyLen returns how many rows the preview's body has in total
 func (p PreviewContent) bodyLen() int {
 	n := len(p.Lines)
-	if p.Kind == "Directory" && p.Error == nil {
+	if p.listing() {
 		n = len(p.Entries)
 		if n == 0 || p.More {
 			n++
@@ -306,6 +336,9 @@ func (p PreviewContent) bodyLen() int {
 	}
 	if p.IsText && (p.Total > len(p.Lines) || p.Total == 0) {
 		n++
+	}
+	if p.Image != nil {
+		n = 0 // Drawn to fit the pane, so it never scrolls
 	}
 	return n
 }
@@ -337,6 +370,7 @@ func RenderPreview(p PreviewContent, width, height, scroll int, st PreviewStyles
 		details = append(details, arrow+" "+p.LinkTarget)
 	}
 	details = append(details, p.Kind)
+	details = append(details, p.Details...)
 	if !p.FileInfo.IsDir {
 		details = append(details, utils.HumanizeSize(p.FileInfo.Size))
 	}
@@ -350,6 +384,11 @@ func RenderPreview(p PreviewContent, width, height, scroll int, st PreviewStyles
 		if p.More {
 			pos = fmt.Sprintf("%d+ items", len(p.Entries))
 		}
+	case p.Archive && p.Error == nil && p.Count > 0:
+		pos = fmt.Sprintf("%d entries", p.Count)
+		if p.Partial {
+			pos = fmt.Sprintf("%d+ entries", p.Count)
+		}
 	}
 	inner := width - 2
 	posW := utils.Width(pos)
@@ -361,6 +400,15 @@ func RenderPreview(p PreviewContent, width, height, scroll int, st PreviewStyles
 	gap := max(inner-utils.Width(name)-utils.Width(rest)-posW, 0)
 	out = append(out, utils.Fit(" "+st.Title.Render(name)+st.Faint.Render(rest)+strings.Repeat(" ", gap)+st.Faint.Render(pos), width))
 
+	// Image rows are exactly inner cells wide already, and long enough
+	// that measuring them again would be wasted work
+	if p.Image != nil && inner > 0 {
+		for _, row := range p.Image.Rows(inner, rows) {
+			out = append(out, " "+row+" ")
+		}
+		return out
+	}
+
 	gutter := len(strconv.Itoa(max(p.Total, 1))) + 1
 	for i := scroll; i < scroll+rows; i++ {
 		var line string
@@ -368,7 +416,7 @@ func RenderPreview(p PreviewContent, width, height, scroll int, st PreviewStyles
 		case i >= total:
 		case p.Error != nil:
 			line = " " + st.Error.Render(utils.Truncate(p.Lines[i], inner))
-		case p.Kind == "Directory":
+		case p.listing():
 			line = " " + renderEntry(p, i, inner, st)
 		case p.IsText && i < len(p.Lines):
 			num := st.Faint.Render(utils.FitRight(strconv.Itoa(i+1), gutter))
@@ -385,12 +433,18 @@ func RenderPreview(p PreviewContent, width, height, scroll int, st PreviewStyles
 	return out
 }
 
-// renderEntry draws row i of a directory preview
+// renderEntry draws row i of a directory or archive preview
 func renderEntry(p PreviewContent, i, width int, st PreviewStyles) string {
 	if len(p.Entries) == 0 {
+		if p.Archive {
+			return st.Faint.Render(utils.Truncate("Empty archive", width))
+		}
 		return st.Faint.Render(utils.Truncate("Empty directory", width))
 	}
 	if i >= len(p.Entries) {
+		if p.Archive && !p.Partial {
+			return st.Faint.Render(utils.Truncate(fmt.Sprintf("and %d more", p.Count-len(p.Entries)), width))
+		}
 		return st.Faint.Render(utils.Truncate("and more", width))
 	}
 	e := p.Entries[i]
@@ -398,5 +452,11 @@ func renderEntry(p PreviewContent, i, width int, st PreviewStyles) string {
 		return st.Dir.Render(utils.Truncate(ui.GetDirIcon()+"  "+e.Name, width))
 	}
 	icon := ui.GetFileIcon(fs.FileInfo{Name: e.Name})
+	// Archive entries have their size on the right, when there is room
+	if p.Archive && width >= 30 {
+		const sizeW = 10
+		return st.Text.Render(utils.Fit(icon+"  "+e.Name, width-sizeW)) +
+			st.Faint.Render(utils.FitRight(utils.HumanizeSize(e.Size), sizeW))
+	}
 	return st.Text.Render(utils.Truncate(icon+"  "+e.Name, width))
 }
