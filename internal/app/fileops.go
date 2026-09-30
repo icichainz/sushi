@@ -141,7 +141,8 @@ func (m Model) startPaste() (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	conflicts, err := m.checkPaste(m.tab().CurrentPath)
+	dir := m.tab().CurrentPath
+	conflicts, err := m.checkPaste(dir)
 	if err != nil {
 		// Refuse up front rather than offering to overwrite a source with itself
 		cmd := m.setStatus(fmt.Sprintf("Can't paste: %v", err))
@@ -149,12 +150,37 @@ func (m Model) startPaste() (tea.Model, tea.Cmd) {
 	}
 	if len(conflicts) > 0 {
 		m.pending = conflicts
+		m.pasteDir = dir
 		m.confirmAction = "paste"
 		m.mode = ModeConfirm
 		return m, nil
 	}
-	cmd := m.executePaste()
+	cmd := m.executePaste(dir)
 	return m, cmd
+}
+
+// confirmPaste carries out the paste the overwrite dialog asked about, if
+// it is still that paste. The dialog stays open while the tab moves on: a
+// load lands, or the watcher finds the folder deleted and goes up, and
+// other names can be taken meanwhile. Pasting into whatever is shown now,
+// or over names nobody was asked about, could overwrite anything.
+func (m *Model) confirmPaste() tea.Cmd {
+	dir, asked := m.pasteDir, m.pending
+	m.pasteDir, m.pending = "", nil
+	why := ""
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		why = filepath.Base(dir) + " is gone"
+	} else if m.tab().CurrentPath != dir {
+		why = "The folder shown changed"
+	} else if conflicts, err := m.checkPaste(dir); err != nil {
+		return m.setStatus(fmt.Sprintf("Can't paste: %v", err))
+	} else if !slices.Equal(conflicts, asked) {
+		why = "What the paste would overwrite changed"
+	}
+	if why != "" {
+		return m.setStatus(why + ", so nothing was pasted")
+	}
+	return m.executePaste(dir)
 }
 
 // nameKey folds a file name the way filesystems that ignore case and
@@ -210,11 +236,9 @@ func (m *Model) executeDelete() tea.Cmd {
 	})
 }
 
-// executePaste copies or moves the clipboard into the current directory,
-// in the background
-func (m *Model) executePaste() tea.Cmd {
+// executePaste copies or moves the clipboard into dir, in the background
+func (m *Model) executePaste(dir string) tea.Cmd {
 	srcs := append([]string(nil), m.clipboard...)
-	dir := m.tab().CurrentPath
 	mode := m.clipboardMode
 	m.pending = nil
 

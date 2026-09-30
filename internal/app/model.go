@@ -69,6 +69,7 @@ type Model struct {
 	clipboardMode string   // "copy" or "cut"
 	confirmAction string   // "delete" or "paste"
 	pending       []string // Paths to delete, or names a paste would overwrite
+	pasteDir      string   // Where the paste the dialog asks about goes
 
 	// Background operations and undo; see jobs.go and undo.go
 	job    *job        // The operation running in the background, if any

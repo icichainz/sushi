@@ -163,7 +163,7 @@ func TestPasteNeverReplacesWhatItHasJustPasted(t *testing.T) {
 		m := newTestModel(t, filepath.Dir(x), nil)
 		m.clipboard, m.clipboardMode = []string{x, y}, mode
 		m.tab().CurrentPath = z
-		m = drain(t, m, m.executePaste())
+		m = drain(t, m, m.executePaste(z))
 		if m.statusMsg == "" || !strings.Contains(m.statusMsg, "just put there") {
 			t.Fatalf("%s: statusMsg = %q", mode, m.statusMsg)
 		}
@@ -551,5 +551,86 @@ func TestTargetsAreCleaned(t *testing.T) {
 	m.tab().Selected[a] = true
 	if got := m.targets(); len(got) != 1 || got[0] != a {
 		t.Fatalf("targets = %q, want just %q", got, a)
+	}
+}
+
+func TestOverwriteConfirmationStaysWithItsFolder(t *testing.T) {
+	root := t.TempDir()
+	src, sub := filepath.Join(root, "src"), filepath.Join(root, "sub")
+	os.Mkdir(src, 0755)
+	os.Mkdir(sub, 0755)
+	writeTestFile(t, filepath.Join(src, "a.txt"), "new")
+	writeTestFile(t, filepath.Join(sub, "a.txt"), "old")
+	writeTestFile(t, filepath.Join(root, "a.txt"), "the parent's")
+
+	// The dialog asks about sub/a.txt
+	ask := func(t *testing.T) Model {
+		t.Helper()
+		m := newTestModel(t, src, noWatch())
+		m, _ = press(t, m, "c")
+		m = drain(t, m, m.loadDir(m.tab(), sub))
+		if m, _ = press(t, m, "v"); m.mode != ModeConfirm {
+			t.Fatalf("mode = %v, want the overwrite dialog", m.mode)
+		}
+		return m
+	}
+	unchanged := func(t *testing.T) {
+		t.Helper()
+		for path, want := range map[string]string{filepath.Join(root, "a.txt"): "the parent's", filepath.Join(sub, "a.txt"): "old"} {
+			if got := readTestFile(t, path); got != want {
+				t.Fatalf("%s = %q, want %q: the paste went ahead", path, got, want)
+			}
+		}
+	}
+
+	// Meanwhile a load lands the tab in the parent, which has an a.txt of
+	// its own that nobody was asked about
+	m := ask(t)
+	m = drain(t, m, m.loadDir(m.tab(), root))
+	m, cmd := press(t, m, "y")
+	m = drain(t, m, cmd)
+	unchanged(t)
+	if m.mode != ModeNormal || !strings.Contains(m.statusMsg, "nothing was pasted") {
+		t.Fatalf("mode=%v status=%q, want the paste called off", m.mode, m.statusMsg)
+	}
+
+	// The folder is deleted while the dialog is open: the watcher's reload
+	// moves the tab up
+	m = ask(t)
+	os.Rename(sub, filepath.Join(root, "gone"))
+	m = changeDirs(t, m, sub)
+	if m.tab().CurrentPath != root {
+		t.Fatalf("in %s, want the reload to have moved up to %s", m.tab().CurrentPath, root)
+	}
+	m, cmd = press(t, m, "y")
+	m = drain(t, m, cmd)
+	if got := readTestFile(t, filepath.Join(root, "a.txt")); got != "the parent's" || !strings.Contains(m.statusMsg, "nothing was pasted") {
+		t.Fatalf("the parent's a.txt = %q, status %q", got, m.statusMsg)
+	}
+	os.Rename(filepath.Join(root, "gone"), sub)
+
+	// What would be overwritten changes: another name is taken meanwhile
+	m = ask(t)
+	writeTestFile(t, filepath.Join(src, "b.txt"), "new b")
+	m.clipboard = append(m.clipboard, filepath.Join(src, "b.txt"))
+	writeTestFile(t, filepath.Join(sub, "b.txt"), "old b")
+	m, cmd = press(t, m, "y")
+	m = drain(t, m, cmd)
+	unchanged(t)
+	if got := readTestFile(t, filepath.Join(sub, "b.txt")); got != "old b" || !strings.Contains(m.statusMsg, "nothing was pasted") {
+		t.Fatalf("b.txt = %q, status %q", got, m.statusMsg)
+	}
+	os.Remove(filepath.Join(src, "b.txt"))
+	os.Remove(filepath.Join(sub, "b.txt"))
+
+	// Nothing changed: y overwrites what the dialog named, and only that
+	m = ask(t)
+	m, cmd = press(t, m, "y")
+	m = drain(t, m, cmd)
+	if got := readTestFile(t, filepath.Join(sub, "a.txt")); got != "new" {
+		t.Fatalf("sub/a.txt = %q after y, want it overwritten; status %q", got, m.statusMsg)
+	}
+	if got := readTestFile(t, filepath.Join(root, "a.txt")); got != "the parent's" {
+		t.Fatalf("the parent's a.txt = %q", got)
 	}
 }

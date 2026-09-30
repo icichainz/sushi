@@ -832,13 +832,13 @@ func (m Model) handleConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.executeDelete()
 			return m, cmd
 		case "paste":
-			cmd := m.executePaste()
+			cmd := m.confirmPaste()
 			return m, cmd
 		}
 
 	case "n", "N", "esc", "q":
 		m.mode = ModeNormal
-		m.pending = nil
+		m.pending, m.pasteDir = nil, ""
 		cmd := m.setStatus("Cancelled")
 		return m, cmd
 	}
