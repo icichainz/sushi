@@ -2,7 +2,7 @@
 
 Plugins let you run your own commands and scripts on the file under the cursor or on the selection. A plugin can be a one-line shell command in your config file, or a script dropped into the plugins directory.
 
-Press `P` to open the plugin menu, or give a plugin its own key. Press `!` to run a one-off shell command the same way.
+Press `P` to open the Run palette and pick a plugin, or give a plugin its own key. Press `!` to open the palette on its command line and run a one-off shell command the same way; `Tab` switches between the two.
 
 ## Commands in the config file
 
@@ -27,11 +27,11 @@ plugins:
 
 | Field | Required | Meaning |
 |-------|----------|---------|
-| `name` | yes | Shown in the plugin menu and in messages |
+| `name` | yes | Shown in the Run palette and in messages |
 | `command` | yes | Run with `sh -c`; `"$@"` is the selection |
 | `key` | no | Shortcut, e.g. `Z`, `ctrl+l`, `alt+x`, `f5` |
 | `mode` | no | `wait` (default), `terminal` or `background` |
-| `description` | no | Shown in the plugin menu |
+| `description` | no | Shown in the Run palette |
 
 ## Scripts in the plugins directory
 
@@ -106,7 +106,7 @@ echo "cd $target" > "$SUSHI_CMD_FILE"
 
 ## Keys
 
-Keys are written the way sushi receives them: a single character (`Z`, `%`, `#`), or a name such as `ctrl+g`, `alt+x` or `f5`. Plugins can't take over sushi's own keys. If a plugin asks for one, or two plugins ask for the same key, sushi says so in the status bar at startup and the plugin stays available from the `P` menu.
+Keys are written the way sushi receives them: a single character (`Z`, `%`, `#`), or a name such as `ctrl+g`, `alt+x` or `f5`. Plugins can't take over sushi's own keys. If a plugin asks for one, or two plugins ask for the same key, sushi says so in the status bar at startup and the plugin stays available from the Run palette.
 
 ## Windows
 

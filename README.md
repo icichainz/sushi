@@ -5,8 +5,8 @@ A fast and elegant terminal-based file explorer written in Go.
 ## Features
 
 - 🚀 Fast, asynchronous navigation with Vim-style keybindings
-- 🗂️ Multiple tabs
-- 👁️ Preview pane with syntax highlighting, directory listings and binary file details
+- 🗂️ Three panes (parent folder, files, preview) that adapt to the terminal width, with tabs
+- 👁️ Scrollable preview with syntax highlighting, line numbers and file details
 - 📝 Open files in your editor or their default app
 - 🔍 Fuzzy search within the current directory
 - ✅ Multi-file selection
@@ -108,7 +108,8 @@ sort_by: name
 # Reverse the sort order
 sort_reverse: false
 
-# Color theme: "default", "dark" (Dracula-inspired) or "light"
+# Color theme: "default", "light", "dark" (Dracula-inspired) or "classic"
+# (the colors sushi used before its redesign)
 theme: default
 
 # Override individual theme colors with ANSI numbers or hex values
@@ -116,8 +117,9 @@ colors:
   directory: "33"
   accent: "#7d56f4"
 
-# Syntax highlighting style for the preview (any Chroma style, e.g.
-# "monokai", "dracula", "github", "nord"); empty follows the theme
+# Syntax highlighting style for the preview ("sushi", "sushi-light", or any
+# Chroma style such as "monokai", "dracula", "github", "nord"); empty
+# follows the theme
 syntax_theme: ""
 
 # Commands to run on the selection; see docs/plugins.md
@@ -127,9 +129,19 @@ plugins:
     command: git log --oneline -20
 ```
 
-Color names for `colors`: `header_fg`, `header_bg`, `text`, `muted`, `directory`, `cursor_fg`, `cursor_bg`, `bar_fg`, `bar_bg`, `tab_bar_bg`, `tab_active_fg`, `tab_inactive_fg`, `tab_inactive_bg`, `accent`, `border`, `title`, `highlight`, `danger`, `selected`. Unknown names and invalid values are reported in the status bar when sushi starts.
+Color names for `colors`: `header_fg`, `text`, `muted`, `faint`, `raised`, `directory`, `cursor_fg`, `cursor_bg`, `bar_fg`, `bar_bg`, `tab_bar_bg`, `tab_active_fg`, `tab_inactive_fg`, `tab_inactive_bg`, `accent`, `border`, `title`, `highlight`, `danger`, `selected`. Unknown names and invalid values are reported in the status bar when sushi starts.
 
 Command line flags (like `--ascii`) override config file settings.
+
+## Layout
+
+| Terminal width | Panes shown |
+|----------------|-------------|
+| 100 columns or more | Parent folder, files, preview |
+| 72 to 99 columns | Files, preview |
+| Under 72 columns | Files only |
+
+Narrow file lists drop the date column first, then the size. The status bar shows the current mode (`NORMAL`, `SELECT`, `SEARCH`, ...), and the last line lists the keys that apply to it.
 
 ## Keybindings
 
@@ -169,8 +181,9 @@ Copy, cut, delete, edit and open act on the selection when there is one, and on 
 
 | Key | Action |
 |-----|--------|
-| `/` | Fuzzy search (`↑`/`↓` between matches, `Enter` to keep, `Esc` to cancel) |
+| `/` | Fuzzy search: the list narrows to the matches (`↑`/`↓` between them, `Enter` to keep, `Esc` to cancel) |
 | `p` | Toggle preview pane |
+| `J` / `K` | Scroll the preview down / up |
 | `.` | Toggle hidden files |
 | `b` | Open bookmarks (`j`/`k` to move, `Enter` to go, `d` to delete, `Esc` to close) |
 | `B` | Bookmark current directory |
@@ -180,8 +193,10 @@ Copy, cut, delete, edit and open act on the selection when there is one, and on 
 
 | Key | Action |
 |-----|--------|
-| `P` | Plugin menu |
-| `!` | Run a shell command on the selection |
+| `P` | Open the Run palette on the plugin list |
+| `!` | Open the Run palette to type a shell command |
+
+In the palette, `Tab` switches between the command line and the plugin list.
 
 Plugins can also have their own keys. See [docs/plugins.md](docs/plugins.md).
 
@@ -198,7 +213,7 @@ Plugins can also have their own keys. See [docs/plugins.md](docs/plugins.md).
 
 | Key | Action |
 |-----|--------|
-| `?` | Show help (`j`/`k` scroll it on small terminals) |
+| `?` | Show the key panel. `Esc` closes it; any other key closes it and does its job (`j`/`k` scroll it first on small terminals) |
 | `q`/`Ctrl+c` | Quit |
 
 ## Requirements
