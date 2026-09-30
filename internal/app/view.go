@@ -154,8 +154,15 @@ func (m Model) renderTabBar() string {
 		used += span.width
 	}
 
-	right := "P run  b bookmarks "
-	if rw := utils.Width(right); used+rw+2 <= m.width {
+	// The keys as bound, leaving out actions without one
+	var labels []string
+	for _, l := range []hint{{shownKey(m.keys.Plugins), "run"}, {shownKey(m.keys.Bookmark), "bookmarks"}} {
+		if l.key != "" {
+			labels = append(labels, l.key+" "+l.label)
+		}
+	}
+	right := strings.Join(labels, "  ") + " "
+	if rw := utils.Width(right); len(labels) > 0 && used+rw+2 <= m.width {
 		b.WriteString(bar.Render(strings.Repeat(" ", m.width-used-rw)))
 		b.WriteString(bar.Foreground(t.TabInactiveFg).Render(right))
 	} else {

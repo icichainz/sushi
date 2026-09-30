@@ -380,6 +380,44 @@ func TestPanelAndHintsShowRemaps(t *testing.T) {
 	}
 }
 
+func TestLabelsFollowRemaps(t *testing.T) {
+	m := withKeys(t, threeFiles(t), map[string]config.KeyList{
+		"plugins": {"alt+p"}, "bookmark": {"ctrl+b"}, "reverse": {"alt+s"}, "find": {"ctrl+f"}, "grep": {"alt+f"},
+	})
+	if m.statusMsg != "" {
+		t.Fatalf("unexpected problems: %s", m.statusMsg)
+	}
+	if bar := ansi.Strip(m.renderTabBar()); !strings.Contains(bar, "alt+p run  ctrl+b bookmarks") || strings.Contains(bar, "P run") {
+		t.Errorf("tab bar = %q", bar)
+	}
+	if menu := ansi.Strip(strings.Join(m.sortBox(), "\n")); !strings.Contains(menu, "alt+s reverses") || strings.Contains(menu, "S reverses") {
+		t.Errorf("sort menu:\n%s", menu)
+	}
+	// The search palette is marked with the key that opens it
+	for _, c := range []struct {
+		key  tea.KeyMsg
+		mark string
+	}{
+		{tea.KeyMsg{Type: tea.KeyCtrlF}, " ctrl+f "},
+		{tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}, Alt: true}, " alt+f "},
+	} {
+		palette, _ := send(t, m, c.key)
+		if box := ansi.Strip(strings.Join(palette.findBox(), "\n")); palette.mode != ModeFind || !strings.Contains(box, c.mark) {
+			t.Errorf("palette opened with %s:\n%s", c.key, box)
+		}
+		assertFills(t, "palette opened with "+c.key.String(), palette)
+	}
+
+	// Unbound, they are left out
+	m = withKeys(t, threeFiles(t), map[string]config.KeyList{"plugins": {}, "bookmark": {}, "reverse": {}})
+	if bar := ansi.Strip(m.renderTabBar()); strings.Contains(bar, "run") || strings.Contains(bar, "bookmarks") {
+		t.Errorf("tab bar = %q", bar)
+	}
+	if menu := ansi.Strip(strings.Join(m.sortBox(), "\n")); strings.Contains(menu, "reverses") {
+		t.Errorf("sort menu:\n%s", menu)
+	}
+}
+
 func TestQuitKeyInTheKeyPanel(t *testing.T) {
 	// q closes the panel rather than quitting; ctrl+c still quits
 	m := newTestModel(t, threeFiles(t), nil)

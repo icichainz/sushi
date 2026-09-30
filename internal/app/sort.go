@@ -176,7 +176,10 @@ func (m Model) sortBox() []string {
 		}
 		body = append(body, m.pickerRow(i == m.sortCursor, inner, mark, f.key, " "+utils.Fit(f.by, 9), f.desc))
 	}
-	now := "Now " + m.sortLabel() + ", S reverses"
+	now := "Now " + m.sortLabel()
+	if k := shownKey(m.keys.Reverse); k != "" {
+		now += ", " + k + " reverses"
+	}
 	body = append(body, "", " "+m.fg(t.Muted).Render(utils.Truncate(now, inner-2)))
 	return m.dialog("Sort by", t.Accent, body, width)
 }

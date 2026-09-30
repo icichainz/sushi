@@ -368,12 +368,17 @@ func (m Model) findBox() []string {
 	inner := width - 2
 	rows, roomy := m.findRows()
 
-	title, key := "Find files", "f"
+	// Marked with the key that opens this kind of search, as bound; tab
+	// switches kind even when it has none
+	title, key := "Find files", shownKey(m.keys.Find)
 	if f.content {
-		title, key = "Find in files", "F"
+		title, key = "Find in files", shownKey(m.keys.Grep)
+	}
+	if key == "" {
+		key = ">"
 	}
 	prompt := " " + m.fg(t.Title).Bold(true).Render(key) + " "
-	body := []string{prompt + f.input.View(max(inner-4, 1), m.fg(t.Text), lipgloss.NewStyle().Reverse(true))}
+	body := []string{prompt + f.input.View(max(inner-utils.Width(prompt)-1, 1), m.fg(t.Text), lipgloss.NewStyle().Reverse(true))}
 	if roomy {
 		body = append(body, m.fg(t.Border).Render(strings.Repeat(g.hline, inner)))
 	}
