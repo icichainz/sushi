@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -171,6 +172,13 @@ func (msg jobDoneMsg) apply(m Model) (tea.Model, tea.Cmd) {
 	}
 
 	m.pushUndo(msg.undo)
+	if msg.op.operation == "cut" {
+		// What a paste moved leaves the clipboard, rather than follow
+		// references to it to where it went
+		m.clipboard = slices.DeleteFunc(slices.Clone(m.clipboard), func(p string) bool {
+			return slices.ContainsFunc(msg.moved, func(r fs.RenamePair) bool { return r.From == p })
+		})
+	}
 	m.retargetAll(msg.moved)
 	// Whatever was moved or deleted has left the clipboard
 	m.pruneClipboard()

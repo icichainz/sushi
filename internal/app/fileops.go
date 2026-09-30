@@ -279,6 +279,7 @@ func (m *Model) executePaste(dir string) tea.Cmd {
 		}
 		undo := &undoEntry{label: label + describe(srcs)}
 		var made []os.FileInfo // What this paste has put in dir so far
+		var moved []fs.RenamePair
 		op, _ := runBatch(t, mode, verb, srcs, func(src string) error {
 			dst := filepath.Join(dir, filepath.Base(src))
 			// Something this paste has just put here under another spelling
@@ -300,6 +301,11 @@ func (m *Model) executePaste(dir string) tea.Cmd {
 			} else {
 				err = t.Copy(src, dst)
 			}
+			// Tabs, bookmarks and selections in what moved follow it there,
+			// as they do after a rename
+			if mode == "cut" && err == nil {
+				moved = append(moved, fs.RenamePair{From: src, To: dst})
+			}
 			switch {
 			case replaced:
 				if err == nil {
@@ -315,7 +321,7 @@ func (m *Model) executePaste(dir string) tea.Cmd {
 			}
 			return err
 		})
-		return jobDoneMsg{op: op, undo: undo}
+		return jobDoneMsg{op: op, undo: undo, moved: moved}
 	})
 }
 

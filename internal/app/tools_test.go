@@ -246,6 +246,56 @@ func TestUndoMove(t *testing.T) {
 	}
 }
 
+func TestMovingAFolderTakesTabsAndBookmarksWithIt(t *testing.T) {
+	root := t.TempDir()
+	src, dst := filepath.Join(root, "src"), filepath.Join(root, "dst")
+	deep := filepath.Join(src, "project", "sub")
+	os.MkdirAll(deep, 0755)
+	os.Mkdir(dst, 0755)
+	writeTestFile(t, filepath.Join(deep, "notes.txt"), "")
+	writeTestFile(t, filepath.Join(src, "stays.txt"), "")
+
+	m := newTestModel(t, src, noWatch())
+	m.bookmarks.Add("project", filepath.Join(src, "project"))
+	m.bookmarks.Add("elsewhere", src)
+	// A second tab inside the folder, with something selected there
+	updated, cmd := m.createTab(deep)
+	m = drain(t, updated.(Model), cmd)
+	m.tab().Selected[filepath.Join(deep, "notes.txt")] = true
+	m, _ = press(t, m, "tab")
+
+	m = cursorTo(t, m, "project")
+	m, _ = press(t, m, "x")
+	m.tab().CurrentPath = dst
+	m, cmd = press(t, m, "v")
+	m = drain(t, m, cmd)
+
+	moved := filepath.Join(dst, "project", "sub")
+	if !fs.Exists(filepath.Join(moved, "notes.txt")) {
+		t.Fatalf("not moved: %q", m.statusMsg)
+	}
+	inside := m.tabs[1]
+	if inside.CurrentPath != moved || !inside.Selected[filepath.Join(moved, "notes.txt")] || len(inside.Files) != 1 {
+		t.Fatalf("the tab inside is in %s with %v selected and %d files, want it in %s", inside.CurrentPath, inside.Selected, len(inside.Files), moved)
+	}
+	if got := m.bookmarks.Get(0).Path; got != filepath.Join(dst, "project") {
+		t.Fatalf("bookmark = %s, want it moved", got)
+	}
+	if got := m.bookmarks.Get(1).Path; got != src {
+		t.Fatalf("the other bookmark = %s", got)
+	}
+	// The move emptied the clipboard, rather than following it
+	if len(m.clipboard) != 0 {
+		t.Fatalf("clipboard = %v after the move", m.clipboard)
+	}
+
+	// Undoing it takes them back
+	m = undoNow(t, m)
+	if m.tabs[1].CurrentPath != deep || m.bookmarks.Get(0).Path != filepath.Join(src, "project") {
+		t.Fatalf("after undo: tab in %s, bookmark %s", m.tabs[1].CurrentPath, m.bookmarks.Get(0).Path)
+	}
+}
+
 func TestUndoCopyRemovesOnlyUnchangedCopies(t *testing.T) {
 	src, dst := t.TempDir(), t.TempDir()
 	writeTestFile(t, filepath.Join(src, "a.txt"), "a")
