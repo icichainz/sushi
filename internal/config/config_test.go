@@ -87,11 +87,13 @@ func TestUnknownSettingsAreReported(t *testing.T) {
 		t.Fatalf("show_hidden=%v sort_by=%s", cfg.ShowHidden, cfg.SortBy)
 	}
 
-	// Every setting the file can have is known
-	for _, name := range settingNames() {
-		if strings.Contains(name, " ") || name == "problems" {
-			t.Errorf("setting %q", name)
-		}
+	// Every setting the file can have is known, as sushi --init-config
+	// writes them
+	if err := DefaultConfig().Save(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg := LoadConfig(); len(cfg.Problems) != 0 {
+		t.Fatalf("problems with the config sushi writes: %q", cfg.Problems)
 	}
 	os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("keys:\n  up: k\nplugins: []\ncolors: {}\nwatch: false\n"), 0644)
 	if cfg := LoadConfig(); len(cfg.Problems) != 0 {
