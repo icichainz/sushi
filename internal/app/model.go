@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -458,6 +459,7 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 
 	// Problems are shown in the status bar rather than stopping startup
 	theme, problems := ui.LoadTheme(cfg.Theme, cfg.Colors)
+	problems = append(slices.Clone(cfg.Problems), problems...)
 	if cfg.SyntaxTheme != "" {
 		if components.HasSyntaxTheme(cfg.SyntaxTheme) {
 			theme.Syntax = cfg.SyntaxTheme

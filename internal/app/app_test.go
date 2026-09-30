@@ -816,10 +816,13 @@ func TestConfigProblemsShownAtStartup(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Theme = "neon"
 	cfg.SyntaxTheme = "nope"
+	cfg.Problems = []string{"config.yaml: line 3: bad value"} // As LoadConfig reports them
 
 	m := newTestModel(t, t.TempDir(), cfg)
-	if !strings.Contains(m.statusMsg, "neon") || !strings.Contains(m.statusMsg, "nope") {
-		t.Fatalf("statusMsg = %q, want both problems", m.statusMsg)
+	for _, want := range []string{"neon", "nope", "line 3: bad value"} {
+		if !strings.Contains(m.statusMsg, want) {
+			t.Fatalf("statusMsg = %q, want every problem", m.statusMsg)
+		}
 	}
 	if m.Init() == nil {
 		t.Fatal("Init should schedule clearing the startup warning")
