@@ -337,15 +337,17 @@ func (m *Model) pruneClipboard() {
 
 // deleteMessage describes what the pending delete will remove. Items
 // outside the current folder, which a plugin can select, are shown by
-// their full path and counted, so nothing is deleted unseen.
+// their full path and counted, so nothing is deleted unseen. Names are
+// made printable here, as the dialog splits the message into lines: a name
+// with a newline in it would otherwise add lines of its own.
 func (m Model) deleteMessage() string {
 	dir := m.tab().CurrentPath
 	if len(m.pending) == 1 {
 		path := m.pending[0]
-		name := filepath.Base(path)
+		name := utils.Printable(filepath.Base(path))
 		where := ""
 		if filepath.Dir(path) != dir {
-			where = "\n\nIt is in another folder:\n" + utils.TruncateLeft(path, pathWidth)
+			where = "\n\nIt is in another folder:\n" + utils.TruncateLeft(utils.Printable(path), pathWidth)
 		}
 		info, err := os.Lstat(path)
 		switch {
@@ -389,23 +391,24 @@ func listPaths(paths []string, dir string, limit int) string {
 			break
 		}
 		if filepath.Dir(p) == dir {
-			lines = append(lines, filepath.Base(p))
+			lines = append(lines, utils.Printable(filepath.Base(p)))
 		} else {
-			lines = append(lines, utils.TruncateLeft(p, pathWidth))
+			lines = append(lines, utils.TruncateLeft(utils.Printable(p), pathWidth))
 		}
 	}
 	return strings.Join(lines, "\n")
 }
 
-// pasteMessage describes what the pending paste will overwrite
+// pasteMessage describes what the pending paste will overwrite, with the
+// names made printable, as deleteMessage does
 func (m Model) pasteMessage() string {
 	if len(m.pending) == 1 {
-		return fmt.Sprintf("'%s' already exists. Overwrite?", m.pending[0])
+		return fmt.Sprintf("'%s' already exists. Overwrite?", utils.Printable(m.pending[0]))
 	}
 	return fmt.Sprintf("%d items already exist here. Overwrite them?\n\n%s", len(m.pending), listNames(m.pending, 5))
 }
 
-// listNames lists up to limit base names, one per line
+// listNames lists up to limit base names, one per line, made printable
 func listNames(paths []string, limit int) string {
 	names := make([]string, 0, limit+1)
 	for i, p := range paths {
@@ -413,7 +416,7 @@ func listNames(paths []string, limit int) string {
 			names = append(names, fmt.Sprintf("…and %d more", len(paths)-limit))
 			break
 		}
-		names = append(names, filepath.Base(p))
+		names = append(names, utils.Printable(filepath.Base(p)))
 	}
 	return strings.Join(names, "\n")
 }

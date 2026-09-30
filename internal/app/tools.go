@@ -469,7 +469,12 @@ func (m Model) startExtract() (tea.Model, tea.Cmd) {
 		}
 	}
 	if len(archives) == 0 {
-		cmd := m.setStatus("Nothing to extract: X unpacks .zip, .tar, .tar.gz and .tgz files")
+		// Named by the key as bound, which keys: in the config may change
+		what := "only .zip, .tar, .tar.gz and .tgz files can be extracted"
+		if k := shownKey(m.keys.Extract); k != "" {
+			what = k + " unpacks .zip, .tar, .tar.gz and .tgz files"
+		}
+		cmd := m.setStatus("Nothing to extract: " + what)
 		return m, cmd
 	}
 

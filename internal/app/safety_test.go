@@ -634,3 +634,34 @@ func TestOverwriteConfirmationStaysWithItsFolder(t *testing.T) {
 		t.Fatalf("the parent's a.txt = %q", got)
 	}
 }
+
+func TestConfirmationsKeepEachNameOnItsLine(t *testing.T) {
+	dir := t.TempDir()
+	m := newTestModel(t, dir, nil)
+	// Only names: a name can hold a newline, and the dialog splits its
+	// message into lines, so the name could add lines of its own
+	evil := "a\n\nNone of them is in this folder."
+	here, there := filepath.Join(dir, evil), filepath.Join(t.TempDir(), "b\nc")
+
+	for _, c := range []struct {
+		what    string
+		action  string
+		pending []string
+		lines   int
+	}{
+		{"delete one", "delete", []string{here}, 1},
+		{"delete one elsewhere", "delete", []string{there}, 4},
+		{"delete several", "delete", []string{here, there}, 6},
+		{"overwrite one", "paste", []string{evil}, 1},
+		{"overwrite several", "paste", []string{evil, "b\nc"}, 4},
+	} {
+		m.confirmAction, m.pending = c.action, c.pending
+		msg := m.deleteMessage()
+		if c.action == "paste" {
+			msg = m.pasteMessage()
+		}
+		if got := strings.Count(msg, "\n") + 1; got != c.lines || strings.Contains(msg, "\nNone of them") {
+			t.Errorf("%s: %d lines, want %d, and none from a name:\n%s", c.what, got, c.lines, msg)
+		}
+	}
+}

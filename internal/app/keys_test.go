@@ -383,9 +383,13 @@ func TestPanelAndHintsShowRemaps(t *testing.T) {
 func TestLabelsFollowRemaps(t *testing.T) {
 	m := withKeys(t, threeFiles(t), map[string]config.KeyList{
 		"plugins": {"alt+p"}, "bookmark": {"ctrl+b"}, "reverse": {"alt+s"}, "find": {"ctrl+f"}, "grep": {"alt+f"},
+		"extract": {"ctrl+e"},
 	})
 	if m.statusMsg != "" {
 		t.Fatalf("unexpected problems: %s", m.statusMsg)
+	}
+	if none, _ := send(t, m, tea.KeyMsg{Type: tea.KeyCtrlE}); !strings.Contains(none.statusMsg, "ctrl+e unpacks") {
+		t.Errorf("extracting a text file: %q", none.statusMsg)
 	}
 	if bar := ansi.Strip(m.renderTabBar()); !strings.Contains(bar, "alt+p run  ctrl+b bookmarks") || strings.Contains(bar, "P run") {
 		t.Errorf("tab bar = %q", bar)
