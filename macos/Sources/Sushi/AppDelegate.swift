@@ -64,15 +64,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         }
 
         let shell = environment["SHELL"] ?? "/bin/zsh"
-        // exec replaces the shell, so quitting sushi ends the process; the
-        // path is passed as an argument rather than pasted into the command
-        let command = "exec \"$0\" \"$1\""
+        // exec replaces the shell, so quitting sushi ends the process. The
+        // paths are quoted into the command, since fish has no "$0"/"$1".
+        let command = "exec \(quoted(sushi)) \(quoted(home))"
         terminal.startProcess(
             executable: shell,
-            args: ["-l", "-i", "-c", command, sushi, home],
+            args: ["-l", "-i", "-c", command],
             environment: environment.map { "\($0.key)=\($0.value)" },
             execName: nil,
             currentDirectory: home)
+    }
+
+    /// Single-quotes a string for zsh, bash and fish
+    private func quoted(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     // MARK: Font
