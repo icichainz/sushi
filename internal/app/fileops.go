@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -86,6 +87,29 @@ func (m Model) invertSelection() (tea.Model, tea.Cmd) {
 	}
 	cmd := m.setStatus(fmt.Sprintf("%d selected", len(tab.Selected)))
 	return m, cmd
+}
+
+// pruneSelection drops selected paths that no longer exist, once a load
+// is in, so the count leaves them out and operations on the selection
+// don't fail on them. What the listing holds is there; anything else, which
+// may be hidden or in another folder, is looked up, and kept unless it is
+// gone.
+func (t *Tab) pruneSelection() {
+	if len(t.Selected) == 0 {
+		return
+	}
+	listed := make(map[string]bool, len(t.Files))
+	for _, f := range t.Files {
+		listed[f.Path] = true
+	}
+	for path := range t.Selected {
+		if listed[path] {
+			continue
+		}
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			delete(t.Selected, path)
+		}
+	}
 }
 
 // clearSelection deselects everything in the current tab

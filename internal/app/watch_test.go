@@ -616,6 +616,38 @@ func TestWatchLetsGoOfADirectoryThatOutgrowsItsBudget(t *testing.T) {
 	}
 }
 
+func TestReloadDropsGoneFilesFromTheSelection(t *testing.T) {
+	dir, elsewhere := t.TempDir(), t.TempDir()
+	for _, name := range []string{"a", "b", "c", ".hidden"} {
+		writeTestFile(t, filepath.Join(dir, name), "")
+	}
+	writeTestFile(t, filepath.Join(elsewhere, "far"), "")
+	writeTestFile(t, filepath.Join(elsewhere, "kept"), "")
+	m := newTestModel(t, dir, noWatch())
+	for _, name := range []string{"a", "b", ".hidden"} {
+		m.tab().Selected[filepath.Join(dir, name)] = true
+	}
+	// As a plugin selects them
+	m.tab().Selected[filepath.Join(elsewhere, "far")] = true
+	m.tab().Selected[filepath.Join(elsewhere, "kept")] = true
+
+	os.Remove(filepath.Join(dir, "a"))
+	os.Remove(filepath.Join(elsewhere, "far"))
+	m = changeDirs(t, m, dir)
+	var got []string
+	for path := range m.tab().Selected {
+		got = append(got, filepath.Base(path))
+	}
+	slices.Sort(got)
+	// A hidden file isn't listed, but it is still there
+	if strings.Join(got, " ") != ".hidden b kept" {
+		t.Fatalf("selected %v, want .hidden, b and kept", got)
+	}
+	if status := ansi.Strip(m.renderStatusBar()); !strings.Contains(status, "3 selected") {
+		t.Fatalf("status = %q", status)
+	}
+}
+
 func TestReloadIgnoresOtherDirectories(t *testing.T) {
 	dir := t.TempDir()
 	m := newTestModel(t, dir, noWatch())

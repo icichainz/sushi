@@ -80,6 +80,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			fs.SortFiles(tab.Files, m.sortBy, m.sortReverse)
 			fs.SortFiles(tab.ParentFiles, m.sortBy, m.sortReverse)
 		}
+		tab.pruneSelection()
 		tab.Cursor = 0
 		if samePath {
 			tab.Cursor = min(oldCursor, max(len(tab.Files)-1, 0))
