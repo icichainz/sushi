@@ -12,6 +12,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/icichainz/sushi/internal/config"
+	"github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/utils"
 )
 
 // noWatch is a config with watching off, for tests that send changes by
@@ -371,6 +373,74 @@ func TestReloadLeavesPromptsAndSearchAlone(t *testing.T) {
 		if screen.mode != mode {
 			t.Errorf("after %q: mode %v became %v", keys, mode, screen.mode)
 		}
+	}
+}
+
+func TestPromptsStayWithWhatTheyWereOpenedOn(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	os.Mkdir(sub, 0755)
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		writeTestFile(t, filepath.Join(sub, name), "")
+	}
+
+	// Renaming b.txt: a reload that would move the cursor keeps it, and
+	// the field, on b.txt
+	m := cursorTo(t, newTestModel(t, sub, noWatch()), "b.txt")
+	m, _ = press(t, m, "r")
+	m = typeText(t, m, "-x")
+	m.tab().focusPath = filepath.Join(sub, "a.txt") // As a job finishing does
+	m = changeDirs(t, m, sub)
+	if m.mode != ModeInput || cursorName(m) != "b.txt" {
+		t.Fatalf("rename: mode=%v cursor on %s, want the prompt still on b.txt", m.mode, cursorName(m))
+	}
+	l := m.layout()
+	var list []string
+	for _, line := range plain(m.View()) {
+		list = append(list, utils.Cells(line, l.parentW, l.parentW+l.listW))
+	}
+	at := func(s string) int {
+		return slices.IndexFunc(list, func(line string) bool { return strings.Contains(line, s) })
+	}
+	if a, b, c := at("a.txt"), at("b-x.txt"), at("c.txt"); a < 0 || a >= b || b >= c {
+		t.Fatalf("the field should be on b's row, between a and c:\n%s", strings.Join(list, "\n"))
+	}
+
+	// A job moving b.txt takes the prompt with it
+	moved := m
+	moved.retarget(filepath.Join(sub, "b.txt"), filepath.Join(sub, "moved.txt"))
+	if moved.prompt.target != filepath.Join(sub, "moved.txt") {
+		t.Fatalf("prompt target = %s after the file moved", moved.prompt.target)
+	}
+
+	// Deleted meanwhile: the prompt closes, saying why
+	os.Remove(filepath.Join(sub, "b.txt"))
+	m = changeDirs(t, m, sub)
+	if m.mode != ModeNormal || m.statusMsg != "b.txt is gone, so it wasn't renamed" {
+		t.Fatalf("rename of a deleted file: mode=%v status=%q", m.mode, m.statusMsg)
+	}
+
+	// A new file's directory changes under the prompt: nothing is created,
+	// in particular not in whatever the list shows now
+	m, _ = press(t, m, "n")
+	m = typeText(t, m, "new.txt")
+	m.tab().CurrentPath = root // As a load started before the prompt landing
+	m = submit(t, m)
+	if m.mode != ModeNormal || m.statusMsg != "The folder shown changed, so nothing was created" || fs.Exists(filepath.Join(root, "new.txt")) {
+		t.Fatalf("new file after the list moved: mode=%v status=%q", m.mode, m.statusMsg)
+	}
+
+	// Its directory deleted: the reload moves up, and the prompt closes
+	m = newTestModel(t, sub, noWatch())
+	m, _ = press(t, m, "N")
+	m = typeText(t, m, "newdir")
+	os.RemoveAll(sub)
+	m = changeDirs(t, m, sub)
+	if m.mode != ModeNormal || m.tab().CurrentPath != root || m.statusMsg != "sub is gone, so nothing was created" {
+		t.Fatalf("new folder in a deleted directory: mode=%v in %s, status=%q", m.mode, m.tab().CurrentPath, m.statusMsg)
+	}
+	if m = submit(t, m); fs.Exists(filepath.Join(root, "newdir")) {
+		t.Fatal("the folder was created in the parent")
 	}
 }
 

@@ -75,10 +75,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		var prompt tea.Cmd
+		if tab.ID == m.tab().ID {
+			prompt = m.checkPrompt()
+		}
 		if m.mode == ModeSearch && tab.ID == m.tab().ID {
 			m.updateSearchResults()
 		}
-		cmd := tea.Batch(m.previewCmd(tab), m.reloadIfWanted(tab))
+		cmd := tea.Batch(m.previewCmd(tab), m.reloadIfWanted(tab), prompt)
 		return m, cmd
 
 	case previewLoadedMsg:

@@ -440,7 +440,8 @@ func (m Model) renderFileList(width, height int, divider bool) []string {
 		}
 		idx := visible[i]
 		file := tab.Files[idx]
-		if renaming && idx == tab.Cursor {
+		// On the file being renamed, wherever the cursor is
+		if renaming && file.Path == m.prompt.target {
 			out = append(out, edge+m.renderRenameRow(file, c))
 			continue
 		}
