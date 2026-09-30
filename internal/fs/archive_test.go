@@ -315,3 +315,146 @@ func TestArchiveKind(t *testing.T) {
 		}
 	}
 }
+
+// writeArchive writes entries as a zip or an uncompressed tar
+func writeArchive(t *testing.T, path, kind string, entries []entry) {
+	t.Helper()
+	if kind == "zip" {
+		writeZip(t, path, entries)
+	} else {
+		writeTar(t, path, false, entries)
+	}
+}
+
+// escapesFrom lists what an extraction into dest put in home outside dest,
+// which should be nothing but the folders leading to dest, and the links
+// inside dest that lead out of it, dangling or not
+func escapesFrom(t *testing.T, home, dest string) []string {
+	t.Helper()
+	var bad []string
+	realDest, _ := filepath.EvalSymlinks(dest)
+	filepath.WalkDir(home, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !within(dest, path) && !within(path, dest) {
+			bad = append(bad, path)
+		}
+		if d.Type()&os.ModeSymlink == 0 || !within(dest, path) {
+			return nil
+		}
+		target, _ := os.Readlink(path)
+		dir, _ := filepath.EvalSymlinks(filepath.Dir(path))
+		rel, _ := filepath.Rel(realDest, filepath.Join(dir, target))
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			rel, _ = filepath.Rel(realDest, resolved)
+		}
+		if !filepath.IsLocal(rel) && rel != "." {
+			bad = append(bad, path+" -> "+target)
+		}
+		return nil
+	})
+	return bad
+}
+
+func TestExtractCannotEscapeThroughChainedLinks(t *testing.T) {
+	// Extracted into ~/Downloads/evil, this archive used to create
+	// ~/.ssh/authorized_keys: "a" is the folder itself, so "a/b" put ".."
+	// at "b", "b/c" then led to the home folder, and the last entry was
+	// made through it
+	entries := []entry{
+		{name: "payload", body: "ssh-ed25519 AAAA attacker"},
+		{name: "a", body: ".", mode: os.ModeSymlink},
+		{name: "a/b", body: "..", mode: os.ModeSymlink},
+		{name: "b/c", body: "..", mode: os.ModeSymlink},
+		{name: "b/c/.ssh/authorized_keys", body: "../Downloads/evil/payload", mode: os.ModeSymlink},
+	}
+	for _, kind := range []string{"zip", "tar"} {
+		home := t.TempDir()
+		downloads := filepath.Join(home, "Downloads")
+		os.Mkdir(downloads, 0755)
+		archive := filepath.Join(t.TempDir(), "evil."+kind)
+		writeArchive(t, archive, kind, entries)
+
+		dest := filepath.Join(downloads, "evil")
+		err := background().Extract(archive, dest)
+		if err == nil || !strings.Contains(err.Error(), "unsafe path") {
+			t.Errorf("%s: err = %v, want the entry through a symlink refused", kind, err)
+		}
+		if Exists(filepath.Join(home, ".ssh")) {
+			t.Errorf("%s: ~/.ssh was created", kind)
+		}
+		if bad := escapesFrom(t, home, dest); len(bad) != 0 {
+			t.Errorf("%s: outside the destination: %v", kind, bad)
+		}
+	}
+}
+
+func TestExtractRemovesDanglingLinksThatLeadOut(t *testing.T) {
+	// "z" names "a/../nowhere", which is "nowhere" by name but, with "a"
+	// the folder itself, "../nowhere" on disk: missing for now, and outside
+	entries := []entry{
+		{name: "a", body: ".", mode: os.ModeSymlink},
+		{name: "z", body: "a/../nowhere", mode: os.ModeSymlink},
+	}
+	for _, kind := range []string{"zip", "tar"} {
+		home := t.TempDir()
+		archive := filepath.Join(t.TempDir(), "a."+kind)
+		writeArchive(t, archive, kind, entries)
+		dest := filepath.Join(home, "dest")
+		err := background().Extract(archive, dest)
+		if err == nil || !strings.Contains(err.Error(), "symlink z points outside") {
+			t.Errorf("%s: err = %v", kind, err)
+		}
+		if Exists(filepath.Join(dest, "z")) || !Exists(filepath.Join(dest, "a")) {
+			t.Errorf("%s: want z removed and a kept", kind)
+		}
+		if bad := escapesFrom(t, home, dest); len(bad) != 0 {
+			t.Errorf("%s: outside the destination: %v", kind, bad)
+		}
+	}
+}
+
+func TestExtractRefusesEntriesInsideLinks(t *testing.T) {
+	for _, entries := range [][]entry{
+		// The link first, then an entry through it
+		{{name: "sub/", mode: os.ModeDir}, {name: "a", body: "sub", mode: os.ModeSymlink}, {name: "a/f", body: "x"}},
+		// The entry first, then a link where its folder is
+		{{name: "sub/", mode: os.ModeDir}, {name: "a/f", body: "x"}, {name: "a", body: "sub", mode: os.ModeSymlink}},
+	} {
+		for _, kind := range []string{"zip", "tar"} {
+			root := t.TempDir()
+			archive := filepath.Join(root, "a."+kind)
+			writeArchive(t, archive, kind, entries)
+			err := background().Extract(archive, filepath.Join(root, "dest"))
+			if err == nil || !strings.Contains(err.Error(), "inside the symlink") {
+				t.Errorf("%s, %s second: err = %v", kind, entries[1].name, err)
+			}
+		}
+	}
+}
+
+func TestExtractKeepsLinksThatStayInside(t *testing.T) {
+	entries := []entry{
+		{name: "usr/lib/libfoo.so.1", body: "elf"},
+		{name: "usr/lib/libfoo.so", body: "libfoo.so.1", mode: os.ModeSymlink},
+		{name: "lib", body: "usr/lib", mode: os.ModeSymlink},
+		{name: "bin/foo", body: "../lib/libfoo.so", mode: os.ModeSymlink},
+		{name: "later", body: "usr/not-yet", mode: os.ModeSymlink},
+	}
+	for _, kind := range []string{"zip", "tar"} {
+		root := t.TempDir()
+		archive := filepath.Join(root, "a."+kind)
+		writeArchive(t, archive, kind, entries)
+		dest := filepath.Join(root, "dest")
+		if err := background().Extract(archive, dest); err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+		if readFile(t, filepath.Join(dest, "bin", "foo")) != "elf" {
+			t.Fatalf("%s: the chain of links was not kept", kind)
+		}
+		if target, err := os.Readlink(filepath.Join(dest, "later")); err != nil || target != "usr/not-yet" {
+			t.Fatalf("%s: a dangling link that stays inside was removed: %q, %v", kind, target, err)
+		}
+	}
+}
