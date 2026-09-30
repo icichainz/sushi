@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/icichainz/sushi/internal/config"
 )
 
@@ -407,6 +408,69 @@ func TestReloadWaitsForALoadingTab(t *testing.T) {
 	updated, _ = m.Update(msg)
 	if m = updated.(Model); m.tab().loadSeq != seq+1 {
 		t.Fatal("the retry did not reload")
+	}
+}
+
+// openFiles counts the files the test process has open, or returns -1
+// where that can't be seen. Only the names are read: stat fails on the
+// descriptor listing them.
+func openFiles() int {
+	f, err := os.Open("/dev/fd")
+	if err != nil {
+		return -1
+	}
+	defer f.Close()
+	names, err := f.Readdirnames(-1)
+	if err != nil {
+		return -1
+	}
+	return len(names)
+}
+
+func TestWatchLetsGoOfADirectoryThatOutgrowsItsBudget(t *testing.T) {
+	dir := t.TempDir()
+	for i := range 5 {
+		writeTestFile(t, filepath.Join(dir, fmt.Sprintf("old%d", i)), "")
+	}
+	m := newTestModel(t, dir, nil)
+	m.watch.budget = 40 // Room for the directory and its parent, until the paste
+	msgs := startWatching(t, m, 50*time.Millisecond)
+	// Where fsnotify uses kqueue, which opens every file it watches
+	before := -1
+	if watchBudget() > 0 {
+		before = openFiles()
+	}
+	if strings.Contains(ansi.Strip(m.renderHeader()), "not watched") {
+		t.Fatalf("a watched directory is said not to be: %s", ansi.Strip(m.renderHeader()))
+	}
+
+	// Like a paste: kqueue would open each new file, so the watch goes
+	for i := range 200 {
+		writeTestFile(t, filepath.Join(dir, fmt.Sprintf("new%03d", i)), "")
+	}
+	eventually(t, "the watch to be let go", func() bool { return !slices.Contains(m.watch.watching(), dir) })
+	if !m.watch.unwatched(dir) {
+		t.Fatal("the directory let go isn't reported as unwatched")
+	}
+	if before >= 0 {
+		eventually(t, "the files the watch opened to be closed", func() bool { return openFiles() <= before+10 })
+	}
+
+	// The interface hears of it, and says so beside the path
+	updated, _ := m.Update(next(t, msgs))
+	m = updated.(Model)
+	if header := ansi.Strip(m.renderHeader()); !strings.Contains(header, "not watched: ctrl+r refreshes") {
+		t.Fatalf("header = %q, want a note that the directory isn't watched", header)
+	}
+
+	// Once it has room again, a refresh watches it again
+	for i := range 200 {
+		os.Remove(filepath.Join(dir, fmt.Sprintf("new%03d", i)))
+	}
+	m, _ = ctrl(t, m, tea.KeyCtrlR)
+	eventually(t, "the directory to be watched again", func() bool { return slices.Contains(m.watch.watching(), dir) })
+	if header := ansi.Strip(m.renderHeader()); m.watch.unwatched(dir) || strings.Contains(header, "not watched") {
+		t.Fatalf("watched again, but header = %q", header)
 	}
 }
 

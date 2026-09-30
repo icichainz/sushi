@@ -27,7 +27,9 @@ const (
 	kqueueBudget = 2048
 )
 
-// dirsChangedMsg names directories whose contents changed on disk
+// dirsChangedMsg names directories whose contents changed on disk. It
+// comes with none when only the directories left unwatched changed, so the
+// breadcrumb can say so.
 type dirsChangedMsg struct {
 	dirs  []string
 	retry bool // Put off while a tab was loading, rather than sent by the watcher
@@ -52,6 +54,8 @@ type dirWatcher struct {
 
 	mu     sync.Mutex
 	active []string // Directories being watched, for tests
+	missed []string // Directories wanted but not watched: over budget, or can't be
+	broken bool     // Watching couldn't start, so nothing is watched
 }
 
 func newDirWatcher() *dirWatcher {
@@ -103,6 +107,9 @@ func (w *dirWatcher) start() {
 	if err != nil {
 		// Out of inotify instances, say: tabs refresh with ctrl+r only
 		w.failed = true
+		w.mu.Lock()
+		w.broken = true
+		w.mu.Unlock()
 		close(w.stopped)
 		return
 	}
@@ -137,11 +144,34 @@ func (w *dirWatcher) watchDirs(dirs []string) {
 	}
 }
 
+// rewatch asks for the directories to be watched again, as a refresh
+// does: one that was over budget may fit now
+func (w *dirWatcher) rewatch() {
+	if w == nil {
+		return
+	}
+	dirs := w.wanted
+	w.wanted = nil
+	w.watchDirs(dirs)
+}
+
 // watching returns the directories being watched
 func (w *dirWatcher) watching() []string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return slices.Clone(w.active)
+}
+
+// unwatched reports whether dir was asked for but isn't being watched, so
+// its changes show only after a refresh. With watching turned off in the
+// config nothing is asked for, and nothing needs saying.
+func (w *dirWatcher) unwatched(dir string) bool {
+	if w == nil {
+		return false
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.broken || slices.Contains(w.missed, dir)
 }
 
 // run follows fsnotify's events until stop, gathering the directories that
@@ -155,6 +185,8 @@ func (w *dirWatcher) run(fsw *fsnotify.Watcher) {
 	pending := make(map[string]bool) // Changed since the last batch
 	var wanted []string              // What the UI asked to watch
 	var ready []string               // A batch the UI hasn't taken yet
+	notify := false                  // The directories left unwatched changed
+	var orphans []string             // Entries of directories let go, maybe still open
 
 	quiet := time.NewTimer(w.quiet)
 	most := time.NewTimer(w.maxWait)
@@ -184,17 +216,25 @@ func (w *dirWatcher) run(fsw *fsnotify.Watcher) {
 		most.Stop()
 		quietC, mostC = nil, nil
 	}
+	release := func() {
+		for _, path := range orphans {
+			if _, ok := watched[path]; !ok {
+				fsw.Remove(path) // Fails harmlessly if it wasn't opened
+			}
+		}
+		orphans = nil
+	}
 
 	for {
 		var out chan<- []string
-		if len(ready) > 0 {
+		if len(ready) > 0 || notify {
 			out = w.changes
 		}
 		select {
 		case <-w.done:
 			return
 		case wanted = <-w.want:
-			w.watch(fsw, watched, wanted)
+			notify = w.watch(fsw, watched, wanted) || notify
 		case ev, ok := <-fsw.Events:
 			if !ok {
 				return
@@ -215,6 +255,32 @@ func (w *dirWatcher) run(fsw *fsnotify.Watcher) {
 				fsw.Remove(ev.Name)
 				delete(watched, ev.Name)
 			}
+			// kqueue opens every entry created in a watched directory, so
+			// pasting thousands of files would hold thousands open. Count
+			// them as they come, and let go of a directory once it takes
+			// the total over budget, rather than at the end of the burst.
+			// An entry removed or renamed is closed.
+			dir := filepath.Dir(ev.Name)
+			cost, inWatched := watched[dir]
+			switch {
+			case w.budget == 0:
+			case inWatched && ev.Has(fsnotify.Remove|fsnotify.Rename):
+				watched[dir] = max(cost-1, 1)
+			case inWatched && ev.Has(fsnotify.Create):
+				watched[dir] = cost + 1
+				if total(watched) > w.budget {
+					notify = w.watch(fsw, watched, wanted) || notify
+				}
+			case ev.Has(fsnotify.Create):
+				if _, ok := watched[ev.Name]; !ok {
+					// From a directory let go mid-burst: fsnotify goes on
+					// opening the new entries it had already listed there,
+					// just after reporting each. Close them once it settles.
+					orphans = append(orphans, ev.Name)
+					quiet.Reset(w.quiet)
+					quietC = quiet.C
+				}
+			}
 		case err, ok := <-fsw.Errors:
 			if !ok {
 				return
@@ -227,44 +293,55 @@ func (w *dirWatcher) run(fsw *fsnotify.Watcher) {
 			}
 		case <-quietC:
 			flush()
-			w.watch(fsw, watched, wanted)
+			release()
+			notify = w.watch(fsw, watched, wanted) || notify
 		case <-mostC:
 			flush()
-			w.watch(fsw, watched, wanted)
+			release()
+			notify = w.watch(fsw, watched, wanted) || notify
 		case out <- ready:
-			ready = nil
+			ready, notify = nil, false
 		}
 	}
 }
 
-// watch makes the watches match dirs. Directories that can't be watched,
-// or would take the open files over budget, are left out.
-func (w *dirWatcher) watch(fsw *fsnotify.Watcher, watched map[string]int, dirs []string) {
-	used := 0
-	for dir, cost := range watched {
-		if slices.Contains(dirs, dir) {
-			used += cost
-			continue
+// watch makes the watches match dirs, which come most important first.
+// Directories that can't be watched, or would take the open files over
+// budget, are left out. With a budget, directories already watched are
+// counted again, as their watches hold a file open for every entry
+// created since, and those now over budget are let go. It reports whether
+// the directories left out changed.
+func (w *dirWatcher) watch(fsw *fsnotify.Watcher, watched map[string]int, dirs []string) bool {
+	for dir := range watched {
+		if !slices.Contains(dirs, dir) {
+			fsw.Remove(dir)
+			delete(watched, dir)
 		}
-		fsw.Remove(dir)
-		delete(watched, dir)
 	}
+	used := 0
+	var missed []string
 	for _, dir := range dirs {
-		if _, ok := watched[dir]; ok {
-			continue
-		}
+		_, have := watched[dir]
 		cost := 1
 		if w.budget > 0 {
 			n, err := countEntries(dir, w.budget-used-1)
 			if err != nil || used+n+1 > w.budget {
+				if have {
+					fsw.Remove(dir)
+					delete(watched, dir)
+				}
+				missed = append(missed, dir)
 				continue
 			}
 			cost = n + 1
 		}
-		if err := fsw.Add(dir); err != nil {
-			// Let go of whatever a partly made watch opened
-			fsw.Remove(dir)
-			continue
+		if !have {
+			if err := fsw.Add(dir); err != nil {
+				// Let go of whatever a partly made watch opened
+				fsw.Remove(dir)
+				missed = append(missed, dir)
+				continue
+			}
 		}
 		watched[dir] = cost
 		used += cost
@@ -276,8 +353,19 @@ func (w *dirWatcher) watch(fsw *fsnotify.Watcher, watched map[string]int, dirs [
 	}
 	sort.Strings(active)
 	w.mu.Lock()
-	w.active = active
-	w.mu.Unlock()
+	defer w.mu.Unlock()
+	changed := !slices.Equal(missed, w.missed)
+	w.active, w.missed = active, missed
+	return changed
+}
+
+// total returns how many files the watches hold open
+func total(watched map[string]int) int {
+	n := 0
+	for _, cost := range watched {
+		n += cost
+	}
+	return n
 }
 
 // countEntries counts the entries of dir, stopping once there are more
@@ -382,8 +470,10 @@ func existingDir(path string) string {
 }
 
 // refresh reloads every tab, for changes the watcher can't see, such as on
-// network drives, or when watch: false
+// network drives, or when watch: false. It also tries again to watch the
+// directories that weren't watched.
 func (m Model) refresh() (tea.Model, tea.Cmd) {
+	m.watch.rewatch()
 	cmds := []tea.Cmd{m.setStatus("Refreshed")}
 	for i := range m.tabs {
 		// A tab that is loading is about to be up to date anyway

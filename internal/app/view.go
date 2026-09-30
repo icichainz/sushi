@@ -22,6 +22,9 @@ const (
 	minWidthPreview = 72
 	// chromeRows is the rows around the panes: tabs, breadcrumb, status, hints
 	chromeRows = 4
+	// minPathWidth is the least of the breadcrumb's path a note beside it
+	// may leave
+	minPathWidth = 12
 )
 
 // glyphs are the drawing characters, with plain ASCII ones for --ascii
@@ -220,16 +223,46 @@ func (m Model) renderHeader() string {
 	if m.showHidden {
 		hidden = "on"
 	}
-	right := fmt.Sprintf("sort %s %s hidden %s", m.sortLabel(), g.dot, hidden)
-	rightW := utils.Width(right)
+	info := fmt.Sprintf("sort %s %s hidden %s", m.sortLabel(), g.dot, hidden)
+	// Changes to a directory that isn't watched show only after a refresh
+	note := ""
+	if m.watch.unwatched(tab.CurrentPath) {
+		note = "not watched"
+		if k := keysLabel(" ", m.keys.Refresh); k != "" {
+			note += ": " + k + " refreshes"
+		}
+		info = note + " " + g.dot + " " + info
+	}
 
-	// Drop leading directories until the path fits, keeping the current one
+	// The sort order shows only where the whole path fits beside it. The
+	// note matters more than the path's leading directories, which make
+	// room for it.
 	segs := pathSegments(tab.CurrentPath)
 	width := func(s []string) int { return utils.Width(strings.Join(s, " / ")) }
-	if width(segs)+2+rightW > inner {
-		right, rightW = "", 0
+	warn := m.fg(t.Highlight)
+	right, rightW := "", 0
+	switch {
+	case width(segs)+2+utils.Width(info) <= inner:
+		if note != "" {
+			right = warn.Render(note)
+		}
+		right += m.fg(t.Muted).Render(strings.TrimPrefix(info, note))
+		rightW = utils.Width(info)
+	case note != "":
+		for _, text := range []string{note, "not watched"} {
+			if utils.Width(text)+2+minPathWidth <= inner {
+				right, rightW = warn.Render(text), utils.Width(text)
+				break
+			}
+		}
 	}
-	for len(segs) > 1 && width(segs) > inner {
+	room := inner
+	if rightW > 0 {
+		room -= rightW + 2
+	}
+
+	// Drop leading directories until the path fits, keeping the current one
+	for len(segs) > 1 && width(segs) > room {
 		segs = append([]string{g.more}, segs[2:]...)
 		if len(segs) == 1 {
 			break
@@ -241,7 +274,7 @@ func (m Model) renderHeader() string {
 	for i, seg := range segs {
 		last := i == len(segs)-1
 		if last {
-			seg = utils.TruncateLeft(seg, max(inner-used, 0))
+			seg = utils.TruncateLeft(seg, max(room-used, 0))
 			b.WriteString(m.fg(t.HeaderFg).Bold(true).Render(seg))
 		} else {
 			b.WriteString(m.fg(t.Muted).Render(seg) + m.fg(t.Faint).Render(" / "))
@@ -250,7 +283,7 @@ func (m Model) renderHeader() string {
 		used += utils.Width(seg)
 	}
 	gap := max(inner-used-rightW, 0)
-	return utils.Fit(" "+b.String()+strings.Repeat(" ", gap)+m.fg(t.Muted).Render(right), m.width)
+	return utils.Fit(" "+b.String()+strings.Repeat(" ", gap)+right, m.width)
 }
 
 // divider returns the line drawn on the left edge of a pane
