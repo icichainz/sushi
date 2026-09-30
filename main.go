@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/app"
@@ -239,6 +240,11 @@ func main() {
 	final, err := p.Run()
 	if model, ok := final.(app.Model); ok {
 		model.Close()
+		// A copy or move still running when sushi quit, or was sent SIGTERM,
+		// is cancelled and given time to clean up after itself
+		if serr := model.Shutdown(10 * time.Second); serr != nil {
+			fmt.Fprintf(os.Stderr, "sushi: %v\n", serr)
+		}
 		// For the shell function to cd to; see --print-shell-wrapper
 		if err == nil && *cwdFile != "" {
 			if err := model.WriteExitDir(*cwdFile); err != nil {

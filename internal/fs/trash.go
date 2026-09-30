@@ -84,16 +84,28 @@ func (tr *Trash) root() string {
 	return tr.Files
 }
 
+// maxTrashNames is how many numbered names Put tries for an item
+const maxTrashNames = 10000
+
+// errNameTaken says a name in the trash is in use
+var errNameTaken = errors.New("name taken")
+
 // Put moves path into the trash and returns where it went. Nothing in the
-// trash is ever replaced: a name that is taken gets a number, as in
-// "notes 2.txt". Across filesystems the move is a copy and a delete, which
-// the task can cancel before the original is touched.
+// trash is ever replaced or merged into: a name that is taken gets a
+// number, as in "notes 2.txt", and the item is renamed into the trash with
+// a rename that fails rather than replace something that took its name
+// meanwhile, say another program trashing a file of the same name, and
+// then tries the next. Across filesystems the item is copied into the
+// trash under a hidden name, which the task can cancel before the original
+// is touched, renamed to a free name the same way, and then deleted from
+// where it was, as a move across filesystems is.
 func (tr *Trash) Put(t *Task, path string) (TrashedItem, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return TrashedItem{}, err
 	}
-	if _, err := os.Lstat(abs); err != nil {
+	srcInfo, err := os.Lstat(abs)
+	if err != nil {
 		return TrashedItem{}, fmt.Errorf("cannot access %s: %w", filepath.Base(abs), err)
 	}
 
@@ -115,69 +127,104 @@ func (tr *Trash) Put(t *Task, path string) (TrashedItem, error) {
 			return TrashedItem{}, fmt.Errorf("cannot create the trash: %w", err)
 		}
 	}
-	dest, info, err := tr.reserve(abs)
-	if err != nil {
-		return TrashedItem{}, err
+
+	trashed, err := tr.claim(abs, func(dest string) error { return renameForMove(abs, dest, false) })
+	if err == nil || !isCrossDevice(err) {
+		return trashed, err
 	}
 
-	trashed := TrashedItem{Original: abs, Path: dest, Info: info}
-	if err := t.Move(abs, dest); err != nil {
-		// A failed copy leaves nothing behind; a failed delete of the
-		// original after a full copy leaves the item in the trash as well
-		if !Exists(dest) {
-			if info != "" {
-				os.Remove(info)
-			}
-			return TrashedItem{}, err
+	// Another filesystem: copy, then rename the complete copy into place
+	t.Count(abs)
+	var list []copied
+	t.copied = &list
+	tmp, err := t.copyToTemp(abs, tr.Files, srcInfo)
+	t.copied = nil
+	if err != nil {
+		if cerr := t.ctx.Err(); cerr != nil {
+			return TrashedItem{}, cerr
 		}
-		return trashed, err
+		return TrashedItem{}, fmt.Errorf("move failed during copy: %w", err)
+	}
+	trashed, err = tr.claim(abs, func(dest string) error { return renameNoReplace(tmp, dest) })
+	if err != nil {
+		os.RemoveAll(tmp)
+		return TrashedItem{}, err
+	}
+	// A failed delete of the original leaves the item in the trash as well
+	if err := deleteCopied(list); err != nil {
+		return trashed, fmt.Errorf("move failed during cleanup: %w", err)
 	}
 	return trashed, nil
 }
 
-// reserve picks a name in the trash for the item at abs. With a freedesktop
-// trash, creating the .trashinfo file claims the name, as the specification
-// asks, so two programs can't pick the same one.
-func (tr *Trash) reserve(abs string) (dest, info string, err error) {
-	name := filepath.Base(abs)
-	for n := 1; n < 10000; n++ {
-		candidate := trashName(name, n)
-		dest = filepath.Join(tr.Files, candidate)
-		if tr.Info == "" {
-			if _, err := os.Lstat(dest); errors.Is(err, os.ErrNotExist) {
-				return dest, "", nil
-			} else if err != nil {
-				return "", "", fmt.Errorf("cannot check the trash: %w", err)
-			}
-			continue
-		}
-
-		info = filepath.Join(tr.Info, candidate+".trashinfo")
-		f, err := os.OpenFile(info, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if errors.Is(err, os.ErrExist) {
+// claim puts the item from abs into the trash under the first free name,
+// by calling put with where it is to go. put must fail with an error
+// matching os.ErrExist rather than replace anything, and the next name is
+// then tried.
+func (tr *Trash) claim(abs string, put func(dest string) error) (TrashedItem, error) {
+	for n := 1; n < maxTrashNames; n++ {
+		dest, info, err := tr.reserve(abs, n)
+		if errors.Is(err, errNameTaken) {
 			continue
 		}
 		if err != nil {
-			return "", "", fmt.Errorf("cannot write to the trash: %w", err)
+			return TrashedItem{}, err
 		}
-		// An item without an info file may still be in the way
-		if Exists(dest) {
-			f.Close()
+		err = put(dest)
+		if err == nil {
+			return TrashedItem{Original: abs, Path: dest, Info: info}, nil
+		}
+		if info != "" {
 			os.Remove(info)
-			continue
 		}
-		_, err = fmt.Fprintf(f, "[Trash Info]\nPath=%s\nDeletionDate=%s\n",
-			(&url.URL{Path: filepath.ToSlash(abs)}).EscapedPath(), time.Now().Format("2006-01-02T15:04:05"))
-		if cerr := f.Close(); err == nil {
-			err = cerr
+		if !errors.Is(err, os.ErrExist) {
+			return TrashedItem{}, err
 		}
-		if err != nil {
-			os.Remove(info)
-			return "", "", fmt.Errorf("cannot write to the trash: %w", err)
-		}
-		return dest, info, nil
 	}
-	return "", "", fmt.Errorf("cannot find a free name for %s in the trash", name)
+	return TrashedItem{}, fmt.Errorf("cannot find a free name for %s in the trash", filepath.Base(abs))
+}
+
+// reserve picks the nth name in the trash for the item at abs, or fails
+// with errNameTaken. With a freedesktop trash, creating the .trashinfo file
+// claims the name, as the specification asks, so two programs can't pick
+// the same one. ~/.Trash has no such files: there the name is only
+// checked, and claimed by the rename, which never replaces.
+func (tr *Trash) reserve(abs string, n int) (dest, info string, err error) {
+	candidate := trashName(filepath.Base(abs), n)
+	dest = filepath.Join(tr.Files, candidate)
+	if tr.Info == "" {
+		if _, err := os.Lstat(dest); err == nil {
+			return "", "", errNameTaken
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", "", fmt.Errorf("cannot check the trash: %w", err)
+		}
+		return dest, "", nil
+	}
+
+	info = filepath.Join(tr.Info, candidate+".trashinfo")
+	f, err := os.OpenFile(info, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if errors.Is(err, os.ErrExist) {
+		return "", "", errNameTaken
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("cannot write to the trash: %w", err)
+	}
+	// An item without an info file may still be in the way
+	if Exists(dest) {
+		f.Close()
+		os.Remove(info)
+		return "", "", errNameTaken
+	}
+	_, err = fmt.Fprintf(f, "[Trash Info]\nPath=%s\nDeletionDate=%s\n",
+		(&url.URL{Path: filepath.ToSlash(abs)}).EscapedPath(), time.Now().Format("2006-01-02T15:04:05"))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(info)
+		return "", "", fmt.Errorf("cannot write to the trash: %w", err)
+	}
+	return dest, info, nil
 }
 
 // trashName returns the nth name to try for name in the trash: name, then

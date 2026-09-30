@@ -25,7 +25,9 @@ type job struct {
 	id        int
 	doing     string // What it is doing, as in "Copying"
 	cancel    context.CancelFunc
-	updates   chan tea.Msg // Progress messages, then the jobDoneMsg
+	updates   chan tea.Msg  // Progress messages, then the jobDoneMsg
+	started   chan struct{} // Closed once the work has begun
+	finished  chan struct{} // Closed once the work has returned
 	progress  fs.Progress
 	cancelled bool // ctrl+x was pressed and it is stopping
 	quit      bool // Quit once it has stopped
@@ -57,21 +59,63 @@ type jobDoneMsg struct {
 func (m *Model) startJob(doing string, work func(t *fs.Task) jobDoneMsg) tea.Cmd {
 	m.jobSeq++
 	ctx, cancel := context.WithCancel(context.Background())
-	j := &job{id: m.jobSeq, doing: doing, cancel: cancel, updates: make(chan tea.Msg, 1)}
+	j := &job{id: m.jobSeq, doing: doing, cancel: cancel, updates: make(chan tea.Msg, 1),
+		started: make(chan struct{}), finished: make(chan struct{})}
 	m.job = j
 
 	return func() tea.Msg {
 		go func() {
 			defer cancel()
+			close(j.started)
 			task := fs.NewTask(ctx, progressInterval, func(p fs.Progress) {
 				sendLatest(j.updates, jobProgressMsg{id: j.id, progress: p})
 			})
 			done := work(task)
 			done.id = j.id
+			close(j.finished)
 			j.updates <- done
 		}()
 		return <-j.updates
 	}
+}
+
+// Shutdown stops what sushi may still have running once the program has
+// quit, however it quit: it cancels the background operation and waits up
+// to wait for it to stop, so that what it was in the middle of (a partial
+// copy, an unfinished zip) is cleaned up rather than left behind by the
+// process exiting. An operation that never started is not waited for. The
+// instruction files of plugins still running are removed. Call it after
+// the program has finished; the error says if the operation didn't stop in
+// time.
+func (m Model) Shutdown(wait time.Duration) error {
+	pendingCmdFiles.removeAll()
+	j := m.job
+	if j == nil {
+		return nil
+	}
+	j.cancel()
+	deadline := time.After(wait)
+	select {
+	case <-j.started:
+	case <-time.After(min(wait, 250*time.Millisecond)):
+		// Its command never ran, and a cancelled one does nothing if it does
+		return nil
+	}
+	select {
+	case <-j.finished:
+		return nil
+	case <-deadline:
+		return fmt.Errorf("%s had not stopped after %v, and may have left an unfinished file behind", strings.ToLower(j.doing), wait)
+	}
+}
+
+// stillBusy says that something has to wait for the running job
+func (m *Model) stillBusy() tea.Cmd {
+	wait := "wait for it to finish"
+	if cancel := keysLabel(" ", m.keys.Cancel); cancel != "" {
+		wait += ", or press " + cancel + " to cancel it"
+	}
+	return m.setStatus(fmt.Sprintf("Still %s: %s", strings.ToLower(m.job.doing), wait))
 }
 
 // sendLatest sends a progress update without waiting for the interface,
@@ -135,9 +179,11 @@ func (msg jobDoneMsg) apply(m Model) (tea.Model, tea.Cmd) {
 	return m.Update(msg.op)
 }
 
-// whileBusy handles keys while a job runs: ctrl+x cancels it, quitting
-// stops it first, and keys that change files are refused until it is done.
-// Everything else, like moving around, works as usual.
+// whileBusy handles keys while a job runs: ctrl+x cancels it, every way of
+// quitting (q, Q, closing the last tab) stops it first, and keys that
+// change files, open the Run palette, or open files in other programs are
+// refused until it is done; runPlugin refuses plugins, however they are
+// started. Everything else, like moving around, works as usual.
 func (m Model) whileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	k := m.keys
 	doing := strings.ToLower(m.job.doing)
@@ -147,7 +193,10 @@ func (m Model) whileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		m.changeJob(func(j *job) { j.cancelled = true })
 		return m, nil, true
 
-	case key.Matches(msg, k.Quit):
+	case key.Matches(msg, k.Quit, k.QuitNoCd), key.Matches(msg, k.CloseTab) && len(m.tabs) == 1:
+		if key.Matches(msg, k.QuitNoCd) {
+			m.keepShellDir = true
+		}
 		// Asked twice: don't wait any longer
 		if m.job.quit {
 			return m, tea.Quit, true
@@ -158,12 +207,9 @@ func (m Model) whileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return m, cmd, true
 
 	case key.Matches(msg, k.Delete, k.HardDelete, k.Paste, k.PasteLink, k.Rename, k.BulkRename,
-		k.NewFile, k.NewDir, k.Duplicate, k.Chmod, k.Archive, k.Extract, k.Undo):
-		wait := "wait for it to finish"
-		if cancel := keysLabel(" ", k.Cancel); cancel != "" {
-			wait += ", or press " + cancel + " to cancel it"
-		}
-		cmd := m.setStatus(fmt.Sprintf("Still %s: %s", doing, wait))
+		k.NewFile, k.NewDir, k.Duplicate, k.Chmod, k.Archive, k.Extract, k.Undo,
+		k.Plugins, k.Shell, k.Edit, k.Open):
+		cmd := m.stillBusy()
 		return m, cmd, true
 	}
 	return m, nil, false

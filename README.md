@@ -270,7 +270,7 @@ Keys that act on files use the selection when there is one, and the file under t
 | `Ctrl+x` | Cancel the operation running in the background |
 | `y` | Duplicate beside the original, as `name copy.ext`, then `name copy 2.ext` |
 | `V` | Paste the clipboard as symbolic links to its files. Never replaces anything |
-| `m` | Change permissions (not recursively): a prompt shows the current mode, such as `644`; type 3 or 4 octal digits. Not available on Windows |
+| `m` | Change permissions (not recursively): a prompt shows the current mode, such as `644`; type 3 or 4 octal digits. Several items all get the mode typed, and the prompt starts empty when theirs differ. Symlinks are left as they are, as is what they point to. Not available on Windows |
 | `R` | Bulk rename the selection in `$VISUAL` / `$EDITOR`. Without a selection, the same as `r` |
 | `a` | Compress into a new `.zip`, asking for its name |
 | `X` | Extract `.zip`, `.tar`, `.tar.gz` and `.tgz` archives, each into a new folder named after it |
@@ -279,7 +279,7 @@ Undo, duplicate, compress and extract run in the background, like copying; see [
 
 `R` opens the selected names in your editor, one per line. Change the names, save and close the editor: sushi checks every new name before renaming anything, so a mistake renames nothing, and names can be swapped or rotated. With an editor that opens a window, make it wait for the file to close, as in `EDITOR="code --wait"`.
 
-`a` refuses a name that is already taken. `X` extracts `photos.zip` into a new folder `photos`, or `photos 2` if that is taken, never overwrites anything, and refuses entries and links that would reach outside that folder.
+`a` refuses a name that is already taken. `X` extracts `photos.zip` into a new folder `photos`, or `photos 2` if that is taken, never overwrites anything, and refuses entries and links that would reach outside that folder, directly or through other links in the archive.
 
 ### Search
 
@@ -377,13 +377,13 @@ While sushi uses the mouse, terminals select text only with a key held: `Shift` 
 | Linux and BSD | The freedesktop.org trash in `$XDG_DATA_HOME/Trash`, or `~/.local/share/Trash`, so desktop file managers can show and restore what sushi trashed |
 | Windows | Sushi's own trash in `%AppData%\sushi\Trash`. The Recycle Bin doesn't show it: restore with `Ctrl+z`, or by moving files out of its `files` folder |
 
-Nothing in the trash is ever replaced: a name that is taken gets a number, as in `notes 2.txt`. Files on another drive are copied into the trash and then deleted, which takes longer. The Finder's Put Back doesn't know where files trashed by sushi came from; use `Ctrl+z` instead.
+Nothing in the trash is ever replaced or merged into: a name that is taken gets a number, as in `notes 2.txt`, even when another program trashes something of the same name at the same moment. Files on another drive are copied into the trash and then deleted, which takes longer; only what was copied is deleted, so files added meanwhile stay where they were. The Finder's Put Back doesn't know where files trashed by sushi came from; use `Ctrl+z` instead.
 
 `Ctrl+z` undoes the last of up to 20 operations: trash, rename, move, copy, new file or folder, duplicate, symlink paste, permissions, bulk rename, compress and extract. Undo history lasts until sushi quits.
 
 - Undo never replaces anything. If something now sits where a file would go back, sushi says so and keeps that step, so you can move it out of the way and press `Ctrl+z` again.
-- Undoing an operation that created files, such as a copy, removes only what it created, and only if it hasn't changed since. Anything that isn't empty goes to the trash rather than being deleted, unless `delete_to_trash` is off.
-- Permanent deletes can't be undone, and neither can files a paste overwrote.
+- Undoing an operation that created files, such as a copy, removes only what it created, and only if it hasn't changed since. Anything that isn't empty goes to the trash rather than being deleted, unless `delete_to_trash` is off; then a copy whose original is gone or has changed is kept, as it may be the only one left.
+- Permanent deletes can't be undone, and neither can files a paste overwrote. Undo stops there: what came before may depend on them, so nothing older can be undone.
 
 ## Background Operations
 
@@ -393,7 +393,7 @@ Copy, move, delete, trash, duplicate, compress, extract and undo run in the back
 Copying 3/120 files 45% ████░░░░░░
 ```
 
-You can keep browsing meanwhile. Keys that change files are refused, with a message, until the operation finishes or you cancel it with `Ctrl+x`. A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q` stops a running operation before quitting; press `q` again to quit at once. Copies keep their permissions and modification times.
+You can keep browsing meanwhile. Keys that change files are refused, with a message, until the operation finishes or you cancel it with `Ctrl+x`, and so are plugins, the Run palette and opening files in other programs. A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q`, `Q` and closing the last tab stop a running operation before quitting; press the key again to quit at once, and sushi still waits a few seconds for the operation to clean up. Files are copied, and zips written, under a hidden `.sushi-partial-` name and renamed once complete, so nothing half-written ever has its real name; if sushi is killed, what it leaves is removed when its folder is listed a day later. Copies keep their permissions and modification times.
 
 ## Requirements
 

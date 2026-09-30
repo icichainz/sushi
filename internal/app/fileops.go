@@ -4,21 +4,30 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/utils"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 // targets returns the paths an operation applies to: the selection if there
-// is one, otherwise the file under the cursor
+// is one, otherwise the file under the cursor. Paths are cleaned, as one
+// with a trailing slash, as in "link/", names what a symlink points to.
 func (m *Model) targets() []string {
 	tab := m.tab()
 	if len(tab.Selected) > 0 {
 		paths := make([]string, 0, len(tab.Selected))
+		seen := make(map[string]bool, len(tab.Selected))
 		for path := range tab.Selected {
-			paths = append(paths, path)
+			if path = filepath.Clean(path); !seen[path] {
+				seen[path] = true
+				paths = append(paths, path)
+			}
 		}
 		sort.Strings(paths)
 		return paths
@@ -148,17 +157,30 @@ func (m Model) startPaste() (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// nameKey folds a file name the way filesystems that ignore case and
+// Unicode normalisation compare names (APFS and HFS+ by default, NTFS,
+// FAT): "Report.txt" and "report.txt" name one file, and so do two
+// spellings of "résumé" with each é one character or two
+func nameKey(name string) string {
+	return norm.NFC.String(cases.Fold().String(norm.NFC.String(name)))
+}
+
 // checkPaste validates pasting the clipboard into dir and returns the names
-// that already exist there
+// that already exist there. Two items whose names differ only in case or
+// normalisation are refused, whatever the filesystem: where they are the
+// same name, the second would replace the first.
 func (m Model) checkPaste(dir string) ([]string, error) {
 	var conflicts []string
 	seen := make(map[string]string, len(m.clipboard))
 	for _, src := range m.clipboard {
 		name := filepath.Base(src)
-		if other, ok := seen[name]; ok {
+		if other, ok := seen[nameKey(name)]; ok {
+			if filepath.Base(other) != name {
+				return nil, fmt.Errorf("%s and %s have names that differ only in case or accents, the same name on many filesystems", other, src)
+			}
 			return nil, fmt.Errorf("%s and %s have the same name", other, src)
 		}
-		seen[name] = src
+		seen[nameKey(name)] = src
 
 		dst := filepath.Join(dir, name)
 		if err := fs.CheckTransfer(src, dst); err != nil {
@@ -206,8 +228,20 @@ func (m *Model) executePaste() tea.Cmd {
 			t.Count(srcs...)
 		}
 		undo := &undoEntry{label: label + describe(srcs)}
+		var made []os.FileInfo // What this paste has put in dir so far
 		op, _ := runBatch(t, mode, verb, srcs, func(src string) error {
 			dst := filepath.Join(dir, filepath.Base(src))
+			// Something this paste has just put here under another spelling
+			// of the name, which the filesystem takes for the same: pasting
+			// would replace it, and undo would then put the wrong file back
+			if info, err := os.Lstat(dst); err == nil && slices.ContainsFunc(made, func(p os.FileInfo) bool { return os.SameFile(p, info) }) {
+				return fmt.Errorf("would replace %s, which this paste has just put there", filepath.Base(dst))
+			}
+			defer func() {
+				if info, err := os.Lstat(dst); err == nil {
+					made = append(made, info)
+				}
+			}()
 			// Only what the paste created can be undone: what it replaced is gone
 			replaced := fs.Exists(dst)
 			var err error
@@ -227,7 +261,7 @@ func (m *Model) executePaste() tea.Cmd {
 				}
 			default:
 				// Even a partial copy is recorded, so undo can clear it away
-				undo.addCreated(dst)
+				undo.addCopied(dst, src)
 			}
 			return err
 		})
@@ -277,22 +311,66 @@ func (m *Model) pruneClipboard() {
 	}
 }
 
-// deleteMessage describes what the pending delete will remove
+// deleteMessage describes what the pending delete will remove. Items
+// outside the current folder, which a plugin can select, are shown by
+// their full path and counted, so nothing is deleted unseen.
 func (m Model) deleteMessage() string {
+	dir := m.tab().CurrentPath
 	if len(m.pending) == 1 {
 		path := m.pending[0]
 		name := filepath.Base(path)
+		where := ""
+		if filepath.Dir(path) != dir {
+			where = "\n\nIt is in another folder:\n" + utils.TruncateLeft(path, pathWidth)
+		}
 		info, err := os.Lstat(path)
 		switch {
 		case err == nil && info.Mode()&os.ModeSymlink != 0:
-			return fmt.Sprintf("Delete symlink '%s'? Its target is not touched.", name)
+			return fmt.Sprintf("Delete symlink '%s'? Its target is not touched.", name) + where
 		case err == nil && info.IsDir():
-			return fmt.Sprintf("Delete directory '%s' and all its contents?", name)
+			return fmt.Sprintf("Delete directory '%s' and all its contents?", name) + where
 		default:
-			return fmt.Sprintf("Delete file '%s'?", name)
+			return fmt.Sprintf("Delete file '%s'?", name) + where
 		}
 	}
-	return fmt.Sprintf("Delete %d items?\n\n%s", len(m.pending), listNames(m.pending, 5))
+
+	msg := fmt.Sprintf("Delete %d items?\n\n%s", len(m.pending), listPaths(m.pending, dir, 5))
+	elsewhere := 0
+	for _, p := range m.pending {
+		if filepath.Dir(p) != dir {
+			elsewhere++
+		}
+	}
+	switch {
+	case elsewhere == len(m.pending):
+		msg += "\n\nNone of them is in this folder."
+	case elsewhere == 1:
+		msg += "\n\n1 of them is in another folder."
+	case elsewhere > 1:
+		msg += fmt.Sprintf("\n\n%d of them are in other folders.", elsewhere)
+	}
+	return msg
+}
+
+// pathWidth is how much of a full path fits on a line of the confirmation
+const pathWidth = 56
+
+// listPaths lists up to limit paths, one per line: those in dir by name,
+// others in full, shortened from the start so their names show
+func listPaths(paths []string, dir string, limit int) string {
+	lines := make([]string, 0, limit+1)
+	for i, p := range paths {
+		if i == limit {
+			lines = append(lines, fmt.Sprintf("…and %d more", len(paths)-limit))
+			break
+		}
+		if filepath.Dir(p) == dir {
+			lines = append(lines, filepath.Base(p))
+		} else {
+			lines = append(lines, utils.TruncateLeft(p, pathWidth))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // pasteMessage describes what the pending paste will overwrite

@@ -2,12 +2,14 @@ package app
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,6 +24,39 @@ type pluginDoneMsg struct {
 	cmdFile string
 	output  []byte // Captured output, for background plugins
 	err     error
+}
+
+// cmdFiles tracks the SUSHI_CMD_FILE of each plugin that hasn't finished,
+// so that one still running in the background when sushi quits doesn't
+// leave its file in the temporary directory. It is shared by every copy
+// of the model, as the files are.
+type cmdFiles struct {
+	mu    sync.Mutex
+	files map[string]bool
+}
+
+var pendingCmdFiles = &cmdFiles{files: map[string]bool{}}
+
+func (c *cmdFiles) add(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.files[path] = true
+}
+
+func (c *cmdFiles) done(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.files, path)
+}
+
+// removeAll removes the files of plugins that haven't finished
+func (c *cmdFiles) removeAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for path := range c.files {
+		os.Remove(path)
+		delete(c.files, path)
+	}
 }
 
 // bindPluginKeys maps plugin shortcuts to plugins. Built-in keys can't be
@@ -49,14 +84,20 @@ func (m *Model) bindPluginKeys() []string {
 	return warnings
 }
 
-// runPlugin runs p on the selection, or the file under the cursor
+// runPlugin runs p on the selection, or the file under the cursor. Not
+// while a job runs: the plugin could change the files it is working on.
 func (m Model) runPlugin(p plugins.Plugin) (tea.Model, tea.Cmd) {
+	if m.job != nil {
+		cmd := m.stillBusy()
+		return m, cmd
+	}
 	cmdFile, err := os.CreateTemp("", "sushi-cmd-*")
 	if err != nil {
 		cmd := m.setStatus(fmt.Sprintf("Can't run %s: %v", p.Name, err))
 		return m, cmd
 	}
 	cmdFile.Close()
+	pendingCmdFiles.add(cmdFile.Name())
 
 	tab := m.tab()
 	ctx := plugins.Context{Dir: tab.CurrentPath, Selection: m.targets(), CmdFile: cmdFile.Name()}
@@ -91,6 +132,7 @@ func (m Model) runPlugin(p plugins.Plugin) (tea.Model, tea.Cmd) {
 func (m Model) handlePluginDone(msg pluginDoneMsg) (tea.Model, tea.Cmd) {
 	instructions, warnings, readErr := plugins.ReadInstructions(msg.cmdFile)
 	os.Remove(msg.cmdFile)
+	pendingCmdFiles.done(msg.cmdFile)
 
 	var status string
 	switch {
@@ -116,10 +158,13 @@ func (m Model) handlePluginDone(msg pluginDoneMsg) (tea.Model, tea.Cmd) {
 			continue
 		}
 
+		// Cleaned, since "link/" would name what a symlink points to: deleting
+		// it would empty the target rather than remove the link
 		path := in.Arg
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(msg.dir, path)
 		}
+		path = filepath.Clean(path)
 		switch in.Action {
 		case "cd":
 			info, err := os.Stat(path)
@@ -134,6 +179,11 @@ func (m Model) handlePluginDone(msg pluginDoneMsg) (tea.Model, tea.Cmd) {
 			}
 			cmds = append(cmds, m.loadDir(tab, path))
 		case "select":
+			// Only what exists, so a delete never starts on a mistyped path
+			if _, err := os.Lstat(path); err != nil {
+				warnings = append(warnings, "can't select "+in.Arg+": "+errText(err))
+				continue
+			}
 			tab.Selected[path] = true
 		}
 	}
@@ -146,6 +196,16 @@ func (m Model) handlePluginDone(msg pluginDoneMsg) (tea.Model, tea.Cmd) {
 	}
 	cmd := tea.Batch(cmds...)
 	return m, cmd
+}
+
+// errText returns what went wrong, without the operation and path that an
+// *os.PathError repeats
+func errText(err error) string {
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		return pe.Err.Error()
+	}
+	return err.Error()
 }
 
 // lastLine returns the last non-empty line of output

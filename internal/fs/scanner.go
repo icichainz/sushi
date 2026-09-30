@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ScanOptions controls which entries are listed and in what order
@@ -15,7 +16,8 @@ type ScanOptions struct {
 	SortReverse bool   // Reverse the order within directories and files
 }
 
-// ScanDirectory scans a directory and returns a list of files
+// ScanDirectory scans a directory and returns a list of files. What an
+// unfinished copy left behind, a day old or more, is removed on the way.
 func ScanDirectory(path string, opts ScanOptions) ([]FileInfo, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
@@ -25,6 +27,10 @@ func ScanDirectory(path string, opts ScanOptions) ([]FileInfo, error) {
 	files := make([]FileInfo, 0, len(entries))
 
 	for _, entry := range entries {
+		fullPath := filepath.Join(path, entry.Name())
+		if isPartial(entry.Name()) && removeIfStale(fullPath) {
+			continue
+		}
 		if !opts.ShowHidden && strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
@@ -34,7 +40,6 @@ func ScanDirectory(path string, opts ScanOptions) ([]FileInfo, error) {
 			continue // Skip files we can't read
 		}
 
-		fullPath := filepath.Join(path, entry.Name())
 		fileInfo := NewFileInfo(fullPath, info)
 
 		// Report what a symlink points to, so links to directories can be
@@ -51,6 +56,37 @@ func ScanDirectory(path string, opts ScanOptions) ([]FileInfo, error) {
 
 	SortFiles(files, opts.SortBy, opts.SortReverse)
 	return files, nil
+}
+
+// staleAge is how long the partial file or folder of an unfinished copy
+// must have gone unchanged before a listing removes it. A copy still
+// running keeps writing to it, so only what was left by a sushi that was
+// killed, or lost power, gets this old.
+const staleAge = 24 * time.Hour
+
+// removeIfStale removes path, a partial copy or archive by its name, if
+// nothing in it has changed for staleAge, and reports whether it did
+func removeIfStale(path string) bool {
+	cutoff := time.Now().Add(-staleAge)
+	fresh := false
+	err := filepath.WalkDir(path, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.ModTime().After(cutoff) {
+			fresh = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil || fresh {
+		return false
+	}
+	return os.RemoveAll(path) == nil
 }
 
 // SortFiles orders directories first, then by the given key. Size and

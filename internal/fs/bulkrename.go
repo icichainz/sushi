@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -72,35 +73,37 @@ func PlanRenames(paths []string, edited string, occupied func(path, src string) 
 
 // RenameAll does a batch of renames as if all at once, so names can be
 // swapped or rotated: every file first moves to a temporary name beside it,
-// then to its new name. It never replaces an existing file, and if a step
-// fails, the renames already done are undone.
+// then to its new name. It never replaces an existing file, even one that
+// turns up while it runs, and if a step fails, the renames already done
+// are undone, again without replacing anything.
 func RenameAll(pairs []RenamePair) error {
 	temps := make([]string, 0, len(pairs))
 	// rollback puts everything back: the first done renames from their new
 	// names to their temporary ones, then all from those to the originals
 	rollback := func(done int) {
 		for j := done - 1; j >= 0; j-- {
-			os.Rename(pairs[j].To, temps[j])
+			renameNoReplace(pairs[j].To, temps[j])
 		}
 		for j := len(temps) - 1; j >= 0; j-- {
-			os.Rename(temps[j], pairs[j].From)
+			renameNoReplace(temps[j], pairs[j].From)
 		}
 	}
 
 	for _, p := range pairs {
-		tmp := tempName(filepath.Dir(p.From))
-		if err := os.Rename(p.From, tmp); err != nil {
+		tmp := tempName(filepath.Dir(p.From), ".sushi-rename-")
+		if err := renameNoReplace(p.From, tmp); err != nil {
 			rollback(0)
 			return fmt.Errorf("cannot rename %s: %w", filepath.Base(p.From), err)
 		}
 		temps = append(temps, tmp)
 	}
 	for i, p := range pairs {
-		if Exists(p.To) {
+		err := renameNoReplace(temps[i], p.To)
+		if errors.Is(err, os.ErrExist) {
 			rollback(i)
 			return inTheWay(p.To)
 		}
-		if err := os.Rename(temps[i], p.To); err != nil {
+		if err != nil {
 			rollback(i)
 			return fmt.Errorf("cannot rename %s: %w", filepath.Base(p.From), err)
 		}
@@ -108,10 +111,10 @@ func RenameAll(pairs []RenamePair) error {
 	return nil
 }
 
-// tempName returns an unused hidden name in dir
-func tempName(dir string) string {
+// tempName returns an unused hidden name in dir, starting with prefix
+func tempName(dir, prefix string) string {
 	for {
-		path := filepath.Join(dir, fmt.Sprintf(".sushi-rename-%016x", rand.Uint64()))
+		path := filepath.Join(dir, fmt.Sprintf("%s%016x", prefix, rand.Uint64()))
 		if !Exists(path) {
 			return path
 		}

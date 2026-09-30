@@ -32,22 +32,32 @@ func ArchiveKind(name string) string {
 // CreateZip compresses paths, and everything in the directories among
 // them, into a new zip file at dst, which must not exist. Entries are named
 // from each path's parent, so a folder "photos" is stored as "photos/...".
-// Symlinks are stored as links. If it fails or is cancelled, dst is removed.
+// Symlinks are stored as links.
+//
+// The zip is written under a hidden name beside dst, readable by its owner
+// only, and renamed to dst once complete, so a zip under dst's name is
+// never partial, even if sushi is killed; if it fails or is cancelled, the
+// partial zip is removed. It ends up readable by no more people than the
+// files in it: a folder of private files makes a private zip.
 func (t *Task) CreateZip(dst string, paths []string) (err error) {
-	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
-	if errors.Is(err, os.ErrExist) {
+	dst = filepath.Clean(dst)
+	if Exists(dst) {
 		return fmt.Errorf("%s already exists", filepath.Base(dst))
 	}
+	f, err := os.CreateTemp(filepath.Dir(dst), partialPrefix+"*.zip")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
 	self, err := f.Stat()
 	if err != nil {
 		f.Close()
-		os.Remove(dst)
+		os.Remove(tmp)
 		return err
 	}
 
+	// What a new file would get, narrowed below by each file put in
+	mode := 0666 &^ umask
 	zw := zip.NewWriter(f)
 	defer func() {
 		if cerr := zw.Close(); err == nil {
@@ -56,12 +66,22 @@ func (t *Task) CreateZip(dst string, paths []string) (err error) {
 		if cerr := f.Close(); err == nil {
 			err = cerr
 		}
+		if err == nil {
+			err = os.Chmod(tmp, mode)
+		}
+		if err == nil {
+			// Something may have taken the name meanwhile; it is kept
+			if err = renameNoReplace(tmp, dst); errors.Is(err, os.ErrExist) {
+				err = fmt.Errorf("%s already exists", filepath.Base(dst))
+			}
+		}
 		if err != nil {
-			os.Remove(dst)
+			os.Remove(tmp)
 		}
 	}()
 
 	for _, root := range paths {
+		root = filepath.Clean(root)
 		parent := filepath.Dir(root)
 		err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
@@ -70,13 +90,24 @@ func (t *Task) CreateZip(dst string, paths []string) (err error) {
 			if cerr := t.ctx.Err(); cerr != nil {
 				return cerr
 			}
+			// Unfinished copies and archives, this one among them when it is
+			// inside a folder being compressed
+			if path != root && isPartial(d.Name()) {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 			info, err := d.Info()
 			if err != nil {
 				return err
 			}
-			// The archive itself, when it is inside a folder being compressed
 			if os.SameFile(info, self) {
 				return nil
+			}
+			if info.Mode()&os.ModeSymlink == 0 {
+				// Group and others lose what any file or folder denies them
+				mode &= info.Mode().Perm() | 0700
 			}
 			rel, err := filepath.Rel(parent, path)
 			if err != nil {
@@ -89,6 +120,17 @@ func (t *Task) CreateZip(dst string, paths []string) (err error) {
 		}
 	}
 	return nil
+}
+
+// partialPrefix starts the names of what sushi is still writing: files
+// being copied, folders being moved across drives and archives being made.
+// They are renamed into place once complete, so a name without it is never
+// partial.
+const partialPrefix = ".sushi-partial-"
+
+// isPartial reports whether name is one sushi gives what it is still writing
+func isPartial(name string) bool {
+	return strings.HasPrefix(name, partialPrefix)
 }
 
 // addToZip writes one file, directory or symlink to the archive as name
@@ -145,47 +187,74 @@ func (t *Task) addToZip(zw *zip.Writer, path, name string, info os.FileInfo) err
 // Extract unpacks the zip, tar or gzipped tar archive at path into dir,
 // which it creates and which must not exist yet.
 //
-// Nothing is written outside dir: entries named outside it ("../x",
-// "/etc/x") are refused, as are symlinks that point outside it. Symlinks
-// are made last, once every file is written, so nothing is ever written
-// through one, and a link that ends up outside dir through other links is
-// removed. No file is replaced: an archive with an entry twice fails. Zip
-// archives are checked in full before anything is written; tar archives
-// can only be read in order, so extraction stops at the first bad entry.
-// If it fails or is cancelled, what was extracted until then stays.
+// Nothing is written outside dir. Every write goes through an os.Root
+// opened on dir, which refuses paths that lead out of it, however the
+// links in it are laid out. Entries named outside it ("../x", "/etc/x")
+// are refused, as are entries inside one of the archive's symlinks
+// ("link/x"), which would be written wherever the link leads, and symlinks
+// that point outside it. Symlinks are made last, once every file is
+// written, and then each is followed through the others: one that leads
+// outside, or would once what it names is created, is removed. No file is
+// replaced: an archive with an entry twice fails. Zip archives are checked
+// in full before anything is written; tar archives can only be read in
+// order, so extraction stops at the first bad entry. If it fails or is
+// cancelled, what was extracted until then stays. Modes come from the
+// archive, without special bits and masked with the umask like those of
+// any new file.
+//
+// An error from before dir was created, say because something took its
+// name, matches ErrNotCreated: then nothing at dir is the extraction's.
 func (t *Task) Extract(path, dir string) error {
+	x := newExtractor(t)
+	var err error
 	switch ArchiveKind(path) {
 	case "zip":
-		return t.extractZip(path, dir)
+		err = t.extractZip(x, path, dir)
 	case "tar":
-		return t.extractTar(path, dir, false)
+		err = t.extractTar(x, path, dir, false)
 	case "tar.gz":
-		return t.extractTar(path, dir, true)
+		err = t.extractTar(x, path, dir, true)
+	default:
+		err = fmt.Errorf("%s is not a zip, tar or tar.gz archive", filepath.Base(path))
 	}
-	return fmt.Errorf("%s is not a zip, tar or tar.gz archive", filepath.Base(path))
+	if err != nil && !x.made {
+		return notCreated{err}
+	}
+	return err
 }
 
 // extractZip unpacks a zip archive
-func (t *Task) extractZip(path, dir string) error {
+func (t *Task) extractZip(x *extractor, path, dir string) error {
 	zr, err := zip.OpenReader(path)
 	if err != nil {
 		return fmt.Errorf("cannot read %s: %w", filepath.Base(path), err)
 	}
 	defer zr.Close()
 
-	x := &extractor{t: t, root: dir}
 	for _, f := range zr.File {
-		if _, err := x.local(f.Name); err != nil {
+		mode := f.FileInfo().Mode()
+		link := mode&os.ModeSymlink != 0
+		if _, err := x.admit(f.Name, link, mode.IsDir()); err != nil {
 			return err
 		}
-		if !f.FileInfo().IsDir() {
+		if link {
+			target, err := readZipLink(f)
+			if err != nil {
+				return err
+			}
+			if err := checkLinkTarget(f.Name, target); err != nil {
+				return err
+			}
+		}
+		if !mode.IsDir() {
 			t.p.TotalFiles++
 			t.p.TotalBytes += int64(f.UncompressedSize64)
 		}
 	}
-	if err := os.Mkdir(dir, 0755); err != nil {
+	if err := x.open(dir); err != nil {
 		return err
 	}
+	defer x.close()
 
 	for _, f := range zr.File {
 		if err := t.ctx.Err(); err != nil {
@@ -230,7 +299,7 @@ func readZipLink(f *zip.File) (string, error) {
 // extractTar unpacks a tar archive, gzipped if gz is set. Progress goes by
 // how much of the archive file has been read, as the number of files isn't
 // known until the end.
-func (t *Task) extractTar(path, dir string, gz bool) error {
+func (t *Task) extractTar(x *extractor, path, dir string, gz bool) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("cannot read %s: %w", filepath.Base(path), err)
@@ -249,11 +318,11 @@ func (t *Task) extractTar(path, dir string, gz bool) error {
 		defer zr.Close()
 		r = zr
 	}
-	if err := os.Mkdir(dir, 0755); err != nil {
+	if err := x.open(dir); err != nil {
 		return err
 	}
+	defer x.close()
 
-	x := &extractor{t: t, root: dir}
 	tr := tar.NewReader(r)
 	for {
 		if err := t.ctx.Err(); err != nil {
@@ -268,12 +337,21 @@ func (t *Task) extractTar(path, dir string, gz bool) error {
 		}
 		mode := hdr.FileInfo().Mode()
 		switch hdr.Typeflag {
+		case tar.TypeDir, tar.TypeReg, tar.TypeSymlink, tar.TypeLink:
+			// Checked as they come, as a tar archive is read in order
+			if _, err := x.admit(hdr.Name, hdr.Typeflag == tar.TypeSymlink, hdr.Typeflag == tar.TypeDir); err != nil {
+				return err
+			}
+		}
+		switch hdr.Typeflag {
 		case tar.TypeDir:
 			err = x.mkdir(hdr.Name, mode, hdr.ModTime)
 		case tar.TypeReg:
 			err = x.file(hdr.Name, mode, hdr.ModTime, tr, false)
 		case tar.TypeSymlink:
-			err = x.symlink(hdr.Name, hdr.Linkname)
+			if err = checkLinkTarget(hdr.Name, hdr.Linkname); err == nil {
+				err = x.symlink(hdr.Name, hdr.Linkname)
+			}
 		case tar.TypeLink:
 			err = x.hardlink(hdr.Name, hdr.Linkname)
 		default:
@@ -299,12 +377,24 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// extractor writes an archive's entries under root
+// extractor writes an archive's entries into a new folder, always through
+// an os.Root opened on it
 type extractor struct {
 	t     *Task
-	root  string
+	root  *os.Root
+	made  bool // The folder was created
 	links []pendingLink
 	dirs  []pendingDir
+
+	// What the archive has held so far, by path below the root, so entries
+	// that lead through its symlinks are refused in whatever order they come
+	symlinks map[string]bool // Symlink entries
+	names    map[string]bool // Every other entry
+	parents  map[string]bool // Directories with an entry in or below them
+}
+
+func newExtractor(t *Task) *extractor {
+	return &extractor{t: t, symlinks: map[string]bool{}, names: map[string]bool{}, parents: map[string]bool{}}
 }
 
 // pendingLink is a symlink to create once every file is written
@@ -315,45 +405,118 @@ type pendingLink struct {
 // pendingDir is a directory whose mode and time are set at the end, since
 // writing into it would change its time and its mode may forbid writing
 type pendingDir struct {
-	path  string
+	rel   string
 	mode  os.FileMode
 	mtime time.Time
 }
 
-// local returns where an entry goes, refusing names that would put it
-// outside the root
-func (x *extractor) local(name string) (string, error) {
+// open creates dir, which must not exist yet, and opens it as the root that
+// every entry is written through
+func (x *extractor) open(dir string) error {
+	if err := os.Mkdir(dir, 0755); err != nil {
+		return err
+	}
+	x.made = true
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	x.root = root
+	return nil
+}
+
+func (x *extractor) close() {
+	if x.root != nil {
+		x.root.Close()
+	}
+}
+
+// local returns where an entry goes, relative to the root, refusing names
+// that would put it outside
+func local(name string) (string, error) {
 	rel := filepath.FromSlash(strings.TrimSuffix(name, "/"))
 	if !filepath.IsLocal(rel) {
 		return "", fmt.Errorf("unsafe path in archive: %q", name)
 	}
-	return filepath.Join(x.root, rel), nil
+	return filepath.Clean(rel), nil
+}
+
+// admit checks an entry against those before it and returns where it goes.
+// An entry inside one of the archive's symlinks is refused, whether the
+// link comes before it or after, and so is a symlink whose name is taken.
+func (x *extractor) admit(name string, link, dir bool) (string, error) {
+	rel, err := local(name)
+	if err != nil {
+		return "", err
+	}
+	for p := filepath.Dir(rel); p != "."; p = filepath.Dir(p) {
+		if x.symlinks[p] {
+			return "", fmt.Errorf("unsafe path in archive: %q is inside the symlink %q", name, filepath.ToSlash(p))
+		}
+	}
+	switch {
+	case link && (rel == "." || x.parents[rel]):
+		return "", fmt.Errorf("unsafe path in archive: the archive has entries inside the symlink %q", name)
+	case link && (x.symlinks[rel] || x.names[rel]), !link && x.symlinks[rel]:
+		return "", fmt.Errorf("%s is in the archive twice", name)
+	case link:
+		x.symlinks[rel] = true
+	default:
+		x.names[rel] = true
+		if dir {
+			x.parents[rel] = true
+		}
+	}
+	for p := filepath.Dir(rel); p != "." && !x.parents[p]; p = filepath.Dir(p) {
+		x.parents[p] = true
+	}
+	return rel, nil
+}
+
+// checkLinkTarget refuses a symlink whose target, read from the link's
+// directory, names a place outside the archive's folder. It goes by the
+// names alone; finish then follows each link through the others.
+func checkLinkTarget(name, target string) error {
+	rel := filepath.Join(filepath.Dir(filepath.FromSlash(name)), filepath.FromSlash(target))
+	if rooted(target) || !filepath.IsLocal(rel) {
+		return fmt.Errorf("symlink %s points outside the archive", name)
+	}
+	return nil
+}
+
+// rooted reports whether a link target starts from the top of a drive
+// rather than from the link's directory
+func rooted(target string) bool {
+	return filepath.IsAbs(target) || filepath.VolumeName(target) != "" ||
+		strings.HasPrefix(target, "/") || strings.HasPrefix(target, string(filepath.Separator))
 }
 
 func (x *extractor) mkdir(name string, mode os.FileMode, mtime time.Time) error {
-	path, err := x.local(name)
+	rel, err := local(name)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(path, 0700); err != nil {
+	if err := x.root.MkdirAll(rel, 0700); err != nil {
 		return err
 	}
-	// The owner keeps full access, so the folder can be used and removed
-	x.dirs = append(x.dirs, pendingDir{path, mode.Perm() | 0700, mtime})
+	// Masked like the modes of new folders, so an archive made where
+	// everything is 0777 doesn't open it to everyone; the owner keeps full
+	// access, so the folder can be used and removed
+	x.dirs = append(x.dirs, pendingDir{rel, mode.Perm()&^umask | 0700, mtime})
 	return nil
 }
 
 // file writes a regular file. If count is set, its bytes count towards the
 // progress. A partly written file is removed.
 func (x *extractor) file(name string, mode os.FileMode, mtime time.Time, r io.Reader, count bool) error {
-	path, err := x.local(name)
+	rel, err := local(name)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := x.root.MkdirAll(filepath.Dir(rel), 0700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, err := x.root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if errors.Is(err, os.ErrExist) {
 		return fmt.Errorf("%s is in the archive twice", name)
 	}
@@ -365,19 +528,20 @@ func (x *extractor) file(name string, mode os.FileMode, mtime time.Time, r io.Re
 		err = cerr
 	}
 	if err != nil {
-		os.Remove(path)
+		x.root.Remove(rel)
 		return err
 	}
-	// Special bits like setuid aren't restored from an archive
-	os.Chtimes(path, time.Time{}, mtime)
-	os.Chmod(path, mode.Perm())
+	// Special bits like setuid aren't restored from an archive, and the
+	// rest is masked as a new file's mode would be
+	x.root.Chtimes(rel, time.Time{}, mtime)
+	x.root.Chmod(rel, mode.Perm()&^umask)
 	x.t.p.Files++
 	x.t.update()
 	return nil
 }
 
 func (x *extractor) symlink(name, target string) error {
-	if _, err := x.local(name); err != nil {
+	if _, err := local(name); err != nil {
 		return err
 	}
 	x.links = append(x.links, pendingLink{name, target})
@@ -386,21 +550,21 @@ func (x *extractor) symlink(name, target string) error {
 
 // hardlink links name to an entry already extracted
 func (x *extractor) hardlink(name, target string) error {
-	path, err := x.local(name)
+	rel, err := local(name)
 	if err != nil {
 		return err
 	}
-	src, err := x.local(target)
+	src, err := local(target)
 	if err != nil {
 		return err
 	}
-	if info, err := os.Lstat(src); err != nil || !info.Mode().IsRegular() {
+	if info, err := x.root.Lstat(src); err != nil || !info.Mode().IsRegular() {
 		return fmt.Errorf("%s links to %s, which isn't a file in the archive", name, target)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := x.root.MkdirAll(filepath.Dir(rel), 0700); err != nil {
 		return err
 	}
-	if err := os.Link(src, path); err != nil {
+	if err := x.root.Link(src, rel); err != nil {
 		return err
 	}
 	x.t.p.Files++
@@ -420,47 +584,94 @@ func (x *extractor) finish() error {
 
 	var made []string
 	for _, l := range x.links {
-		path, _ := x.local(l.name)
-		// Relative to the link's directory, the target must stay inside
-		rel := filepath.Join(filepath.Dir(filepath.FromSlash(l.name)), filepath.FromSlash(l.target))
-		if filepath.IsAbs(l.target) || !filepath.IsLocal(rel) {
-			fail(fmt.Errorf("symlink %s points outside the archive", l.name))
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		rel, _ := local(l.name)
+		if err := checkLinkTarget(l.name, l.target); err != nil {
 			fail(err)
 			continue
 		}
-		if err := os.Symlink(l.target, path); err != nil {
+		if err := x.root.MkdirAll(filepath.Dir(rel), 0700); err != nil {
 			fail(err)
 			continue
 		}
-		made = append(made, path)
+		if err := x.root.Symlink(filepath.FromSlash(l.target), rel); err != nil {
+			fail(err)
+			continue
+		}
+		made = append(made, rel)
 		x.t.p.Files++
 	}
 
 	// Each link was checked on its own, but links can lead through each
-	// other ("a" to ".", "b" to "a/.."), so check where each one ends up.
-	// Links that lead nowhere lead nowhere outside either.
-	root, err := filepath.EvalSymlinks(x.root)
-	if err != nil {
-		root = x.root
-	}
-	for _, path := range made {
-		if dest, err := filepath.EvalSymlinks(path); err == nil && !within(root, dest) {
-			os.Remove(path)
-			rel, _ := filepath.Rel(x.root, path)
-			fail(fmt.Errorf("symlink %s points outside the archive", filepath.ToSlash(rel)))
+	// other ("a" to ".", "b" to "a/.."), so follow each one through the
+	// others as they are now. A link to something missing counts by where
+	// it would lead once that is created. Removing a link changes where
+	// others lead, so check again until none is removed.
+	for removed := true; removed; {
+		removed = false
+		kept := made[:0]
+		for _, rel := range made {
+			if leadsOutside(x.root, rel) {
+				x.root.Remove(rel)
+				fail(fmt.Errorf("symlink %s points outside the archive", filepath.ToSlash(rel)))
+				removed = true
+				continue
+			}
+			kept = append(kept, rel)
 		}
+		made = kept
 	}
 
 	// Deepest first, so setting a directory's time isn't undone by a change
 	// inside it, and a read-only parent doesn't block its children
-	sort.Slice(x.dirs, func(i, j int) bool { return len(x.dirs[i].path) > len(x.dirs[j].path) })
+	sort.Slice(x.dirs, func(i, j int) bool { return len(x.dirs[i].rel) > len(x.dirs[j].rel) })
 	for _, d := range x.dirs {
-		os.Chmod(d.path, d.mode)
-		os.Chtimes(d.path, time.Time{}, d.mtime)
+		x.root.Chmod(d.rel, d.mode)
+		x.root.Chtimes(d.rel, time.Time{}, d.mtime)
 	}
 	x.t.update()
 	return firstErr
+}
+
+// maxLinks is how many symlinks leadsOutside follows before it takes the
+// path for a loop, which leads nowhere
+const maxLinks = 255
+
+// leadsOutside reports whether following rel from the top of root, through
+// the symlinks in root as they are now, ever goes above root. Parts of the
+// path that don't exist are taken as they are named, so a link to
+// something missing counts by where it would lead once that is created.
+func leadsOutside(root *os.Root, rel string) bool {
+	var at []string // Where the walk has got to below the root, never a link
+	todo := strings.Split(rel, string(filepath.Separator))
+	links := 0
+	for len(todo) > 0 {
+		part := todo[0]
+		todo = todo[1:]
+		switch part {
+		case "", ".":
+			continue
+		case "..":
+			if len(at) == 0 {
+				return true
+			}
+			at = at[:len(at)-1]
+			continue
+		}
+		at = append(at, part)
+		here := filepath.Join(at...)
+		info, err := root.Lstat(here)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if links++; links > maxLinks {
+			return false
+		}
+		target, err := root.Readlink(here)
+		if err != nil || rooted(target) {
+			return true
+		}
+		at = at[:len(at)-1]
+		todo = append(strings.Split(filepath.FromSlash(target), string(filepath.Separator)), todo...)
+	}
+	return false
 }
