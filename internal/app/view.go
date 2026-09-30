@@ -398,19 +398,23 @@ func (m Model) renderFileList(width, height int, divider bool) []string {
 	}
 	c := listColumns(inner, files)
 
-	// Heading, with an arrow on the sorted column
+	// Heading, with an arrow on the sorted column. The type has no column,
+	// nor has the size or date once the list is too narrow for it, so
+	// then the name's heading says what the order is.
 	arrow := func(col string) string {
-		by := m.sortBy
-		if by == col || (col == "name" && by == "type") {
-			return " " + strings.TrimPrefix(m.sortLabel(), by+" ")
+		if m.sortBy == col {
+			return " " + strings.TrimPrefix(m.sortLabel(), m.sortBy+" ")
 		}
 		return ""
 	}
-	nameHead := "Name"
-	if m.sortBy == "type" {
-		nameHead = "Name (by type)"
+	nameHead := "Name" + arrow("name")
+	switch by := m.sortBy; {
+	case by == "type":
+		nameHead = "Name (by type)" + arrow("type")
+	case by == "size" && !c.size, by == "modified" && !c.date:
+		nameHead = "Name (" + m.sortLabel() + ")"
 	}
-	head := strings.Repeat(" ", 3+c.iconW+2) + utils.Fit(nameHead+arrow("name"), c.nameW)
+	head := strings.Repeat(" ", 3+c.iconW+2) + utils.Fit(nameHead, c.nameW)
 	if c.size {
 		head += utils.FitRight("Size"+arrow("size"), sizeW)
 	}
@@ -713,7 +717,7 @@ func (m Model) renderStatusBar() string {
 		rest = append(rest, segment{fmt.Sprintf("%d of %d match", len(visible), len(tab.Files)), bar})
 	} else {
 		rest = append(rest,
-			segment{fmt.Sprintf("%d items", len(tab.Files)), bar},
+			segment{plural(len(tab.Files), "item"), bar},
 			segment{utils.HumanizeSize(tab.TotalSize), bar.Foreground(t.Muted)})
 	}
 	if n := len(tab.Selected); n > 0 {

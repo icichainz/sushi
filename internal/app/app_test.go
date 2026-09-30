@@ -553,6 +553,50 @@ func TestStatusBarShowsMode(t *testing.T) {
 	}
 }
 
+func TestCountsAndHeadingsReadRight(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "one")
+	os.Mkdir(dir, 0755)
+	writeTestFile(t, filepath.Join(dir, "only.txt"), "")
+
+	// One item, in the status bar and in the parent's preview of the folder
+	m := newTestModel(t, dir, nil)
+	if status := ansi.Strip(m.renderStatusBar()); !strings.Contains(status, " 1 item ") {
+		t.Errorf("status = %q, want 1 item", status)
+	}
+	m = drain(t, m, m.loadDir(m.tab(), root))
+	m = drain(t, m, m.previewCmd(m.tab()))
+	if heading := ansi.Strip(strings.Join(m.renderPreview(60, 5), "\n")); !strings.Contains(heading, " 1 item") || strings.Contains(heading, "1 items") {
+		t.Errorf("preview of the folder:\n%s", heading)
+	}
+
+	// Inverting says so, and the status bar counts the selection once
+	m = drain(t, m, m.loadDir(m.tab(), dir))
+	m, _ = press(t, m, "*")
+	if status := ansi.Strip(m.renderStatusBar()); strings.Count(status, "selected") != 1 || !strings.Contains(status, "1 selected") {
+		t.Errorf("after *: status = %q", status)
+	}
+
+	// Sorted by a column too narrow to show, the name's heading says so
+	for _, c := range []struct {
+		by    string
+		width int
+		head  string
+	}{
+		{"modified", 50, "Name (modified ↓)"},
+		{"modified", 80, "Modified ↓"},
+		{"size", 30, "Name (size ↓)"},
+		{"size", 50, "Size ↓"},
+		{"type", 50, "Name (by type) ↑"},
+		{"name", 30, "Name ↑"},
+	} {
+		m.sortBy = c.by
+		if head := ansi.Strip(m.renderFileList(c.width, 5, false)[0]); !strings.Contains(head, c.head) || strings.Count(head, "↓")+strings.Count(head, "↑") != 1 {
+			t.Errorf("by %s at %d columns: heading %q, want %q", c.by, c.width, head, c.head)
+		}
+	}
+}
+
 func TestSearchHidesOtherFiles(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"main.go", "Makefile", "README.md", "go.sum"} {

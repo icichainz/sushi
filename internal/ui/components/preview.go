@@ -380,15 +380,9 @@ func RenderPreview(p PreviewContent, width, height, scroll int, st PreviewStyles
 	case p.IsText && p.Total > 0:
 		pos = fmt.Sprintf("%d-%d of %d", scroll+1, min(scroll+rows, p.Total), p.Total)
 	case p.Kind == "Directory" && len(p.Entries) > 0:
-		pos = fmt.Sprintf("%d items", len(p.Entries))
-		if p.More {
-			pos = fmt.Sprintf("%d+ items", len(p.Entries))
-		}
+		pos = count(len(p.Entries), p.More, "item", "items")
 	case p.Archive && p.Error == nil && p.Count > 0:
-		pos = fmt.Sprintf("%d entries", p.Count)
-		if p.Partial {
-			pos = fmt.Sprintf("%d+ entries", p.Count)
-		}
+		pos = count(p.Count, p.Partial, "entry", "entries")
 	}
 	inner := width - 2
 	posW := utils.Width(pos)
@@ -426,13 +420,25 @@ func RenderPreview(p PreviewContent, width, height, scroll int, st PreviewStyles
 		case p.IsText && p.Total == 0:
 			line = " " + st.Faint.Render(utils.Truncate("Empty file", inner))
 		case p.IsText:
-			line = " " + st.Faint.Render(utils.Truncate(fmt.Sprintf("%d more lines not shown", p.Total-len(p.Lines)), inner))
+			line = " " + st.Faint.Render(utils.Truncate(count(p.Total-len(p.Lines), false, "more line", "more lines")+" not shown", inner))
 		default:
 			line = " " + st.Text.Render(utils.Truncate(utils.Printable(p.Lines[i]), inner))
 		}
 		out = append(out, utils.Fit(line, width))
 	}
 	return out
+}
+
+// count writes n things, as in "1 item" or "3 items", or "3+ items" when
+// there are more than n
+func count(n int, more bool, one, many string) string {
+	switch {
+	case more:
+		return fmt.Sprintf("%d+ %s", n, many)
+	case n == 1:
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
 
 // renderEntry draws row i of a directory or archive preview

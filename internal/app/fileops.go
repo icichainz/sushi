@@ -85,7 +85,8 @@ func (m Model) invertSelection() (tea.Model, tea.Cmd) {
 			tab.Selected[f.Path] = true
 		}
 	}
-	cmd := m.setStatus(fmt.Sprintf("%d selected", len(tab.Selected)))
+	// The status bar counts the selection already
+	cmd := m.setStatus("Selection inverted")
 	return m, cmd
 }
 
