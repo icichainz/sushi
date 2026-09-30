@@ -231,6 +231,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 
+	case key.Matches(msg, m.keys.QuitNoCd):
+		m.keepShellDir = true
+		return m, tea.Quit
+
 	case key.Matches(msg, m.keys.Refresh):
 		return m.refresh()
 

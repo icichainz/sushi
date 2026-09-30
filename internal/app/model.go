@@ -88,9 +88,10 @@ type Model struct {
 	sortReverse bool
 	sortCursor  int // Row of the sort menu
 
-	find  finder      // Recursive search palette (f, F)
-	jump  previewJump // Preview line to show once a search result's file loads
-	watch *dirWatcher // Reloads tabs when their directories change; nil when off
+	find         finder      // Recursive search palette (f, F)
+	jump         previewJump // Preview line to show once a search result's file loads
+	watch        *dirWatcher // Reloads tabs when their directories change; nil when off
+	keepShellDir bool        // Quit with Q: don't tell the shell to change directory
 }
 
 // tab returns a pointer to the active tab
@@ -199,6 +200,7 @@ type KeyMap struct {
 	Reverse     key.Binding
 	Find        key.Binding
 	Grep        key.Binding
+	QuitNoCd    key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings
@@ -375,6 +377,10 @@ func DefaultKeyMap() KeyMap {
 		Grep: key.NewBinding(
 			key.WithKeys("F"),
 			key.WithHelp("F", "find in files"),
+		),
+		QuitNoCd: key.NewBinding(
+			key.WithKeys("Q"),
+			key.WithHelp("Q", "quit without cd"),
 		),
 	}
 }
