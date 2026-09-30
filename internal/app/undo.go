@@ -33,6 +33,8 @@ type undoStep struct {
 	trashed  bool            // stepRestore: from is in the trash
 	path     string          // stepRemove and stepChmod
 	stamp    fs.Stamp        // stepRemove: what it was like when created
+	source   string          // stepRemove of a copy: what it was copied from
+	original fs.Stamp        // stepRemove of a copy: what source was like then
 	mode     os.FileMode     // stepChmod
 	renames  []fs.RenamePair // stepRenames
 }
@@ -51,6 +53,20 @@ func (e *undoEntry) addCreated(path string) {
 	if stamp, err := fs.TakeStamp(path); err == nil {
 		e.steps = append(e.steps, undoStep{kind: stepRemove, path: path, stamp: stamp})
 	}
+}
+
+// addCopied records that the operation copied source to path. Undo removes
+// the copy only while source is still there as it was: otherwise the copy
+// may be all that is left of it.
+func (e *undoEntry) addCopied(path, source string) {
+	stamp, err := fs.TakeStamp(path)
+	if err != nil {
+		return
+	}
+	// A source that can't be stamped now won't match later, which keeps
+	// the copy: the safe way to be wrong
+	original, _ := fs.TakeStamp(source)
+	e.steps = append(e.steps, undoStep{kind: stepRemove, path: path, stamp: stamp, source: source, original: original})
 }
 
 // renameUndo is how to undo renaming old to new
@@ -94,11 +110,14 @@ func (m Model) startUndo() (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	e := m.undo[len(m.undo)-1]
-	m.undo = m.undo[:len(m.undo)-1]
 	if e.reason != "" {
-		cmd := m.setStatus(fmt.Sprintf("Can't undo %s: %s", e.label, e.reason))
+		// It stays, and undo stops at it: what came before may depend on
+		// what it did, as a copy does on its original, which a permanent
+		// delete may have removed
+		cmd := m.setStatus(fmt.Sprintf("Can't undo %s: %s, so nothing before it can be undone", e.label, e.reason))
 		return m, cmd
 	}
+	m.undo = m.undo[:len(m.undo)-1]
 
 	useTrash := m.config.DeleteToTrash
 	cmd := m.startJob("Undoing", func(t *fs.Task) jobDoneMsg {
@@ -177,7 +196,7 @@ func (s undoStep) undo(t *fs.Task, useTrash bool) ([]fs.RenamePair, error) {
 		return []fs.RenamePair{{From: s.from, To: s.to}}, nil
 
 	case stepRemove:
-		return nil, removeCreated(t, s.path, s.stamp, useTrash)
+		return nil, removeCreated(t, s, useTrash)
 
 	case stepChmod:
 		return nil, os.Chmod(s.path, s.mode)
@@ -191,11 +210,13 @@ func (s undoStep) undo(t *fs.Task, useTrash bool) ([]fs.RenamePair, error) {
 	return nil, nil
 }
 
-// removeCreated removes something an operation created, if it is as the
-// operation left it. Empty files and folders and symlinks are deleted;
+// removeCreated removes what step s says an operation created, if it is as
+// the operation left it. Empty files and folders and symlinks are deleted;
 // anything else goes to the trash, when it is used, in case it's wanted
-// after all: its original may have changed or gone since it was copied.
-func removeCreated(t *fs.Task, path string, was fs.Stamp, useTrash bool) error {
+// after all. Without the trash, a copy is deleted only while its original
+// is still there as it was: otherwise the copy may be all that is left.
+func removeCreated(t *fs.Task, s undoStep, useTrash bool) error {
+	path := s.path
 	now, err := fs.TakeStamp(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil // Already gone
@@ -203,10 +224,18 @@ func removeCreated(t *fs.Task, path string, was fs.Stamp, useTrash bool) error {
 	if err != nil {
 		return err
 	}
-	if now != was {
+	if now != s.stamp {
 		return fmt.Errorf("%s has changed since, so it was kept", filepath.Base(path))
 	}
-	if !useTrash || now.Trivial() {
+	if now.Trivial() {
+		return t.Delete(path)
+	}
+	if !useTrash {
+		if s.source != "" {
+			if original, err := fs.TakeStamp(s.source); err != nil || original != s.original {
+				return fmt.Errorf("%s was kept: its original %s is gone or has changed since it was copied", filepath.Base(path), s.source)
+			}
+		}
 		return t.Delete(path)
 	}
 	tr, err := fs.DefaultTrash()

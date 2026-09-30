@@ -185,8 +185,8 @@ func TestHardDeleteAlwaysAsksAndCantBeUndone(t *testing.T) {
 	}
 
 	m = undoNow(t, m)
-	if m.statusMsg != "Can't undo delete a.txt: it was permanent" {
-		t.Fatalf("statusMsg = %q", m.statusMsg)
+	if m.statusMsg != "Can't undo delete a.txt: it was permanent, so nothing before it can be undone" || len(m.undo) != 1 {
+		t.Fatalf("statusMsg = %q, %d entries", m.statusMsg, len(m.undo))
 	}
 }
 
@@ -302,7 +302,7 @@ func TestUndoPasteThatOnlyReplaced(t *testing.T) {
 	m = drain(t, m, cmd)
 
 	m = undoNow(t, m)
-	if m.statusMsg != "Can't undo copy a: it replaced what was there" {
+	if m.statusMsg != "Can't undo copy a: it replaced what was there, so nothing before it can be undone" {
 		t.Fatalf("statusMsg = %q", m.statusMsg)
 	}
 }

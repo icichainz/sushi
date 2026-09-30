@@ -260,7 +260,7 @@ func (m *Model) executePaste() tea.Cmd {
 				}
 			default:
 				// Even a partial copy is recorded, so undo can clear it away
-				undo.addCreated(dst)
+				undo.addCopied(dst, src)
 			}
 			return err
 		})

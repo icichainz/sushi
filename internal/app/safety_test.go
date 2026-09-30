@@ -178,6 +178,73 @@ func TestPasteNeverReplacesWhatItHasJustPasted(t *testing.T) {
 	}
 }
 
+func TestUndoNeverDeletesTheLastCopy(t *testing.T) {
+	// With the trash off: copy notes.txt to backup/, delete the original,
+	// then press ctrl+z twice. The first press said it couldn't undo the
+	// delete and dropped it; the second "undid" the copy, deleting for
+	// good the only copy left.
+	dir := t.TempDir()
+	notes := filepath.Join(dir, "notes.txt")
+	writeTestFile(t, notes, "the only notes")
+	backup := filepath.Join(dir, "backup")
+	os.Mkdir(backup, 0755)
+	cfg := config.DefaultConfig()
+	cfg.DeleteToTrash = false
+
+	m := cursorTo(t, newTestModel(t, dir, cfg), "notes.txt")
+	m, _ = press(t, m, "c")
+	m.tab().CurrentPath = backup
+	m, cmd := press(t, m, "v")
+	m = drain(t, m, cmd)
+	m.tab().CurrentPath = dir
+	m = drain(t, m, m.reloadAll())
+	m = cursorTo(t, m, "notes.txt")
+	m, _ = press(t, m, "d")
+	m, cmd = press(t, m, "y")
+	m = drain(t, m, cmd)
+	if fs.Exists(notes) {
+		t.Fatal("the original was not deleted")
+	}
+
+	copied := filepath.Join(backup, "notes.txt")
+	for press := 1; press <= 2; press++ {
+		m = undoNow(t, m)
+		if !strings.Contains(m.statusMsg, "Can't undo delete notes.txt") || len(m.undo) != 2 {
+			t.Fatalf("press %d: statusMsg = %q, %d entries", press, m.statusMsg, len(m.undo))
+		}
+		if readTestFile(t, copied) != "the only notes" {
+			t.Fatalf("press %d deleted the last copy", press)
+		}
+	}
+
+	// Even with the delete out of the way, the copy is kept while its
+	// original is gone
+	m.undo = m.undo[:1]
+	m = undoNow(t, m)
+	if !strings.Contains(m.statusMsg, "its original") || readTestFile(t, copied) != "the only notes" {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+}
+
+func TestUndoStillRemovesACopyWhoseOriginalIsThere(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "notes.txt"), "notes")
+	backup := filepath.Join(dir, "backup")
+	os.Mkdir(backup, 0755)
+	cfg := config.DefaultConfig()
+	cfg.DeleteToTrash = false
+
+	m := cursorTo(t, newTestModel(t, dir, cfg), "notes.txt")
+	m, _ = press(t, m, "c")
+	m.tab().CurrentPath = backup
+	m, cmd := press(t, m, "v")
+	m = drain(t, m, cmd)
+	m = undoNow(t, m)
+	if fs.Exists(filepath.Join(backup, "notes.txt")) || m.statusMsg != "Undone: copy notes.txt" {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+}
+
 func TestTargetsAreCleaned(t *testing.T) {
 	dir := t.TempDir()
 	m := newTestModel(t, dir, nil)

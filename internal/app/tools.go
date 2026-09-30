@@ -111,7 +111,7 @@ func (m Model) startDuplicate() (tea.Model, tea.Cmd) {
 			dst := filepath.Join(filepath.Dir(path), fs.CopyName(path))
 			err := t.Copy(path, dst)
 			// Even a partial copy is recorded, so undo can clear it away
-			undo.addCreated(dst)
+			undo.addCopied(dst, path)
 			if err == nil && focus == "" {
 				focus = dst
 			}
