@@ -236,6 +236,23 @@ func TestFailedLoadKeepsCurrentDir(t *testing.T) {
 	}
 }
 
+func TestFailedLoadForgetsWhatItWasToFocus(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt"} {
+		writeTestFile(t, filepath.Join(dir, name), "")
+	}
+	m := newTestModel(t, dir, noWatch())
+
+	// As when opening a search result, or clicking a file in the parent
+	// pane, whose directory then fails to load
+	m.tab().focusPath = filepath.Join(dir, "b.txt")
+	m = run(t, m, m.loadDir(m.tab(), filepath.Join(dir, "missing")))
+	m = run(t, m, m.loadDir(m.tab(), dir)) // A reload, say
+	if cursorName(m) != "a.txt" || m.tab().focusPath != "" {
+		t.Fatalf("after the failed load, a reload put the cursor on %s", cursorName(m))
+	}
+}
+
 func TestStatusClearsOnlyItsOwnMessage(t *testing.T) {
 	m := newTestModel(t, t.TempDir(), nil)
 	m.setStatus("first")

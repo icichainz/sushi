@@ -44,7 +44,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		tab.Loading = false
 		if msg.err != nil {
-			// Keep showing the previous directory rather than an empty one
+			// Keep showing the previous directory rather than an empty
+			// one. The file to focus was in the directory that failed, and
+			// mustn't move the cursor at the next load of this one.
+			tab.focusPath = ""
 			cmd := tea.Batch(m.setStatus(fmt.Sprintf("Error: %v", msg.err)), m.reloadIfWanted(tab))
 			return m, cmd
 		}
