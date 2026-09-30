@@ -7,12 +7,17 @@ import (
 
 // Stamp summarises a file, or a directory and everything in it, well
 // enough to tell whether it has changed: undo only removes what an
-// operation created if it is still as the operation left it
+// operation created if it is still as the operation left it. Where the
+// system keeps them (Unix), it also holds the root's device and inode and
+// the latest status change time, which move whenever a file is replaced,
+// even by one of the same size and modification time.
 type Stamp struct {
-	Entries int    // Files, directories and links, the root included
-	Size    int64  // Bytes in regular files
-	Latest  int64  // Latest modification time, in Unix nanoseconds
-	Link    string // Target, when the root is a symlink
+	Entries  int    // Files, directories and links, the root included
+	Size     int64  // Bytes in regular files
+	Latest   int64  // Latest modification time, in Unix nanoseconds
+	Changed  int64  // Latest status change time (ctime), in Unix nanoseconds
+	Dev, Ino uint64 // The root's device and inode
+	Link     string // Target, when the root is a symlink
 }
 
 // TakeStamp summarises path without following symlinks
@@ -23,12 +28,15 @@ func TakeStamp(path string) (Stamp, error) {
 	if err != nil {
 		return s, err
 	}
+	s.Dev, s.Ino, _ = fileIDs(root)
 	if root.Mode()&os.ModeSymlink != 0 {
 		target, err := os.Readlink(path)
 		if err != nil {
 			return s, err
 		}
-		return Stamp{Entries: 1, Latest: root.ModTime().UnixNano(), Link: target}, nil
+		_, _, s.Changed = fileIDs(root)
+		s.Entries, s.Latest, s.Link = 1, root.ModTime().UnixNano(), target
+		return s, nil
 	}
 
 	err = filepath.WalkDir(path, func(_ string, d os.DirEntry, err error) error {
@@ -44,6 +52,8 @@ func TakeStamp(path string) (Stamp, error) {
 			s.Size += info.Size()
 		}
 		s.Latest = max(s.Latest, info.ModTime().UnixNano())
+		_, _, changed := fileIDs(info)
+		s.Changed = max(s.Changed, changed)
 		return nil
 	})
 	return s, err

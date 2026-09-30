@@ -481,9 +481,13 @@ func deleteCopied(list []copied) error {
 	return fmt.Errorf("%d items, %s among them, changed during the move, so they were left where they were", len(left), filepath.Base(left[0]))
 }
 
-// sameVersion reports whether now is the entry was describes, unchanged
+// sameVersion reports whether now is the entry was describes, unchanged:
+// the same file, mode, size and time and, where the system keeps it, the
+// same status change time
 func sameVersion(now, was os.FileInfo) bool {
-	return os.SameFile(now, was) && now.Mode() == was.Mode() &&
+	_, _, nowChanged := fileIDs(now)
+	_, _, wasChanged := fileIDs(was)
+	return os.SameFile(now, was) && now.Mode() == was.Mode() && nowChanged == wasChanged &&
 		(!was.Mode().IsRegular() || now.Size() == was.Size() && now.ModTime().Equal(was.ModTime()))
 }
 
