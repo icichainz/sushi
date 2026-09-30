@@ -22,6 +22,9 @@ type Config struct {
 	SortBy        string `yaml:"sort_by"`        // "name", "size", "modified", "type"
 	SortReverse   bool   `yaml:"sort_reverse"`   // Reverse sort order
 
+	// d moves files to the trash, which ctrl+z can undo; D always deletes
+	DeleteToTrash bool `yaml:"delete_to_trash"`
+
 	// Theme settings
 	Theme       string            `yaml:"theme"`        // "default", "dark" or "light"
 	Colors      map[string]string `yaml:"colors"`       // Per-color overrides of the theme
@@ -39,6 +42,7 @@ func DefaultConfig() *Config {
 		PreviewEnabled: true,
 		PreviewWidth:   50,
 		ConfirmDelete:  true,
+		DeleteToTrash:  true,
 		Opener:         "auto",
 		SortBy:         "name",
 		SortReverse:    false,

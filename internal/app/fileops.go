@@ -104,8 +104,12 @@ func (m Model) yank(mode string) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// startDelete deletes the targets, asking first unless confirm_delete is off
+// startDelete moves the targets to the trash, or with delete_to_trash off,
+// deletes them, asking first unless confirm_delete is off
 func (m Model) startDelete() (tea.Model, tea.Cmd) {
+	if m.config.DeleteToTrash {
+		return m.startTrash()
+	}
 	paths := m.targets()
 	if len(paths) == 0 {
 		return m, nil
@@ -167,35 +171,68 @@ func (m Model) checkPaste(dir string) ([]string, error) {
 	return conflicts, nil
 }
 
-// executeDelete deletes the pending paths
+// executeDelete deletes the pending paths permanently, in the background
 func (m *Model) executeDelete() tea.Cmd {
 	paths := m.pending
 	m.pending = nil
-	m.tab().Loading = true
 	clear(m.tab().Selected)
 
-	return func() tea.Msg {
-		return batchResult("delete", "Deleted", paths, fs.DeletePath)
-	}
+	return m.startJob("Deleting", func(t *fs.Task) jobDoneMsg {
+		t.CountFiles(paths...)
+		op, done := runBatch(t, "delete", "Deleted", paths, t.Delete)
+		if done == 0 && t.Progress().Files == 0 {
+			return jobDoneMsg{op: op}
+		}
+		// Nothing to undo, but ctrl+z says so rather than undoing something older
+		return jobDoneMsg{op: op, undo: &undoEntry{label: "delete " + describe(paths), reason: "it was permanent"}}
+	})
 }
 
-// executePaste copies or moves the clipboard into the current directory
+// executePaste copies or moves the clipboard into the current directory,
+// in the background
 func (m *Model) executePaste() tea.Cmd {
 	srcs := append([]string(nil), m.clipboard...)
 	dir := m.tab().CurrentPath
 	mode := m.clipboardMode
 	m.pending = nil
-	m.tab().Loading = true
 
-	return func() tea.Msg {
-		transfer, verb := fs.CopyPath, "Copied"
-		if mode == "cut" {
-			transfer, verb = fs.MovePath, "Moved"
-		}
-		return batchResult(mode, verb, srcs, func(src string) error {
-			return transfer(src, filepath.Join(dir, filepath.Base(src)))
-		})
+	doing, verb, label := "Copying", "Copied", "copy "
+	if mode == "cut" {
+		doing, verb, label = "Moving", "Moved", "move "
 	}
+	return m.startJob(doing, func(t *fs.Task) jobDoneMsg {
+		// Moves are mostly renames, so they count only what they copy
+		if mode != "cut" {
+			t.Count(srcs...)
+		}
+		undo := &undoEntry{label: label + describe(srcs)}
+		op, _ := runBatch(t, mode, verb, srcs, func(src string) error {
+			dst := filepath.Join(dir, filepath.Base(src))
+			// Only what the paste created can be undone: what it replaced is gone
+			replaced := fs.Exists(dst)
+			var err error
+			if mode == "cut" {
+				err = t.Move(src, dst)
+			} else {
+				err = t.Copy(src, dst)
+			}
+			switch {
+			case replaced:
+				if err == nil {
+					undo.lost++
+				}
+			case mode == "cut":
+				if err == nil {
+					undo.steps = append(undo.steps, undoStep{kind: stepRestore, from: dst, to: src})
+				}
+			default:
+				// Even a partial copy is recorded, so undo can clear it away
+				undo.addCreated(dst)
+			}
+			return err
+		})
+		return jobDoneMsg{op: op, undo: undo}
+	})
 }
 
 // batchResult runs op on each path and summarises the outcome. It carries on

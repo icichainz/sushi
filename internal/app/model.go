@@ -68,6 +68,11 @@ type Model struct {
 	confirmAction string   // "delete" or "paste"
 	pending       []string // Paths to delete, or names a paste would overwrite
 
+	// Background operations and undo; see jobs.go and undo.go
+	job    *job        // The operation running in the background, if any
+	jobSeq int         // Gives each job its ID
+	undo   []undoEntry // Operations that can be undone, most recent last
+
 	// Bookmarks
 	bookmarks      *config.BookmarkStore
 	bookmarkCursor int
@@ -167,6 +172,15 @@ type KeyMap struct {
 	Copy        key.Binding
 	Cut         key.Binding
 	Paste       key.Binding
+	HardDelete  key.Binding
+	Undo        key.Binding
+	Cancel      key.Binding
+	Duplicate   key.Binding
+	PasteLink   key.Binding
+	Chmod       key.Binding
+	BulkRename  key.Binding
+	Archive     key.Binding
+	Extract     key.Binding
 	Search      key.Binding
 	Bookmark    key.Binding
 	AddBookmark key.Binding
@@ -230,7 +244,7 @@ func DefaultKeyMap() KeyMap {
 		),
 		Delete: key.NewBinding(
 			key.WithKeys("d"),
-			key.WithHelp("d", "delete"),
+			key.WithHelp("d", "move to trash"),
 		),
 		Edit: key.NewBinding(
 			key.WithKeys("e"),
@@ -275,6 +289,43 @@ func DefaultKeyMap() KeyMap {
 		Paste: key.NewBinding(
 			key.WithKeys("v"),
 			key.WithHelp("v", "paste"),
+		),
+		// Trash, undo and file tools; see tools.go
+		HardDelete: key.NewBinding(
+			key.WithKeys("D"),
+			key.WithHelp("D", "delete permanently"),
+		),
+		Undo: key.NewBinding(
+			key.WithKeys("ctrl+z"),
+			key.WithHelp("ctrl+z", "undo"),
+		),
+		Cancel: key.NewBinding(
+			key.WithKeys("ctrl+x"),
+			key.WithHelp("ctrl+x", "cancel operation"),
+		),
+		Duplicate: key.NewBinding(
+			key.WithKeys("y"),
+			key.WithHelp("y", "duplicate"),
+		),
+		PasteLink: key.NewBinding(
+			key.WithKeys("V"),
+			key.WithHelp("V", "paste as symlink"),
+		),
+		Chmod: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "permissions"),
+		),
+		BulkRename: key.NewBinding(
+			key.WithKeys("R"),
+			key.WithHelp("R", "bulk rename"),
+		),
+		Archive: key.NewBinding(
+			key.WithKeys("a"),
+			key.WithHelp("a", "compress to zip"),
+		),
+		Extract: key.NewBinding(
+			key.WithKeys("X"),
+			key.WithHelp("X", "extract archive"),
 		),
 		Search: key.NewBinding(
 			key.WithKeys("/"),

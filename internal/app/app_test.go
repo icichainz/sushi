@@ -27,14 +27,20 @@ func TestMain(m *testing.M) {
 	statusTimer = func(time.Duration, func(time.Time) tea.Msg) tea.Cmd {
 		return func() tea.Msg { return nil }
 	}
+	// Background operations send no progress, so they finish in one message
+	progressInterval = time.Hour
 	os.Exit(m.Run())
 }
 
 // newTestModel builds a sized model rooted at dir, with HOME redirected so
-// bookmarks and config never touch the real user directory
+// bookmarks, config and the trash never touch the real user directory
 func newTestModel(t *testing.T, dir string, cfg *config.Config) Model {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Where the trash is on Linux and Windows, which HOME doesn't cover
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
@@ -302,7 +308,8 @@ func TestEveryScreenFillsTheTerminal(t *testing.T) {
 		long.statusMsg = strings.Repeat("a long status message ", 10)
 		assertFills(t, label+" long status", long)
 
-		for _, keys := range []string{"/" + strings.Repeat("query", 20), "/a", " j ", "r" + strings.Repeat("name", 30), "nnew", "d", "b", "P", "!" + strings.Repeat("echo ", 30), "?"} {
+		for _, keys := range []string{"/" + strings.Repeat("query", 20), "/a", " j ", "r" + strings.Repeat("name", 30), "nnew", "d", "D", "m",
+			"a" + strings.Repeat("archive", 20), "y", "b", "P", "!" + strings.Repeat("echo ", 30), "?"} {
 			screen := m
 			for _, r := range keys {
 				screen, _ = press(t, screen, string(r))
@@ -415,7 +422,7 @@ func TestStatusBarShowsMode(t *testing.T) {
 		{"/", "SEARCH", "esc cancel"},
 		{"r", "RENAME", "save"},
 		{"n", "NEW", "New file:"},
-		{"d", "CONFIRM", "keep"},
+		{"D", "CONFIRM", "keep"},
 		{"b", "BOOKMARKS", "close"},
 		{"P", "RUN", "run"},
 		{"?", "KEYS", "close"},
@@ -558,7 +565,7 @@ func TestDialogsKeepTheBrowserVisible(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, "zz-bystander.txt"), "")
 
 	m := newTestModel(t, dir, nil)
-	m, _ = press(t, m, "d")
+	m, _ = press(t, m, "D")
 	view := strings.Join(plain(m.View()), "\n")
 	for _, want := range []string{"Confirm delete", "Delete file 'doomed.txt'?", "There is no undo", "zz-bystander.txt", "CONFIRM"} {
 		if !strings.Contains(view, want) {
@@ -751,6 +758,7 @@ func TestConfirmDeleteSetting(t *testing.T) {
 		writeTestFile(t, f, "")
 		cfg := config.DefaultConfig()
 		cfg.ConfirmDelete = confirm
+		cfg.DeleteToTrash = false
 
 		m := newTestModel(t, dir, cfg)
 		m, cmd := press(t, m, "d")
@@ -893,7 +901,7 @@ func TestDeleteSelection(t *testing.T) {
 	m, _ = press(t, m, "j")
 	m, _ = press(t, m, " ")
 	m, _ = press(t, m, " ")
-	m, _ = press(t, m, "d")
+	m, _ = press(t, m, "D")
 	if m.mode != ModeConfirm || !strings.Contains(ansi.Strip(m.renderConfirmDialog()), "Delete 2 items?") {
 		t.Fatalf("mode=%v dialog:\n%s", m.mode, m.renderConfirmDialog())
 	}
