@@ -21,6 +21,7 @@ type Config struct {
 	Opener        string `yaml:"opener"`         // How Enter opens files: "auto", "editor", "system"
 	SortBy        string `yaml:"sort_by"`        // "name", "size", "modified", "type"
 	SortReverse   bool   `yaml:"sort_reverse"`   // Reverse sort order
+	Watch         bool   `yaml:"watch"`          // Reload when files change on disk
 
 	// Theme settings
 	Theme       string            `yaml:"theme"`        // "default", "dark" or "light"
@@ -42,6 +43,7 @@ func DefaultConfig() *Config {
 		Opener:         "auto",
 		SortBy:         "name",
 		SortReverse:    false,
+		Watch:          true,
 		Theme:          "default",
 	}
 }

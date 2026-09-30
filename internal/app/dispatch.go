@@ -3,11 +3,14 @@ package app
 import tea "github.com/charmbracelet/bubbletea"
 
 // Update handles all state updates. Messages from work running in the
-// background (recursive search, re-sorting) are handled here and
-// everything else by update.
+// background (file watching, recursive search, re-sorting) are handled
+// here and everything else by update. Afterwards the watcher is pointed at
+// the directories the tabs show, wherever the message took them.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
+	case dirsChangedMsg:
+		cmd = m.handleDirsChanged(msg)
 	case resortMsg:
 		cmd = m.resortTabs(msg)
 	case findDelayMsg:
@@ -27,5 +30,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showJump(msg)
 		}
 	}
+	m.watchTabs()
 	return m, cmd
 }

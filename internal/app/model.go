@@ -88,8 +88,9 @@ type Model struct {
 	sortReverse bool
 	sortCursor  int // Row of the sort menu
 
-	find finder      // Recursive search palette (f, F)
-	jump previewJump // Preview line to show once a search result's file loads
+	find  finder      // Recursive search palette (f, F)
+	jump  previewJump // Preview line to show once a search result's file loads
+	watch *dirWatcher // Reloads tabs when their directories change; nil when off
 }
 
 // tab returns a pointer to the active tab
@@ -193,6 +194,7 @@ type KeyMap struct {
 	NextTab     key.Binding
 	PrevTab     key.Binding
 	CloseTab    key.Binding
+	Refresh     key.Binding
 	Sort        key.Binding
 	Reverse     key.Binding
 	Find        key.Binding
@@ -354,6 +356,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("ctrl+w"),
 			key.WithHelp("ctrl+w", "close tab"),
 		),
+		Refresh: key.NewBinding(
+			key.WithKeys("ctrl+r"),
+			key.WithHelp("ctrl+r", "refresh"),
+		),
 		Sort: key.NewBinding(
 			key.WithKeys("s"),
 			key.WithHelp("s", "sort by"),
@@ -410,6 +416,9 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 		sortBy:      cfg.SortBy,
 		sortReverse: cfg.SortReverse,
 	}
+	if cfg.Watch {
+		m.watch = newDirWatcher()
+	}
 
 	// Create initial tab with config settings
 	initialTab := m.newTab(path)
@@ -441,5 +450,5 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	return m.initCmd
+	return tea.Batch(m.initCmd, m.watch.listen())
 }

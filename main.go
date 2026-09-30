@@ -166,7 +166,12 @@ func main() {
 
 	// Run the program
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
+	final, err := p.Run()
+	if model, ok := final.(app.Model); ok {
+		// Stop watching directories
+		model.Close()
+	}
+	if err != nil {
 		fmt.Printf("Error running program: %v\n", err)
 		os.Exit(1)
 	}

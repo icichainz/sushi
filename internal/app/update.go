@@ -231,6 +231,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 
+	case key.Matches(msg, m.keys.Refresh):
+		return m.refresh()
+
 	case key.Matches(msg, m.keys.Sort):
 		return m.openSortMenu()
 
@@ -581,6 +584,7 @@ func (m *Model) jumpToFirstMatch() tea.Cmd {
 		return nil
 	}
 	tab.Cursor = tab.SearchResults[0]
+	tab.SearchResultIdx = 0
 	return m.previewCmd(tab)
 }
 
@@ -604,6 +608,10 @@ func (m *Model) updateSearchResults() {
 	query := strings.ToLower(tab.SearchQuery)
 	for i, file := range tab.Files {
 		if fuzzyMatch(query, strings.ToLower(file.Name)) {
+			// A reload keeps the cursor, so ↑ and ↓ go on from where it is
+			if i == tab.Cursor {
+				tab.SearchResultIdx = len(tab.SearchResults)
+			}
 			tab.SearchResults = append(tab.SearchResults, i)
 			tab.SearchMatchSet[i] = struct{}{}
 		}

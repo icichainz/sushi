@@ -978,7 +978,7 @@ var helpGroups = []struct {
 	{"Files", []hint{{"enter", "open"}, {"e o", "edit, default app"}, {"r", "rename"}, {"n N", "new file, folder"}, {"d", "delete"}}},
 	{"Select", []hint{{"space", "toggle"}, {"*", "invert"}, {"u", "clear"}, {"c x v", "copy, cut, paste"}}},
 	{"View", []hint{{"/", "search"}, {"p", "preview"}, {".", "hidden files"}, {"?", "this panel"}}},
-	{"Find", []hint{{"f", "find by name"}, {"F", "find in files"}, {"s S", "sort by, reverse"}}},
+	{"Find", []hint{{"f", "find by name"}, {"F", "find in files"}, {"s S", "sort by, reverse"}, {"ctrl+r", "refresh"}}},
 	{"Tabs", []hint{{"t T", "new here, home"}, {"tab", "next"}, {"shift+tab", "previous"}, {"ctrl+w", "close"}}},
 	{"Go", []hint{{"b B", "bookmarks, add"}, {"1-9", "jump to bookmark"}, {"P", "plugins"}, {"!", "shell command"}, {"q", "quit"}}},
 }
