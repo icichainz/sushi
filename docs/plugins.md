@@ -94,10 +94,10 @@ A plugin can tell sushi what to do next by writing lines to the file named in `$
 | Instruction | Effect |
 |-------------|--------|
 | `cd PATH` | Go to `PATH`. If it is a file, go to its directory and put the cursor on it |
-| `select PATH` | Add `PATH` to the selection |
+| `select PATH` | Add `PATH` to the selection. It must name something that exists: paths are checked, and one that doesn't exist is reported in the status bar rather than selected, so a delete never starts on a mistyped path |
 | `status TEXT` | Show `TEXT` in the status bar |
 
-Relative paths are relative to the directory the plugin ran in. For example, this is the heart of `fzf-jump`:
+Relative paths are relative to the directory the plugin ran in. The paths of `cd` and `select` are cleaned, as `filepath.Clean` does: `a/./b/../c` is `a/c`, and a trailing slash is dropped, so `select link/` selects the symbolic link `link` itself, not the folder it points to. For example, this is the heart of `fzf-jump`:
 
 ```sh
 target=$(fzf) || exit 0
@@ -106,7 +106,7 @@ echo "cd $target" > "$SUSHI_CMD_FILE"
 
 ## Keys
 
-Keys are written the way sushi receives them: a single character (`Z`, `%`, `#`), or a name such as `ctrl+g`, `alt+x` or `f5`. Plugins can't take over sushi's own keys. If a plugin asks for one, or two plugins ask for the same key, sushi says so in the status bar at startup and the plugin stays available from the Run palette.
+Keys are written the way sushi receives them: a single character (`Z`, `%`, `#`), or a name such as `ctrl+g`, `alt+x` or `f5`. Plugins can't take over sushi's own keys: those of its actions, as remapped under `keys:` in the config (see [Remapping Keys](../README.md#remapping-keys)), and the digits `1`-`9`, which jump to bookmarks. If a plugin asks for one, or two plugins ask for the same key, sushi says so in the status bar at startup, and `sushi --list-keys` lists it; the plugin stays available from the Run palette, shown there without a key.
 
 ## Windows
 

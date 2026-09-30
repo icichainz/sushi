@@ -91,6 +91,7 @@ sushi --ascii ~/projects
 | `--font NAME` | With `--install-font`, choose which font to install |
 | `--list-fonts` | List available Nerd Fonts to install |
 | `--init-config` | Create default configuration file |
+| `--list-keys` | Print every action and its keys as a `keys:` section for the config file, then the keys that can't be changed and the plugins' keys. Problems with the config go to stderr, and the exit status is 1 if there are any (see [Remapping Keys](#remapping-keys)) |
 | `--cwd-file FILE` | When you quit with `q`, write the directory shown to `FILE`, for the `sushicd` shell function (`Q` quits without writing) |
 | `--print-shell-wrapper [SHELL]` | Print the `sushicd` shell function for `zsh`, `bash` or `fish` (by default, the shell in `$SHELL`) |
 | `--version` | Print the version, as in `sushi 0.1.0` (`sushi dev` when built without the Makefile) |
@@ -196,11 +197,126 @@ plugins:
   - name: git-log
     key: ctrl+l
     command: git log --oneline -20
+
+# Keys for actions, replacing their defaults; see Remapping Keys below
+keys:
+  hidden: H
 ```
 
-Color names for `colors`: `header_fg`, `text`, `muted`, `faint`, `raised`, `directory`, `cursor_fg`, `cursor_bg`, `bar_fg`, `bar_bg`, `tab_bar_bg`, `tab_active_fg`, `tab_inactive_fg`, `tab_inactive_bg`, `accent`, `border`, `title`, `highlight`, `danger`, `selected`. Unknown names and invalid values are reported in the status bar when sushi starts.
+Color names for `colors`: `header_fg`, `text`, `muted`, `faint`, `raised`, `directory`, `cursor_fg`, `cursor_bg`, `bar_fg`, `bar_bg`, `tab_bar_bg`, `tab_active_fg`, `tab_inactive_fg`, `tab_inactive_bg`, `accent`, `border`, `title`, `highlight`, `danger`, `selected`.
+
+Problems with the config are reported in the status bar when sushi starts, and the rest of the file still applies. They are a config file that can't be read, settings sushi doesn't know (`shw_hidden: true` is reported by its line, with the setting you probably meant), values of the wrong kind, which keep their defaults, invalid values, which are replaced (`icon_mode: unknown value "emoji", using nerd`), unknown themes and colors, and problems with keys and plugins. The status bar shows the first problem for 10 seconds, with how many more there are; `sushi --list-keys` lists them all.
 
 Command line flags (like `--ascii`) override config file settings.
+
+### Remapping Keys
+
+Every action's keys can be changed under `keys:` in the config file:
+
+```yaml
+keys:
+  up: [k, up]
+  down: [j, down]
+  delete: [d, delete]
+  quit: [q, ctrl+c]
+  hidden: H        # one key needs no list
+  refresh: []      # leaves refresh without a key
+```
+
+- Each action takes a list of keys, or a single key on its own. The list replaces all of the action's default keys, so include the arrow keys if you still want them. Actions left out keep their defaults.
+- The first key listed is the one the key panel and the hint rows show; arrow and paging keys are passed over when the action has another.
+- `[]` leaves an action without a key. An action written with nothing after it (`refresh:`) is reported and keeps its defaults, and so does one whose keys can't be read at all.
+
+Keys are written as Bubble Tea reports them:
+
+| Key | Written |
+| --- | ------- |
+| A character | `k`, `G`, `"?"`, `"*"`. Capitals are shifted letters: write `G`, not `shift+g`. Quote punctuation, which YAML may otherwise read as something else |
+| The space bar | `space` |
+| Named keys | `enter`, `esc`, `tab`, `shift+tab`, `backspace`, `delete`, `insert`, `up`, `down`, `left`, `right`, `home`, `end`, `pgup`, `pgdown`, `f1` to `f20` |
+| Control keys | `ctrl+a` to `ctrl+z`. Terminals send `ctrl+i` as `tab` and `ctrl+m` as `enter`, so those two can't be told apart; write `tab` or `enter` |
+| Modified keys | The arrows, `home` and `end` after `ctrl+`, `shift+` or `ctrl+shift+`, as in `ctrl+up`, `shift+left` or `ctrl+shift+end`, and `ctrl+pgup` and `ctrl+pgdown` |
+| Alt | `alt+` before any of these, as in `alt+x`, `alt+G` or `alt+enter` |
+
+Key names can be written in capitals (`Enter`, `F5`); characters can't, as `g` and `G` are different keys.
+
+When sushi starts, it reports problems with the keys in the status bar: unknown actions (with the right name when one is only written differently, as `hard-delete` for `hard_delete`), key names it can't read, an action with no keys, and conflicts:
+
+- A key bound to two actions stays with one of them, which the message names: an action whose keys the config sets wins over one left at its defaults, and between two the config sets, the one listed first in the table below.
+- An action that takes a digit hides the bookmark that digit jumps to.
+- A key that a dialog uses for itself, such as `esc`, or a letter of the sort menu, does what the dialog says there, so the action's key is ignored in that dialog.
+- `ctrl+c` always quits, so another action can't have it, and `quit` needs a key of its own besides it.
+
+Plugin keys can't take a key that an action or a bookmark digit uses: a plugin that asks for one is reported, and left in the Run palette without a key.
+
+`sushi --list-keys` prints every action with its keys as they are now, as a `keys:` section to copy lines from, followed by the keys that can't be changed and the plugins' keys. It lists every problem with the config on stderr, and exits with status 1 if there are any.
+
+These keys don't change:
+
+- `ctrl+c` quits from anywhere, stopping a running operation first, as `q` does.
+- `1`-`9` jump to bookmarks, unless an action has taken the digit.
+- Confirmations take `y` or `Enter` to go ahead, and `n`, `Esc` or `q` to cancel.
+- Typing in the search (`/`), in prompts and in the Find palette goes into the text. Search moves between matches with `↑` and `↓`, and the Find palette has its own keys (see [Search](#search)).
+- Dialogs close with `Esc` and act with `Enter`; the Run palette switches with `Tab` and `Shift+Tab`, and the sort menu sorts with its letters `n`, `s`, `m` and `t`. Otherwise they follow the actions: the `up` and `down` keys move in the bookmark list, the sort menu and the Run palette, `delete` removes a bookmark, `reverse` reverses the sort, and `shell` switches the Run palette to its command line.
+- The key panel closes with `Esc`, the `help` key and the `quit` key it lists, and scrolls with the `up` and `down` keys.
+
+The actions, with their default keys as the config writes them:
+
+| Action | Default keys | What it does |
+| ------ | ------------ | ------------ |
+| `up` | `up`, `k` | Move up |
+| `down` | `down`, `j` | Move down |
+| `left` | `left`, `h` | Go to the parent directory |
+| `right` | `right`, `l` | Enter a directory, or open a file |
+| `enter` | `enter` | Enter a directory, or open a file |
+| `back` | `backspace` | Go to the parent directory |
+| `page_up` | `pgup`, `ctrl+u` | Page up |
+| `page_down` | `pgdown`, `ctrl+d` | Page down |
+| `home` | `home`, `g` | Go to the first file |
+| `end` | `end`, `G` | Go to the last file |
+| `delete` | `d` | Move to the trash |
+| `edit` | `e` | Edit in `$VISUAL` / `$EDITOR` |
+| `open` | `o` | Open with the default app |
+| `rename` | `r` | Rename |
+| `new_file` | `n` | New file |
+| `new_dir` | `N` | New directory |
+| `select` | `space` | Select the file and move down |
+| `invert` | `"*"` | Invert the selection |
+| `unselect` | `u` | Clear the selection |
+| `copy` | `c` | Copy to the clipboard |
+| `cut` | `x` | Cut to the clipboard |
+| `paste` | `v` | Paste into the current directory |
+| `hard_delete` | `D` | Delete permanently |
+| `undo` | `ctrl+z` | Undo the last operation |
+| `cancel` | `ctrl+x` | Cancel the operation running in the background |
+| `duplicate` | `y` | Duplicate |
+| `paste_link` | `V` | Paste as symbolic links |
+| `chmod` | `m` | Change permissions |
+| `bulk_rename` | `R` | Bulk rename in the editor |
+| `archive` | `a` | Compress into a `.zip` |
+| `extract` | `X` | Extract archives |
+| `search` | `"/"` | Fuzzy search in the current directory |
+| `bookmark` | `b` | Open the bookmarks |
+| `add_bookmark` | `B` | Bookmark the current directory |
+| `quit` | `q`, `ctrl+c` | Quit |
+| `help` | `"?"` | Show the key panel |
+| `preview_up` | `K` | Scroll the preview up |
+| `preview_down` | `J` | Scroll the preview down |
+| `plugins` | `P` | Open the Run palette on the plugins |
+| `shell` | `"!"` | Open the Run palette to type a shell command |
+| `preview` | `p` | Toggle the preview pane |
+| `hidden` | `"."` | Toggle hidden files |
+| `new_tab` | `t` | New tab in the current directory |
+| `new_tab_home` | `T` | New tab in the home directory |
+| `next_tab` | `tab` | Next tab |
+| `prev_tab` | `shift+tab` | Previous tab |
+| `close_tab` | `ctrl+w` | Close the tab (quits on the last one) |
+| `refresh` | `ctrl+r` | Reload every tab |
+| `sort` | `s` | Open the sort menu |
+| `reverse` | `S` | Reverse the sort order |
+| `find` | `f` | Find files by name below this directory |
+| `grep` | `F` | Find text in the files below this directory |
+| `quit_no_cd` | `Q` | Quit without changing the shell's directory |
 
 ## Layout
 
@@ -210,7 +326,7 @@ Command line flags (like `--ascii`) override config file settings.
 | 72 to 99 columns | Files, preview |
 | Under 72 columns | Files only |
 
-Narrow file lists drop the date column first, then the size. The status bar shows the current mode (`NORMAL`, `SELECT`, `SEARCH`, `FIND`, `SORT`, `CHMOD`, `ARCHIVE`, ...) and the progress of any operation running in the background, and the last line lists the keys that apply to the mode.
+Narrow file lists drop the date column first, then the size; sorted by one of those, the name's heading then says so, as in `Name (modified ↓)`. The status bar shows the current mode (`NORMAL`, `SELECT`, `SEARCH`, `FIND`, `SORT`, `CHMOD`, `ARCHIVE`, ...), then the latest message and the progress of any operation running in the background, then the number of items, their size, the selection and the clipboard, as far as they fit. The last line lists the keys that apply to the mode.
 
 ## Previews
 
@@ -219,16 +335,18 @@ The preview pane shows the file under the cursor. `J` and `K`, or the mouse whee
 | File | Preview |
 | ---- | ------- |
 | Text and code | Syntax highlighting and line numbers, for the first 2000 lines. Files over 10 MB show their details only |
-| Folders | The first 200 entries, folders first |
+| Folders | The first 200 entries, folders first and then by name, as the file list sorts them by name |
 | Images (PNG, JPEG, GIF, WebP, BMP) | Drawn to fit the pane in 24-bit or 256 colors, with the format and size in pixels in the heading. GIFs show their first frame |
 | Archives (`.zip`, `.jar`, `.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`/`.tbz2`) | The entries with their sizes (the first 500), with the number of entries and the unpacked size in the heading. Nothing is extracted |
 | PDF | The text of the first 5 pages, and the page count, from poppler's `pdftotext` and `pdfinfo` |
-| Symbolic links | The preview of what the link points to, with its target in the heading |
+| Symbolic links | The preview of what the link points to, with its target in the heading. A link without an extension is previewed by its target's name, so `latest` pointing to `photo.png` shows the picture |
 | Other files | Type, size, permissions and modification date |
 
 Images show their details instead of the picture in ASCII icon mode (`--ascii`), in terminals with fewer than 256 colors, and when larger than 50 megapixels. Without poppler (`brew install poppler`, `apt install poppler-utils`), PDFs show their details too. Image previews don't yet follow EXIF orientation, so some photos from phones show on their side; TIFF and animated GIFs aren't supported.
 
 ## Keybindings
+
+These are the default keys. `keys:` in the config changes them (see [Remapping Keys](#remapping-keys)), and the key panel (`?`) and hint rows show them as they are.
 
 ### Navigation
 
@@ -263,13 +381,15 @@ Keys that act on files use the selection when there is one, and the file under t
 | `e` | Edit in `$VISUAL` / `$EDITOR` |
 | `o` | Open with the default app |
 
+Renaming a folder, or moving it with `x` and `v`, takes the tabs, bookmarks and selections inside it along. Files deleted by another program leave the selection when the list reloads. `v` asks before overwriting anything; if, while it asks, the folder is deleted, the tab moves elsewhere or other names would be overwritten, `y` pastes nothing and says why.
+
 ### Undo and Tools
 
 | Key | Action |
 | --- | ------ |
 | `Ctrl+z` | Undo the last operation; press again to go further back (up to 20) |
 | `Ctrl+x` | Cancel the operation running in the background |
-| `y` | Duplicate beside the original, as `name copy.ext`, then `name copy 2.ext` |
+| `y` | Duplicate beside the original, as `name copy.ext`, then `name copy 2.ext`; duplicating `name copy.ext` makes `name copy 2.ext` too |
 | `V` | Paste the clipboard as symbolic links to its files. Never replaces anything |
 | `m` | Change permissions (not recursively): a prompt shows the current mode, such as `644`; type 3 or 4 octal digits. Several items all get the mode typed, and the prompt starts empty when theirs differ. Symlinks are left as they are, as is what they point to. Not available on Windows |
 | `R` | Bulk rename the selection in `$VISUAL` / `$EDITOR`. Without a selection, the same as `r` |
@@ -280,7 +400,7 @@ Undo, duplicate, compress and extract run in the background, like copying; see [
 
 `R` opens the selected names in your editor, one per line. Change the names, save and close the editor: sushi checks every new name before renaming anything, so a mistake renames nothing, and names can be swapped or rotated. With an editor that opens a window, make it wait for the file to close, as in `EDITOR="code --wait"`.
 
-`a` refuses a name that is already taken. `X` extracts `photos.zip` into a new folder `photos`, or `photos 2` if that is taken, never overwrites anything, and refuses entries and links that would reach outside that folder, directly or through other links in the archive.
+`a` refuses a name that is already taken. `X` extracts `photos.zip` into a new folder `photos`, or `photos 2` if that is taken, never overwrites anything, and refuses entries and links that would reach outside that folder, directly or through other links in the archive. An archive refused part way, as a `.tar` can only be once some of it is written, leaves nothing behind: the new folder is removed.
 
 ### Search
 
@@ -344,7 +464,7 @@ Plugins can also have their own keys. See [docs/plugins.md](docs/plugins.md).
 
 | Key | Action |
 | --- | ------ |
-| `?` | Show the key panel. `Esc` closes it; any other key closes it and does its job (`j`/`k` scroll it first on small terminals) |
+| `?` | Show the key panel. `Esc`, `?` and `q` only close it (`Ctrl+c` still quits), and `j`/`k` scroll it when it doesn't fit; any other key closes it and does its job |
 | `q`/`Ctrl+c` | Quit. With [`sushicd`](#changing-directory-on-quit), the shell changes to the current directory |
 | `Q` | Quit without changing the shell's directory |
 
@@ -394,7 +514,7 @@ Copy, move, delete, trash, duplicate, compress, extract and undo run in the back
 Copying 3/120 files 45% ████░░░░░░
 ```
 
-You can keep browsing meanwhile. Keys that change files are refused, with a message, until the operation finishes or you cancel it with `Ctrl+x`, and so are plugins, the Run palette and opening files in other programs. A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q`, `Q` and closing the last tab stop a running operation before quitting; press the key again to quit at once, and sushi still waits a few seconds for the operation to clean up. Files are copied, and zips written, under a hidden `.sushi-partial-` name and renamed once complete, so nothing half-written ever has its real name; if sushi is killed, what it leaves is removed when its folder is listed a day later. Copies keep their permissions and modification times.
+Where the status bar is short of room, the progress drops its bar, as in `Copying 3/120 45%`. You can keep browsing meanwhile. Keys that change files are refused until the operation finishes or you cancel it with `Ctrl+x`, with a message beside the progress (`Still copying: wait, or ctrl+x to cancel`), and so are plugins, the Run palette and opening files in other programs. A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q`, `Q` and closing the last tab stop a running operation before quitting; press the key again to quit at once, and sushi still waits a few seconds for the operation to clean up. Files are copied, and zips written, under a hidden `.sushi-partial-` name and renamed once complete, so nothing half-written ever has its real name; if sushi is killed, what it leaves is removed when its folder is listed a day later. Copies keep their permissions and modification times.
 
 ## Requirements
 
@@ -490,12 +610,12 @@ sushi/
 - [x] Automatic refresh when files change on disk
 - [x] Sort menu
 - [x] Change the shell's directory on quit
+- [x] Customizable keybindings
 - [ ] Test on Windows, and use the Recycle Bin there rather than sushi's own trash
 - [ ] Signed and notarized macOS builds, so other Macs open them without a warning
 - [ ] Follow EXIF orientation in image previews, and preview TIFF and animated GIFs
 - [ ] Per-volume trashes (`.Trashes` on macOS, `.Trash-$uid` on Linux), so trashing on another drive doesn't copy
 - [ ] Extract more formats, such as `.tar.bz2`, `.tar.xz` and `.7z`
-- [ ] Customizable keybindings
 
 ## Contributing
 
