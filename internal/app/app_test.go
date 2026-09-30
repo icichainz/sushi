@@ -653,6 +653,39 @@ func TestPreviewScrollKeys(t *testing.T) {
 	}
 }
 
+func TestPreviewScrollStaysInRange(t *testing.T) {
+	dir := t.TempDir()
+	var b strings.Builder
+	for i := 1; i <= 60; i++ {
+		fmt.Fprintf(&b, "line number %d\n", i)
+	}
+	writeTestFile(t, filepath.Join(dir, "a.txt"), b.String())
+	m := newTestModel(t, dir, nil)
+	updated, _ := m.createTab(dir)
+	m = updated.(Model)
+	m.activeTabIdx = 0
+
+	// Scrolled to the end, then the terminal grows: every tab's preview
+	// scrolls back to what the taller pane can show
+	for i := range m.tabs {
+		m.tabs[i].Preview = m.tabs[0].Preview
+		m.tabs[i].PreviewScroll = m.tabs[0].Preview.MaxScroll(m.previewRows())
+	}
+	m = resize(m, tea.WindowSizeMsg{Width: 100, Height: 50})
+	for i, tab := range m.tabs {
+		if want := tab.Preview.MaxScroll(m.previewRows()); tab.PreviewScroll != want {
+			t.Fatalf("tab %d scroll = %d after growing, want %d", i+1, tab.PreviewScroll, want)
+		}
+	}
+
+	// K goes up from where the pane is scrolled to, even from past the end
+	m.tab().PreviewScroll = 500
+	m, _ = press(t, m, "K")
+	if want := max(m.tab().Preview.MaxScroll(m.previewRows())-m.previewStep(), 0); m.tab().PreviewScroll != want {
+		t.Fatalf("K from past the end: scroll = %d, want %d", m.tab().PreviewScroll, want)
+	}
+}
+
 func TestSelectionIsSummarisedInPreview(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "a.txt"), "12345")

@@ -34,6 +34,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// A taller pane scrolls less far; every tab's pane is as tall
+		for i := range m.tabs {
+			tab := &m.tabs[i]
+			tab.PreviewScroll = min(tab.PreviewScroll, tab.Preview.MaxScroll(m.previewRows()))
+		}
 		return m, nil
 
 	case dirLoadedMsg:
@@ -355,7 +360,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.PreviewUp):
-		tab.PreviewScroll = max(tab.PreviewScroll-m.previewStep(), 0)
+		// From where the pane is actually scrolled to, which can be less
+		// than the offset if the preview got shorter
+		tab.PreviewScroll = max(min(tab.PreviewScroll, tab.Preview.MaxScroll(m.previewRows()))-m.previewStep(), 0)
 		return m, nil
 
 	case key.Matches(msg, m.keys.Preview):
