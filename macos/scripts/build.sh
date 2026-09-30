@@ -62,7 +62,7 @@ universal() {
 build_go() {
     local goarch=$ARCH out=$CACHE/sushi-$ARCH
     [ "$ARCH" = x86_64 ] && goarch=amd64
-    (cd "$ROOT" && CGO_ENABLED=0 GOOS=darwin GOARCH=$goarch go build -trimpath -ldflags "-s -w" -o "$out" .) >&2
+    (cd "$ROOT" && CGO_ENABLED=0 GOOS=darwin GOARCH=$goarch go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "$out" .) >&2
     echo "$out"
 }
 

@@ -15,6 +15,10 @@ import (
 	"github.com/icichainz/sushi/internal/utils"
 )
 
+// version is what --version prints. Builds set it with
+// -ldflags "-X main.version=1.2.3", as the Makefile does.
+var version = "dev"
+
 // optionalString is a flag that can be given alone or with a value, as in
 // --print-shell-wrapper or --print-shell-wrapper=zsh
 type optionalString struct {
@@ -44,6 +48,7 @@ func main() {
 	cwdFile := flag.String("cwd-file", "", "On quit, write the directory shown to this `file` (Q quits without writing)")
 	var wrapperShell optionalString
 	flag.Var(&wrapperShell, "print-shell-wrapper", "Print the sushicd shell function for zsh, bash or fish (default: $SHELL)")
+	showVersion := flag.Bool("version", false, "Print the version of sushi")
 	showHelp := flag.Bool("help", false, "Show help message")
 	flag.BoolVar(showHelp, "h", false, "Show help message")
 
@@ -75,12 +80,18 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  sushi --install-font  # Install Nerd Font for icons\n")
 		fmt.Fprintf(os.Stderr, "  sushi --ascii      # Use ASCII icons\n")
 		fmt.Fprintf(os.Stderr, "  sushi --init-config   # Create configuration file\n")
+		fmt.Fprintf(os.Stderr, "  sushi --version    # Print the version\n")
 	}
 
 	flag.Parse()
 
 	if *showHelp {
 		flag.Usage()
+		os.Exit(0)
+	}
+
+	if *showVersion {
+		fmt.Println("sushi " + version)
 		os.Exit(0)
 	}
 

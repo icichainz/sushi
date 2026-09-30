@@ -93,6 +93,7 @@ sushi --ascii ~/projects
 | `--init-config` | Create default configuration file |
 | `--cwd-file FILE` | When you quit with `q`, write the directory shown to `FILE`, for the `sushicd` shell function (`Q` quits without writing) |
 | `--print-shell-wrapper [SHELL]` | Print the `sushicd` shell function for `zsh`, `bash` or `fish` (by default, the shell in `$SHELL`) |
+| `--version` | Print the version, as in `sushi 0.1.0` (`sushi dev` when built without the Makefile) |
 | `--help`, `-h` | Show help message |
 
 ### Changing Directory on Quit
