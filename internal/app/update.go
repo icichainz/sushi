@@ -476,6 +476,11 @@ func (m Model) openCursor() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if file := tab.Files[tab.Cursor]; !file.IsDir {
+		// An editor or app could change the files a job is working on
+		if m.job != nil {
+			cmd := m.stillBusy()
+			return m, cmd
+		}
 		return m.openFile(file)
 	}
 	return m, m.loadDir(tab, tab.Files[tab.Cursor].Path)

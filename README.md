@@ -391,7 +391,7 @@ Copy, move, delete, trash, duplicate, compress, extract and undo run in the back
 Copying 3/120 files 45% ████░░░░░░
 ```
 
-You can keep browsing meanwhile. Keys that change files are refused, with a message, until the operation finishes or you cancel it with `Ctrl+x`. A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q` stops a running operation before quitting; press `q` again to quit at once. Copies keep their permissions and modification times.
+You can keep browsing meanwhile. Keys that change files are refused, with a message, until the operation finishes or you cancel it with `Ctrl+x`, and so are plugins, the Run palette and opening files in other programs. A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q`, `Q` and closing the last tab stop a running operation before quitting; press the key again to quit at once, and sushi still waits a few seconds for the operation to clean up. Files are copied, and zips written, under a hidden `.sushi-partial-` name and renamed once complete, so nothing half-written ever has its real name; if sushi is killed, what it leaves is removed when its folder is listed a day later. Copies keep their permissions and modification times.
 
 ## Requirements
 

@@ -50,8 +50,13 @@ func (m *Model) bindPluginKeys() []string {
 	return warnings
 }
 
-// runPlugin runs p on the selection, or the file under the cursor
+// runPlugin runs p on the selection, or the file under the cursor. Not
+// while a job runs: the plugin could change the files it is working on.
 func (m Model) runPlugin(p plugins.Plugin) (tea.Model, tea.Cmd) {
+	if m.job != nil {
+		cmd := m.stillBusy()
+		return m, cmd
+	}
 	cmdFile, err := os.CreateTemp("", "sushi-cmd-*")
 	if err != nil {
 		cmd := m.setStatus(fmt.Sprintf("Can't run %s: %v", p.Name, err))

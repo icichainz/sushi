@@ -227,6 +227,10 @@ func (t *Task) copyInto(src, dst string, info os.FileInfo, created bool) error {
 	entries, readErr := readDir(src)
 	var err error
 	for _, entry := range entries {
+		// Another copy's unfinished file: it is no one's to copy
+		if isPartial(entry.Name()) {
+			continue
+		}
 		if err = t.copyPath(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
 			break
 		}

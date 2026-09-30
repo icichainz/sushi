@@ -10,6 +10,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // Regression tests for data-safety problems found in review
@@ -342,6 +343,53 @@ func TestCopyIntoItselfUnderAnotherCaseIsRefused(t *testing.T) {
 	}
 	if got := dirEntries(t, filepath.Join(src, "sub")); len(got) != 0 {
 		t.Fatalf("something was copied: %v", got)
+	}
+}
+
+func TestListingRemovesStaleLeftovers(t *testing.T) {
+	dir := t.TempDir()
+	old := time.Now().Add(-48 * time.Hour)
+	aged := func(path string) {
+		t.Helper()
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// What a killed sushi left: a partial file and a partial folder
+	writeFile(t, filepath.Join(dir, ".sushi-partial-111"), "half")
+	aged(filepath.Join(dir, ".sushi-partial-111"))
+	os.Mkdir(filepath.Join(dir, ".sushi-partial-222"), 0755)
+	writeFile(t, filepath.Join(dir, ".sushi-partial-222", "a"), "a")
+	aged(filepath.Join(dir, ".sushi-partial-222", "a"))
+	aged(filepath.Join(dir, ".sushi-partial-222"))
+	// A copy still running, with a file in an old folder being written
+	os.Mkdir(filepath.Join(dir, ".sushi-partial-333"), 0755)
+	writeFile(t, filepath.Join(dir, ".sushi-partial-333", "growing"), "g")
+	aged(filepath.Join(dir, ".sushi-partial-333"))
+	// A bulk rename's temporary name holds a real file: never touched
+	writeFile(t, filepath.Join(dir, ".sushi-rename-444"), "real")
+	aged(filepath.Join(dir, ".sushi-rename-444"))
+
+	files, err := ScanDirectory(dir, ScanOptions{ShowHidden: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(names(files), ","); got != ".sushi-partial-333,.sushi-rename-444" {
+		t.Fatalf("listed %s", got)
+	}
+	if got := strings.Join(dirEntries(t, dir), ","); got != ".sushi-partial-333,.sushi-rename-444" {
+		t.Fatalf("left %s", got)
+	}
+}
+
+func TestCopyLeavesOutUnfinishedFiles(t *testing.T) {
+	src, dst := album(t)
+	writeFile(t, filepath.Join(src, ".sushi-partial-555"), "another copy's")
+	if err := CopyPath(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if Exists(filepath.Join(dst, ".sushi-partial-555")) || !Exists(filepath.Join(dst, "a.txt")) {
+		t.Fatalf("copied %v", dirEntries(t, dst))
 	}
 }
 

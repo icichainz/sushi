@@ -7,7 +7,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/fs"
 	"github.com/icichainz/sushi/internal/plugins"
@@ -420,6 +422,108 @@ func TestDeleteConfirmationShowsItemsInOtherFolders(t *testing.T) {
 	dialog = strings.Join(plain(m.renderConfirmDialog()), "\n")
 	if !strings.Contains(dialog, "Delete file 'thesis.tex'?") || !strings.Contains(dialog, "It is in another folder") || !strings.Contains(dialog, "elsewhere/thesis.tex") {
 		t.Fatalf("dialog:\n%s", dialog)
+	}
+}
+
+// busy returns a model in dir with a job started but not run, as the
+// moment after pressing d
+func busy(t *testing.T, dir string, cfg *config.Config) Model {
+	t.Helper()
+	m := newTestModel(t, dir, cfg)
+	m, _ = press(t, m, "d")
+	if m.job == nil {
+		t.Fatal("no job started")
+	}
+	return m
+}
+
+func TestEveryWayOutStopsTheJobFirst(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "")
+
+	// Q and closing the last tab used to quit at once, leaving the job's
+	// partial files behind
+	for _, k := range []string{"q", "Q", "ctrl+w"} {
+		m := busy(t, dir, nil)
+		var cmd tea.Cmd
+		if k == "ctrl+w" {
+			m, cmd = ctrl(t, m, tea.KeyCtrlW)
+		} else {
+			m, cmd = press(t, m, k)
+		}
+		if quits(cmd) || !m.job.quit || !strings.Contains(m.statusMsg, "Stopping moving to trash before quitting") {
+			t.Fatalf("%s: statusMsg = %q", k, m.statusMsg)
+		}
+		if k == "Q" && m.ExitDir() != "" {
+			t.Fatal("Q should still quit without changing the shell's directory")
+		}
+	}
+}
+
+func TestBusyRefusesPluginsCommandsAndOpeningFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "")
+	os.Mkdir(filepath.Join(dir, "sub"), 0755)
+	ran := filepath.Join(t.TempDir(), "ran")
+	cfg := config.DefaultConfig()
+	cfg.Plugins = []plugins.Plugin{{Name: "touch", Key: "Z", Mode: plugins.ModeBackground, Command: "touch " + ran}}
+
+	for _, k := range []string{"Z", "P", "!", "e", "o"} {
+		m := busy(t, dir, cfg)
+		m, cmd := press(t, m, k)
+		m = drain(t, m, cmd)
+		if m.mode != ModeNormal || !strings.Contains(m.statusMsg, "Still moving to trash") {
+			t.Fatalf("%s while busy: mode = %v, statusMsg = %q", k, m.mode, m.statusMsg)
+		}
+	}
+	if fs.Exists(ran) {
+		t.Fatal("a plugin ran while the job did")
+	}
+
+	// A plugin started some other way, as from the Run palette
+	m := busy(t, dir, cfg)
+	m2, _ := m.runPlugin(cfg.Plugins[0])
+	if m = m2.(Model); !strings.Contains(m.statusMsg, "Still moving to trash") {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+
+	// Enter opens a file in another program: refused; a folder: fine
+	m = cursorTo(t, busy(t, dir, nil), "a.txt")
+	m, _ = press(t, m, "enter")
+	if !strings.Contains(m.statusMsg, "Still moving to trash") {
+		t.Fatalf("enter on a file: statusMsg = %q", m.statusMsg)
+	}
+	m = cursorTo(t, busy(t, dir, nil), "sub")
+	m, cmd := press(t, m, "enter")
+	m = drain(t, m, cmd)
+	if m.tab().CurrentPath != filepath.Join(dir, "sub") {
+		t.Fatal("entering a folder should still work while busy")
+	}
+}
+
+func TestShutdownWaitsForTheJobToCleanUp(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	writeTestFile(t, filepath.Join(src, "big"), strings.Repeat("x", 64<<20))
+
+	m := newTestModel(t, src, nil)
+	m, _ = press(t, m, "c")
+	m.tab().CurrentPath = dst
+	m, cmd := press(t, m, "v")
+	go cmd() // The program runs it and then quits, say on a second q
+	<-m.job.started
+
+	if err := m.Shutdown(5 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if got := dirNames(t, dst); len(got) != 0 {
+		t.Fatalf("left in the destination: %v", got)
+	}
+
+	// A job whose command never ran isn't waited for
+	m = busy(t, src, nil)
+	start := time.Now()
+	if err := m.Shutdown(5 * time.Second); err != nil || time.Since(start) > 2*time.Second {
+		t.Fatalf("err = %v after %v", err, time.Since(start))
 	}
 }
 
