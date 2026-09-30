@@ -156,7 +156,9 @@ func (t *Task) addToZip(zw *zip.Writer, path, name string, info os.FileInfo) err
 // replaced: an archive with an entry twice fails. Zip archives are checked
 // in full before anything is written; tar archives can only be read in
 // order, so extraction stops at the first bad entry. If it fails or is
-// cancelled, what was extracted until then stays.
+// cancelled, what was extracted until then stays. Modes come from the
+// archive, without special bits and masked with the umask like those of
+// any new file.
 func (t *Task) Extract(path, dir string) error {
 	switch ArchiveKind(path) {
 	case "zip":
@@ -445,8 +447,10 @@ func (x *extractor) mkdir(name string, mode os.FileMode, mtime time.Time) error 
 	if err := x.root.MkdirAll(rel, 0700); err != nil {
 		return err
 	}
-	// The owner keeps full access, so the folder can be used and removed
-	x.dirs = append(x.dirs, pendingDir{rel, mode.Perm() | 0700, mtime})
+	// Masked like the modes of new folders, so an archive made where
+	// everything is 0777 doesn't open it to everyone; the owner keeps full
+	// access, so the folder can be used and removed
+	x.dirs = append(x.dirs, pendingDir{rel, mode.Perm()&^umask | 0700, mtime})
 	return nil
 }
 
@@ -475,9 +479,10 @@ func (x *extractor) file(name string, mode os.FileMode, mtime time.Time, r io.Re
 		x.root.Remove(rel)
 		return err
 	}
-	// Special bits like setuid aren't restored from an archive
+	// Special bits like setuid aren't restored from an archive, and the
+	// rest is masked as a new file's mode would be
 	x.root.Chtimes(rel, time.Time{}, mtime)
-	x.root.Chmod(rel, mode.Perm())
+	x.root.Chmod(rel, mode.Perm()&^umask)
 	x.t.p.Files++
 	x.t.update()
 	return nil

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -312,6 +313,41 @@ func TestArchiveKind(t *testing.T) {
 	for name, want := range map[string]string{"a.zip": "zip", "A.ZIP": "zip", "a.tar": "tar", "a.tar.gz": "tar.gz", "a.tgz": "tar.gz", "a.gz": "", "a.rar": "", "zip": ""} {
 		if got := ArchiveKind(name); got != want {
 			t.Errorf("ArchiveKind(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestExtractMasksModesWithTheUmask(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows files have no Unix permissions")
+	}
+	// Zips made on Windows store everything as 0777 and 0666
+	real := umask
+	umask = 0o027
+	t.Cleanup(func() { umask = real })
+
+	entries := []entry{
+		{name: "open/", mode: os.ModeDir | 0777},
+		{name: "open/notes.txt", body: "n", mode: 0666},
+		{name: "run.sh", body: "#!/bin/sh", mode: 0777},
+	}
+	for _, kind := range []string{"zip", "tar"} {
+		root := t.TempDir()
+		archive := filepath.Join(root, "a."+kind)
+		writeArchive(t, archive, kind, entries)
+		dest := filepath.Join(root, "dest")
+		if err := background().Extract(archive, dest); err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+		want := map[string]os.FileMode{"open/notes.txt": 0640, "run.sh": 0750}
+		if kind == "zip" {
+			want["open"] = 0750 // The tar helper always writes folders as 0755
+		}
+		for name, mode := range want {
+			info, err := os.Stat(filepath.Join(dest, filepath.FromSlash(name)))
+			if err != nil || info.Mode().Perm() != mode {
+				t.Errorf("%s: %s is %v, want %v (%v)", kind, name, info.Mode().Perm(), mode, err)
+			}
 		}
 	}
 }
