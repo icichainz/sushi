@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -43,13 +44,22 @@ func FreeName(dir, stem, ext string) string {
 }
 
 // CopyName returns a free name for a copy of path beside it: "notes
-// copy.txt", then "notes copy 2.txt" and so on. Directories keep any dots
-// in their name, as in "v1.2 copy".
+// copy.txt", then "notes copy 2.txt" and so on. A copy of a copy is
+// numbered too, so copying "notes copy.txt" gives "notes copy 2.txt",
+// not "notes copy copy.txt". Directories keep any dots in their name, as
+// in "v1.2 copy".
 func CopyName(path string) string {
 	name := filepath.Base(path)
 	stem, ext := SplitExt(name)
 	if info, err := os.Lstat(path); err == nil && info.IsDir() {
 		stem, ext = name, ""
 	}
+	if m := copySuffix.FindStringSubmatch(stem); m != nil {
+		stem = m[1]
+	}
 	return FreeName(filepath.Dir(path), stem+" copy", ext)
 }
+
+// copySuffix matches a name that CopyName made: the original's, then
+// " copy", perhaps with a number
+var copySuffix = regexp.MustCompile(`^(.*[^ ]) copy(?: [0-9]+)?$`)

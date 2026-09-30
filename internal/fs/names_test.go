@@ -37,11 +37,32 @@ func TestCopyName(t *testing.T) {
 	if got := CopyName(f); got != "report copy 3.pdf" {
 		t.Fatalf("third copy = %q", got)
 	}
+	// A copy of a copy is numbered like the others
+	for _, name := range []string{"report copy.pdf", "report copy 2.pdf"} {
+		if got := CopyName(filepath.Join(dir, name)); got != "report copy 3.pdf" {
+			t.Fatalf("copy of %s = %q", name, got)
+		}
+	}
+	a := filepath.Join(dir, "a copy.txt")
+	writeFile(t, a, "")
+	if got := CopyName(a); got != "a copy 2.txt" {
+		t.Fatalf("copy of a copy.txt = %q", got)
+	}
+	// A name that only ends in copy is a name like any other
+	for name, want := range map[string]string{"copy.txt": "copy copy.txt", "photocopy.txt": "photocopy copy.txt"} {
+		if got := CopyName(filepath.Join(dir, name)); got != want {
+			t.Fatalf("copy of %s = %q, want %q", name, got, want)
+		}
+	}
 
 	d := filepath.Join(dir, "v1.2")
 	os.Mkdir(d, 0755)
 	if got := CopyName(d); got != "v1.2 copy" {
 		t.Fatalf("directory copy = %q", got)
+	}
+	os.Mkdir(filepath.Join(dir, "v1.2 copy"), 0755)
+	if got := CopyName(filepath.Join(dir, "v1.2 copy")); got != "v1.2 copy 2" {
+		t.Fatalf("copy of a directory's copy = %q", got)
 	}
 	env := filepath.Join(dir, ".env")
 	writeFile(t, env, "")
