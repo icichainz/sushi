@@ -129,11 +129,12 @@ func (m Model) yank(mode string) (tea.Model, tea.Cmd) {
 	m.clipboardMode = mode
 	clear(m.tab().Selected)
 
+	// Not "Copied: ...", which is what a finished paste says
 	verb := "Copied"
 	if mode == "cut" {
 		verb = "Cut"
 	}
-	cmd := m.setStatus(fmt.Sprintf("%s: %s", verb, describe(paths)))
+	cmd := m.setStatus(fmt.Sprintf("%s to clipboard: %s", verb, describe(paths)))
 	return m, cmd
 }
 

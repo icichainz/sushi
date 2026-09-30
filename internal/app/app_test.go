@@ -1018,6 +1018,9 @@ func TestSelectCopyPasteMultipleFiles(t *testing.T) {
 	if len(m.clipboard) != 2 || len(m.tab().Selected) != 0 {
 		t.Fatalf("clipboard=%v selected=%d, want 2 items and a cleared selection", m.clipboard, len(m.tab().Selected))
 	}
+	if m.statusMsg != "Copied to clipboard: 2 items" {
+		t.Fatalf("after c: %q", m.statusMsg)
+	}
 
 	m.tab().CurrentPath = dst
 	m, cmd := press(t, m, "v")
@@ -1130,12 +1133,18 @@ func TestCutClearsMovedItemsFromClipboard(t *testing.T) {
 	writeTestFile(t, filepath.Join(src, "a"), "")
 
 	m := newTestModel(t, src, nil)
-	m, _ = press(t, m, "x")
+	// Said so it isn't taken for a finished paste
+	if m, _ = press(t, m, "x"); m.statusMsg != "Cut to clipboard: a" {
+		t.Fatalf("after x: %q", m.statusMsg)
+	}
 	m.tab().CurrentPath = dst
 	m, cmd := press(t, m, "v")
 	m = run(t, m, cmd)
 	if len(m.clipboard) != 0 || m.clipboardMode != "" {
 		t.Fatalf("clipboard = %v (%s), want empty after the move", m.clipboard, m.clipboardMode)
+	}
+	if m.statusMsg != "Moved: a" {
+		t.Fatalf("after the paste: %q", m.statusMsg)
 	}
 }
 
