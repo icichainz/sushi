@@ -5,11 +5,12 @@ import (
 	"os"
 )
 
-// Close stops the work sushi does in the background: watching directories
-// and searching. Call it once the program has finished.
+// Close stops the work sushi does in the background: watching directories,
+// searching and git status. Call it once the program has finished.
 func (m Model) Close() {
 	m.watch.stop()
 	m.stopFind()
+	m.stopGit()
 }
 
 // ExitDir returns the directory the shell should change to now that sushi

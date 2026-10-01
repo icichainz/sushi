@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/git"
 	"github.com/icichainz/sushi/internal/ui"
 	"github.com/icichainz/sushi/internal/ui/components"
 	"github.com/icichainz/sushi/internal/utils"
@@ -218,8 +219,8 @@ func splitPath(path string) []string {
 	return segs
 }
 
-// renderHeader renders the breadcrumb, with the sort order and hidden-file
-// setting on the right
+// renderHeader renders the breadcrumb, with the Git branch, the sort order
+// and the hidden-file setting on the right
 func (m Model) renderHeader() string {
 	t := m.theme
 	g := currentGlyphs()
@@ -230,37 +231,42 @@ func (m Model) renderHeader() string {
 	if m.showHidden {
 		hidden = "on"
 	}
-	info := fmt.Sprintf("sort %s %s hidden %s", m.sortLabel(), g.dot, hidden)
+	sep := " " + g.dot + " "
+	info := fmt.Sprintf("sort %s%shidden %s", m.sortLabel(), sep, hidden)
+	right, rightW := m.fg(t.Muted).Render(info), utils.Width(info)
+	// In a Git repository, the branch; see git.go
+	branch, branchW := m.branchLabel(inner)
+	if branch != "" {
+		right, rightW = branch+m.fg(t.Muted).Render(sep)+right, branchW+utils.Width(sep)+rightW
+	}
 	// Changes to a directory that isn't watched show only after a refresh
 	note := ""
+	warn := m.fg(t.Highlight)
 	if m.watch.unwatched(tab.CurrentPath) {
 		note = "not watched"
 		if k := keysLabel(" ", m.keys.Refresh); k != "" {
 			note += ": " + k + " refreshes"
 		}
-		info = note + " " + g.dot + " " + info
+		right, rightW = warn.Render(note)+m.fg(t.Muted).Render(sep)+right, utils.Width(note+sep)+rightW
 	}
 
 	// The sort order shows only where the whole path fits beside it. The
-	// note matters more than the path's leading directories, which make
-	// room for it.
+	// note, then the branch, matter more than the path's leading
+	// directories, which make room for them.
 	segs := pathSegments(tab.CurrentPath)
 	width := func(s []string) int { return utils.Width(strings.Join(s, " / ")) }
-	warn := m.fg(t.Highlight)
-	right, rightW := "", 0
-	switch {
-	case width(segs)+2+utils.Width(info) <= inner:
-		if note != "" {
-			right = warn.Render(note)
-		}
-		right += m.fg(t.Muted).Render(strings.TrimPrefix(info, note))
-		rightW = utils.Width(info)
-	case note != "":
-		for _, text := range []string{note, "not watched"} {
-			if utils.Width(text)+2+minPathWidth <= inner {
-				right, rightW = warn.Render(text), utils.Width(text)
-				break
+	if width(segs)+2+rightW > inner {
+		right, rightW = "", 0
+		switch {
+		case note != "":
+			for _, text := range []string{note, "not watched"} {
+				if utils.Width(text)+2+minPathWidth <= inner {
+					right, rightW = warn.Render(text), utils.Width(text)
+					break
+				}
 			}
+		case branch != "":
+			right, rightW = m.branchLabel(inner - 2 - minPathWidth)
 		}
 	}
 	room := inner
@@ -340,6 +346,7 @@ func (m Model) renderParent(width, height int) []string {
 type columns struct {
 	inner, iconW, nameW int
 	size, date          bool
+	gitW                int // Git badges, after the marker; 0 outside repositories (see git.go)
 }
 
 const (
@@ -396,7 +403,7 @@ func (m Model) renderFileList(width, height int, divider bool) []string {
 	for i, idx := range visible {
 		files[i] = tab.Files[idx]
 	}
-	c := listColumns(inner, files)
+	c := m.withGitColumn(listColumns(inner, files))
 
 	// Heading, with an arrow on the sorted column. The type has no column,
 	// nor has the size or date once the list is too narrow for it, so
@@ -414,7 +421,7 @@ func (m Model) renderFileList(width, height int, divider bool) []string {
 	case by == "size" && !c.size, by == "modified" && !c.date:
 		nameHead = "Name (" + m.sortLabel() + ")"
 	}
-	head := strings.Repeat(" ", 3+c.iconW+2) + utils.Fit(nameHead, c.nameW)
+	head := strings.Repeat(" ", 3+c.gitW+c.iconW+2) + utils.Fit(nameHead, c.nameW)
 	if c.size {
 		head += utils.FitRight("Size"+arrow("size"), sizeW)
 	}
@@ -470,6 +477,7 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, matched map[int]b
 	t := m.theme
 	selected := m.tabs[m.activeTabIdx].Selected[file.Path]
 	cut := m.clipboardMode == "cut" && m.inClipboard(file.Path)
+	badge := m.gitBadge(file)
 
 	// A marker shows selection without relying on color alone
 	marker := " "
@@ -484,6 +492,9 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, matched map[int]b
 	if file.IsDir {
 		iconStyle = m.fg(t.Directory)
 		nameStyle = nameStyle.Bold(true)
+	}
+	if badge == git.Ignored {
+		iconStyle, nameStyle, metaStyle = m.fg(t.Faint), nameStyle.Foreground(t.Faint), m.fg(t.Faint)
 	}
 	if selected {
 		nameStyle = nameStyle.Foreground(t.Selected)
@@ -501,6 +512,7 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, matched map[int]b
 
 	var b strings.Builder
 	b.WriteString(markStyle.Render(" " + marker + " "))
+	b.WriteString(m.renderBadge(badge, c, isCursor))
 	b.WriteString(iconStyle.Render(utils.Fit(ui.GetFileIcon(file), c.iconW) + "  "))
 
 	// Underline the letters the search matched. Printable replaces rune
@@ -543,7 +555,7 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, matched map[int]b
 func (m Model) renderRenameRow(file fs.FileInfo, c columns) string {
 	t := m.theme
 	base := lipgloss.NewStyle().Background(t.Raised)
-	lead := base.Foreground(t.Accent).Render("   " + utils.Fit(ui.GetFileIcon(file), c.iconW) + "  ")
+	lead := base.Foreground(t.Accent).Render("   " + strings.Repeat(" ", c.gitW) + utils.Fit(ui.GetFileIcon(file), c.iconW) + "  ")
 
 	room := max(c.inner-utils.Width(lead)-1, 1)
 	errText := ""

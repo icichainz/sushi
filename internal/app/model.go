@@ -37,6 +37,8 @@ type Tab struct {
 	Loading         bool
 	reloadWanted    bool // Changed while loading: reload once the load is in
 	resortWanted    bool // Sort order changed while loading: sort the load once in
+
+	git gitState // What Git says about CurrentPath; see git.go
 }
 
 // Model represents the application state
@@ -535,7 +537,7 @@ func loadTheme(cfg *config.Config) (ui.Theme, []string) {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.initCmd, m.watch.listen()}
+	cmds := []tea.Cmd{m.initCmd, m.watch.listen(), m.startGit()}
 	if m.tab().Preview.Pending {
 		cmds = append(cmds, m.previewCmd(m.tab()))
 	}

@@ -28,6 +28,7 @@ type Config struct {
 	SortBy        string `yaml:"sort_by"`        // "name", "size", "modified", "type"
 	SortReverse   bool   `yaml:"sort_reverse"`   // Reverse sort order
 	Watch         bool   `yaml:"watch"`          // Reload when files change on disk
+	Git           bool   `yaml:"git"`            // Git status badges and the branch, in repositories
 
 	// d moves files to the trash, which ctrl+z can undo; D always deletes
 	DeleteToTrash bool `yaml:"delete_to_trash"`
@@ -62,6 +63,7 @@ func DefaultConfig() *Config {
 		SortBy:         "name",
 		SortReverse:    false,
 		Watch:          true,
+		Git:            true,
 		Theme:          "default",
 	}
 }

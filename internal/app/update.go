@@ -100,7 +100,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateSearchResults()
 			m.cursorToMatch()
 		}
-		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt)
+		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt, m.gitAfterLoad(tab))
 		return m, cmd
 
 	case previewLoadedMsg:

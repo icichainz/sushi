@@ -301,7 +301,9 @@ func TestWatcherStopsOnClose(t *testing.T) {
 }
 
 func TestWatchCanBeTurnedOff(t *testing.T) {
-	m := newTestModel(t, t.TempDir(), noWatch())
+	cfg := noWatch()
+	cfg.Git = false // Git status is read at startup too
+	m := newTestModel(t, t.TempDir(), cfg)
 	if m.watch != nil || m.Init() != nil {
 		t.Fatal("watch: false should start no watcher")
 	}
