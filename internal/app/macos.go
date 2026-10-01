@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"runtime"
 	"time"
@@ -23,14 +24,31 @@ var onMac = runtime.GOOS == "darwin"
 // it printed. Tests replace both, so none reaches the real ones.
 var (
 	osascript jxa.Runner = jxa.Osascript
-	runOpen              = func(args ...string) ([]byte, error) {
-		return exec.Command("open", args...).CombinedOutput()
-	}
+	runOpen              = openCommand
 )
 
-// macTimeout is the longest an osascript call may take: the pasteboard
-// server or Launch Services could hang, and a paste waits on its read
+// macTimeout is the longest an osascript call or open(1) may take: the
+// pasteboard server or Launch Services could hang, and a paste waits on
+// its read
 const macTimeout = 10 * time.Second
+
+// openTimeout is how long open(1) may take; tests lower it
+var openTimeout = macTimeout
+
+// openCommand runs open(1) with args and returns what it printed. open
+// returns once Launch Services has the files, which could hang.
+func openCommand(args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), openTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "open", args...)
+	// Something open started could keep its output open once it is killed
+	cmd.WaitDelay = time.Second
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return out, fmt.Errorf("open: %w", ctx.Err())
+	}
+	return out, err
+}
 
 // runOsascript calls osascript as it is when the call is made, so a test's
 // fake applies to the pasteboard made before it

@@ -598,6 +598,8 @@ In the [macOS app](#macos-app), `Cmd+C` and `Cmd+V` remain the terminal's text c
 
 `Ctrl+o` shows the file in Finder, selected in a window of its folder. With a selection, all of it is selected.
 
+Sushi reaches macOS for these, and for the pasteboard, through `osascript` and `open`, which get 10 seconds each: one that takes longer, as when Launch Services or the pasteboard server hangs, is stopped, and the status bar says so.
+
 ## Trash and Undo
 
 `d` moves files to the trash without asking, since `Ctrl+z` brings them back. `D` deletes permanently and always asks first, even with `confirm_delete: false`. With `delete_to_trash: false`, `d` deletes permanently too, asking first unless `confirm_delete` is off.
