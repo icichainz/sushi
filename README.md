@@ -547,11 +547,11 @@ In a Git repository, the file list has a narrow column after the selection marke
 
 | Badge | Meaning |
 | ----- | ------- |
-| `M` | Modified. On a folder: something inside is changed or untracked |
+| `M` | Modified. On a folder: something inside is changed |
 | `A` | Added to the index, or copied |
 | `R` | Renamed |
 | `D` | Deleted from the index but still on disk, as after `git rm --cached` |
-| `?` | Untracked |
+| `?` | Untracked. On a folder: all that is new inside is untracked, as in a new folder |
 | `!` | Ignored. The row is drawn faint, as is everything in an ignored folder |
 | `U` | In conflict. On a folder: a conflict inside |
 
@@ -559,7 +559,9 @@ An entry with more than one status shows the strongest, from `U` down: `U`, `R`,
 
 The breadcrumb shows the branch on the right, before the sort order: `⎇ main` (`git:main` with `--ascii`), or the commit for a detached HEAD, as in `⎇ (1a2b3c4)`, with a `*` once anything in the repository is changed or untracked. Where the row is tight, the branch takes the sort order's place, and a long name is shortened.
 
-Sushi runs `git status` in the background each time a folder loads, which includes the reloads when files change and `Ctrl+r`. It only reads: with `GIT_OPTIONAL_LOCKS=0`, git doesn't refresh the index, so sushi never writes to the repository or takes a lock that git in another terminal could trip over. A folder that git takes more than 2 seconds to read, or where git fails, is given up on until you move to another folder or press `Ctrl+r`. Sushi watches the folder's files, not the repository, so a commit made in another terminal shows after the next change in the folder, or `Ctrl+r`.
+Sushi runs `git status` in the background each time a folder loads, which includes the reloads when files change and `Ctrl+r`. It also watches the repository's `HEAD`, index and branches, so a commit, checkout or `git add` in another terminal updates the badges and the branch at once, without reloading the list. It only reads: with `GIT_OPTIONAL_LOCKS=0`, git doesn't refresh the index, so sushi never writes to the repository or takes a lock that git in another terminal could trip over. A folder that git takes more than 2 seconds to read, or where git fails, is given up on until you move to another folder or press `Ctrl+r`. Sushi ignores the `GIT_` variables that point git at a repository, as `GIT_DIR` and `GIT_WORK_TREE` do in a shell started by a git hook, so every folder shows as what it is.
+
+Browsing a repository never runs a program the repository names. Its own configuration, which comes along when a folder is downloaded, AirDropped or unpacked, can name programs for git to run: a file system monitor (`core.fsmonitor`) and filters (`filter.<name>.clean`, `smudge` and `process`), which `git status` runs on files to compare them. So sushi always runs git with the file system monitor and hooks off, and doesn't look inside the work trees of submodules, which have configurations of their own: a submodule shows `M` once its checked-out commit changes, and the changes inside it show once you go in. In a repository whose own configuration (`.git/config`, the files it includes, or a work tree's `config.worktree`) sets `core.fsmonitor`, a filter, `core.sshCommand` or a credential helper, sushi doesn't run `git status` at all: the breadcrumb shows the branch, without the `*` as the changes aren't known, there are no badges, and the status bar says once `Git badges off for this repository: it configures filters/fsmonitor; see README`. Reading the configuration and the branch runs nothing. The same settings in your own `~/.gitconfig` don't count, so Git LFS installed for your account (`git lfs install`) keeps the badges; installed for one repository (`git lfs install --local`), it turns them off there.
 
 `git: false` in the config turns the badges and the branch off.
 

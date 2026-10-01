@@ -107,6 +107,7 @@ type Model struct {
 	watch        *dirWatcher // Reloads tabs when their directories change; nil when off
 	keepShellDir bool        // Quit with Q: don't tell the shell to change directory
 
+	gitWarned    map[string]bool  // Repositories whose missing badges were explained; see git.go
 	pb           pbState          // What sushi knows of the macOS pasteboard; see pasteboard.go
 	openWith     openWithState    // The Open with list; see openwith.go
 	quickLookWin *quickLookWindow // The Quick Look window open, if any; see quicklook.go

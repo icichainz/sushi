@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -104,7 +105,7 @@ func TestGitBadges(t *testing.T) {
 
 	for name, want := range map[string]string{
 		"tracked.txt": "M", "added.txt": "A", "renamed.txt": "R", "untracked.txt": "?", "debug.log": "!", "build": "!",
-		"sub": "M", "newdir": "M", "tidy": " ", "clean.txt": " ",
+		"sub": "M", "newdir": "?", "tidy": " ", "clean.txt": " ",
 	} {
 		if got := badgeOf(t, m, name); got != want {
 			t.Errorf("%s: badge %q, want %q", name, got, want)
@@ -327,7 +328,7 @@ func TestGitRunsOnceOutsideRepositories(t *testing.T) {
 	if runs(m) != 1 || m.gitStatus() != nil || !m.tab().git.off {
 		t.Fatalf("git ran %d times in a directory outside a repository", runs(m))
 	}
-	if b, _ := os.ReadFile(calls); string(b) != "-C "+dir+" rev-parse --is-inside-work-tree --show-prefix\n" {
+	if b, _ := os.ReadFile(calls); string(b) != "-C "+dir+" -c core.fsmonitor=false -c core.hooksPath=/dev/null rev-parse --is-inside-work-tree --absolute-git-dir --git-common-dir --show-prefix\n" {
 		t.Errorf("git ran as %q", b)
 	}
 	m = enter(t, m, "sub")
@@ -382,5 +383,119 @@ func TestGitRunsOneAtATime(t *testing.T) {
 	m.Close()
 	if msg := inFlight().(gitStatusMsg); !errors.Is(msg.err, context.Canceled) {
 		t.Fatalf("the run went on after quitting: %v", msg.err)
+	}
+}
+
+func TestGitRestrictedRepositoryShowsOnlyTheBranch(t *testing.T) {
+	repo := gitRepo(t)
+	// The repository's own configuration names a file system monitor, as
+	// one downloaded could
+	marker := filepath.Join(t.TempDir(), "ran")
+	hook := filepath.Join(t.TempDir(), "hook")
+	testutil.Script(t, hook, "#!/bin/sh\n"+testutil.Warm+"echo ran >> '"+marker+"'\n")
+	gittest.Run(t, repo, "config", "core.fsmonitor", hook)
+
+	m := gitModel(t, repo, nil)
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("browsing the repository ran its file system monitor")
+	}
+	if m.statusMsg != gitRestricted {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+	// The branch, without a star, as nothing is known of the changes, and
+	// no column of badges
+	if h := header(m); !strings.Contains(h, "⎇ main · sort") {
+		t.Errorf("breadcrumb = %q", h)
+	}
+	if col := nameColumn(t, m, "tracked.txt"); col != 3+listColumns(80, m.tab().Files).iconW+2 {
+		t.Errorf("the name is at %d: there is a badge column", col)
+	}
+
+	// Said once
+	m.statusMsg = ""
+	m = enter(t, m, "sub")
+	m, cmd := press(t, m, "h")
+	if m = drain(t, m, cmd); m.statusMsg == gitRestricted || !m.gitStatus().Restricted {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("browsing the repository ran its file system monitor")
+	}
+}
+
+// loop feeds m the messages of cmd and of the commands they lead to, the
+// watcher's included, as Bubble Tea does, until done holds after one,
+// failing the test after 10 seconds
+func loop(t *testing.T, m Model, cmd tea.Cmd, done func(Model, tea.Msg) bool) Model {
+	t.Helper()
+	out := make(chan tea.Msg)
+	stop := make(chan struct{})
+	defer close(stop)
+	var start func(tea.Cmd)
+	start = func(c tea.Cmd) {
+		if c == nil {
+			return
+		}
+		go func() {
+			msg := c()
+			if batch, ok := msg.(tea.BatchMsg); ok {
+				for _, c := range batch {
+					start(c)
+				}
+				return
+			}
+			select {
+			case out <- msg:
+			case <-stop:
+			}
+		}()
+	}
+	start(cmd)
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case msg := <-out:
+			if msg == nil {
+				continue
+			}
+			updated, next := m.Update(msg)
+			m = updated.(Model)
+			start(next)
+			if done(m, msg) {
+				return m
+			}
+		case <-deadline:
+			t.Fatal("timed out")
+			return m
+		}
+	}
+}
+
+func TestGitBadgesFollowCommitsElsewhere(t *testing.T) {
+	repo := gitRepo(t)
+	m := gitModel(t, repo, nil)
+	if got := badgeOf(t, m, "tracked.txt") + badgeOf(t, m, "added.txt"); got != "MA" {
+		t.Fatalf("before: %q", got)
+	}
+	gitDir := m.gitStatus().GitDir
+	msgs := startWatching(t, m, 50*time.Millisecond)
+	eventually(t, "the watch on "+gitDir, func() bool { return slices.Contains(m.watch.watching(), gitDir) })
+
+	// Committed in another terminal, which changes nothing in the folder:
+	// the badges follow, without reloading the list
+	gittest.Run(t, repo, "commit", "-qam", "elsewhere")
+	loads := 0
+	changed := next(t, msgs)
+	m = loop(t, m, func() tea.Msg { return changed }, func(m Model, msg tea.Msg) bool {
+		if _, ok := msg.(dirLoadedMsg); ok {
+			loads++
+		}
+		return badgeOf(t, m, "tracked.txt")+badgeOf(t, m, "added.txt") == "  "
+	})
+	if loads != 0 {
+		t.Errorf("the list was loaded %d times", loads)
+	}
+	if h := header(m); !strings.Contains(h, "⎇ main*") {
+		t.Errorf("breadcrumb = %q", h) // Untracked files are left
 	}
 }
