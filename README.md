@@ -594,7 +594,7 @@ In the [macOS app](#macos-app), `Cmd+C` and `Cmd+V` remain the terminal's text c
 
 ## Open With and Reveal in Finder
 
-`O` lists the apps that can open the file under the cursor, or the selection's first file, as Finder's Open With menu does: each with the folder it is in, and the default app first, marked `●` (`*` with `--ascii`). `Enter` or a double-click opens every file with the app chosen, `↑`/`↓` and `g`/`G` move, and `Esc` closes the list. The apps are looked up once for each extension, and remembered until sushi quits; for folders and files without an extension, they are looked up each time.
+`O` lists the apps that can open the file under the cursor, or the selection's first file, as Finder's Open With menu does: each with the folder it is in, and the default app first, marked `●` (`*` with `--ascii`). `Enter` or a double-click opens every file with the app chosen, `↑`/`↓` and `g`/`G` move, and `Esc` closes the list. The apps are looked up once for each extension, and remembered until `Ctrl+r`; for folders, files without an extension, and files given an app of their own in Finder's Get Info, they are looked up each time.
 
 `Ctrl+o` shows the file in Finder, selected in a window of its folder. With a selection, all of it is selected.
 
