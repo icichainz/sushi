@@ -257,6 +257,41 @@ func TestTagPickerWithoutChangesLeavesNoUndo(t *testing.T) {
 	}
 }
 
+func TestTagPickerMovesWithTheBoundKeys(t *testing.T) {
+	needTags(t)
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "")
+
+	// j and k move on the list, as in the Open with list
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "L")
+	m, _ = press(t, m, "j")
+	m, _ = press(t, m, "j")
+	m, _ = press(t, m, "k")
+	if m.tagger.cursor != 1 || m.tagger.input.Value() != "" {
+		t.Fatalf("cursor %d, field %q", m.tagger.cursor, m.tagger.input.Value())
+	}
+	// Other letters go to the field, and there j and k are letters too
+	m = typeText(t, m, "jk")
+	m = typeText(t, m, "ojk")
+	if !m.tagger.onField() || m.tagger.input.Value() != "ojk" {
+		t.Fatalf("cursor %d, field %q", m.tagger.cursor, m.tagger.input.Value())
+	}
+
+	// The keys they are remapped to, and not j and k
+	m = withKeys(t, dir, map[string]config.KeyList{"up": {"w"}, "down": {"z"}})
+	m, _ = press(t, m, "L")
+	m, _ = press(t, m, "z")
+	m, _ = press(t, m, "z")
+	m, _ = press(t, m, "w")
+	if m.tagger.cursor != 1 || m.tagger.input.Value() != "" {
+		t.Fatalf("remapped: cursor %d, field %q", m.tagger.cursor, m.tagger.input.Value())
+	}
+	if m, _ = press(t, m, "j"); !m.tagger.onField() || m.tagger.input.Value() != "j" {
+		t.Fatalf("remapped: j left the cursor at %d, field %q", m.tagger.cursor, m.tagger.input.Value())
+	}
+}
+
 func TestTagPickerMouse(t *testing.T) {
 	needTags(t)
 	dir := t.TempDir()

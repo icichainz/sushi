@@ -566,9 +566,9 @@ Finder tags show after the name as a dot for each of their colors, then `○` fo
 | Key | Action |
 | --- | ------ |
 | `Space` / `Enter` | Tick or untick the tag. On `[-]`, it gives the tag to the files that don't have it |
-| `↑`/`↓`, `Ctrl+p`/`Ctrl+n` | Move |
+| `↑`/`↓`, `Ctrl+p`/`Ctrl+n`, and on the list `k`/`j` (the up and down keys, as remapped) | Move |
 | `Tab` | Switch between the list and the field |
-| Typing | Type in the field, from anywhere in the list |
+| Typing | Type in the field, from anywhere in the list but for the up and down keys |
 | `Enter` in the field | Add the tag typed. With the field empty, close |
 | `Esc` | Close |
 

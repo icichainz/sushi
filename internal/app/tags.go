@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/icichainz/sushi/internal/config"
@@ -214,9 +215,19 @@ func (m Model) handleTagMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
-	// Typing goes to the field, from wherever the cursor is
-	if !p.onField() && msg.Type != tea.KeyRunes {
-		return m, nil
+	// On the list, the keys bound to moving up and down move, as in the
+	// Open with list; any other typing goes to the field
+	if !p.onField() {
+		switch {
+		case key.Matches(msg, m.keys.Up):
+			p.cursor = max(p.cursor-1, 0)
+			return m, nil
+		case key.Matches(msg, m.keys.Down):
+			p.cursor = min(p.cursor+1, len(p.offer))
+			return m, nil
+		case msg.Type != tea.KeyRunes:
+			return m, nil
+		}
 	}
 	if p.input.Update(msg) {
 		p.cursor = len(p.offer)
@@ -420,6 +431,10 @@ func (m Model) tagHints() []hint {
 			enter = "close"
 		}
 		return []hint{{"enter", enter}, move, {"tab", "to the list"}, {"esc", "close"}}
+	}
+	// On the list, the keys bound to moving move too
+	if keys := keysLabel("/", m.keys.Down, m.keys.Up); keys != "" {
+		move.key = keys
 	}
 	return []hint{{"space", "tick"}, move, {"tab", "type a new tag"}, {"esc", "close"}}
 }
