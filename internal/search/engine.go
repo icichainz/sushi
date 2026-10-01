@@ -54,7 +54,13 @@ func (Walker) Search(ctx context.Context, opts Options, q Query, emit func(Resul
 	case q.Content:
 		truncated, err = Contents(ctx, opts, q.Text, emit)
 	default:
-		truncated, err = Names(ctx, opts, q.Match, emit)
+		match := q.Match
+		if match == nil {
+			// Names that hold the text, as Spotlight finds them
+			text := strings.ToLower(q.Text)
+			match = func(_, name string) (int, bool) { return 0, strings.Contains(strings.ToLower(name), text) }
+		}
+		truncated, err = Names(ctx, opts, match, emit)
 	}
 	return Report{Truncated: truncated}, err
 }
@@ -73,32 +79,31 @@ const (
 // ErrGaveUp is returned when a search everywhere took Spotlight too long
 var ErrGaveUp error = spotlightError{"Spotlight took too long, so the search gave up"}
 
-// Auto walks the folder to search below it, and asks Spotlight to search
-// everywhere, which only Spotlight can. The walk finds every file, so it
-// has the last word below a folder: Spotlight finds nothing in folders it
-// doesn't index, such as temporary and hidden ones, excluded volumes and
-// files too new to be indexed yet, finds names only by what they contain,
-// not fuzzily, and doesn't read the text of source code, YAML or
-// Makefiles. A text search below a folder asks Spotlight as well, at the
-// same time, for the documents with the text that a walk can't read, such
-// as PDFs.
+// Auto searches below a folder by walking it, with Spotlight alongside,
+// and everywhere with Spotlight alone, as only it can. Below a folder the
+// walk has the last word, as it finds everything: Spotlight finds nothing
+// in folders it doesn't index, such as temporary and hidden ones,
+// excluded volumes and files too new to be indexed yet, finds names only
+// by what they contain, not fuzzily, and doesn't read the text of source
+// code, YAML or Makefiles. Spotlight answers from its index at once,
+// though, where the walk of a large folder takes a while, so what it finds
+// is reported as it comes, and the walk adds the rest. For a text search
+// it adds only the documents with the text that a walk can't read, such as
+// PDFs; the walk finds the lines.
 type Auto struct {
 	Spotlight Spotlight
 	Walker    Walker
-	Patience  time.Duration // How long Spotlight may go on once the walk is done; 0 is defaultPatience
+	Patience  time.Duration // How long Spotlight may go on looking for documents once the walk is done; 0 is defaultPatience
 	Timeout   time.Duration // How long a search everywhere may take; 0 is defaultTimeout
 }
 
-// Search searches below opts.Root by walking it, or everywhere with
-// Spotlight
+// Search searches below opts.Root by walking it, with Spotlight, or
+// everywhere with Spotlight
 func (a Auto) Search(ctx context.Context, opts Options, q Query, emit func(Result)) (Report, error) {
-	switch {
-	case opts.Everywhere:
+	if opts.Everywhere {
 		return a.everywhere(ctx, opts, q, emit)
-	case q.Content && !q.Tagged:
-		return a.contents(ctx, opts, q, emit)
 	}
-	return a.Walker.Search(ctx, opts, q, emit)
+	return a.below(ctx, opts, q, emit)
 }
 
 // everywhere asks Spotlight, giving up if it takes too long
@@ -113,31 +118,38 @@ func (a Auto) everywhere(ctx context.Context, opts Options, q Query, emit func(R
 	return report, err
 }
 
-// contents walks the folder for the lines with the text, while Spotlight
-// looks for the documents with it. Spotlight only adds documents, which
-// the walk skips as binary, so the two never report the same file; what
-// Spotlight finds after the walk and some patience, or if it fails, is
-// left out.
-func (a Auto) contents(ctx context.Context, opts Options, q Query, emit func(Result)) (Report, error) {
+// below walks the folder while Spotlight searches it, reporting what
+// either finds once, up to the limit between them. Once the walk is done,
+// it has found all Spotlight could but documents: Spotlight is stopped
+// then, or for a text search, given a little longer. Spotlight failing, or
+// missing, leaves the walk's results.
+func (a Auto) below(ctx context.Context, opts Options, q Query, emit func(Result)) (Report, error) {
 	parent := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	docsOnly := q.Content && !q.Tagged
 
-	// Both report through keep, one at a time, up to the limit between them
+	// Both report through keep, one at a time. A line of a file, or a
+	// name, is reported by whichever finds it first.
+	type found struct {
+		path string
+		line int
+	}
 	var mu sync.Mutex
-	found, docs, full := 0, 0, false
+	seen := make(map[found]bool)
+	docs, full := 0, false
 	keep := func(r Result, doc bool) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
-		case ctx.Err() != nil:
+		case ctx.Err() != nil, seen[found{r.Path, r.Line}]:
 			return
-		case opts.Limit > 0 && found == opts.Limit:
+		case opts.Limit > 0 && len(seen) == opts.Limit:
 			full = true
 			cancel()
 			return
 		}
-		found++
+		seen[found{r.Path, r.Line}] = true
 		if doc {
 			docs++
 		}
@@ -149,11 +161,11 @@ func (a Auto) contents(ctx context.Context, opts Options, q Query, emit func(Res
 	spotlightDone := make(chan struct{})
 	go func() {
 		defer close(spotlightDone)
-		a.Spotlight.search(sctx, opts, q, true, func(r Result) { keep(r, true) })
+		a.Spotlight.search(sctx, opts, q, docsOnly, func(r Result) { keep(r, docsOnly) })
 	}()
 	report, err := a.Walker.Search(ctx, opts, q, func(r Result) { keep(r, false) })
-	if err != nil {
-		stop() // The folder can't be read: nor can its documents
+	if err != nil || !docsOnly {
+		stop()
 	}
 	select {
 	case <-spotlightDone:
@@ -165,6 +177,7 @@ func (a Auto) contents(ctx context.Context, opts Options, q Query, emit func(Res
 	mu.Lock()
 	defer mu.Unlock()
 	report.Truncated = report.Truncated || full
+	// Said only of what only Spotlight finds
 	report.Spotlight = docs > 0
 	switch {
 	case parent.Err() != nil:

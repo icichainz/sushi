@@ -348,10 +348,12 @@ func TestSpotlightListsEachFileOnce(t *testing.T) {
 	}
 }
 
-func TestAutoWalksBelowAFolder(t *testing.T) {
-	root := tree(t, map[string]string{"indexed.txt": "", "new.txt": "", "src/main.go": "", "other.md": ""})
-	// Spotlight knows only one of them, and nothing of fuzzy matches
-	f := &fakeSpotlight{out: []string{filepath.Join(realRoot(t, root), "indexed.txt")}}
+func TestAutoFindsEveryNameBelowAFolder(t *testing.T) {
+	root := tree(t, map[string]string{"indexed.txt": "", "new.txt": "", "src/main.go": "", "other.md": "", ".hidden.txt": ""})
+	real := realRoot(t, root)
+	// Spotlight knows only one of them, nothing of fuzzy matches, and a
+	// file deleted since it was indexed
+	f := &fakeSpotlight{out: []string{filepath.Join(real, "indexed.txt"), filepath.Join(real, "gone.txt")}}
 	f.install(t)
 
 	fuzzy := func(rel, name string) (int, bool) {
@@ -362,10 +364,30 @@ func TestAutoWalksBelowAFolder(t *testing.T) {
 		t.Fatalf("report %+v, err %v", report, err)
 	}
 	if want := []string{"indexed.txt", "new.txt", "src/main.go"}; !slices.Equal(rels(got), want) {
-		t.Fatalf("results = %q, want every match: %q", rels(got), want)
+		t.Fatalf("results = %q, want every match, once: %q", rels(got), want)
 	}
-	if _, err := os.Stat(f.args); err == nil {
-		t.Fatal("a search by name below a folder asked Spotlight")
+
+	// Spotlight finding everything the walk does lists each once, and by
+	// tag as well
+	f = &fakeSpotlight{out: []string{filepath.Join(real, "new.txt"), filepath.Join(real, "indexed.txt"), filepath.Join(real, "src", "main.go")}}
+	f.install(t)
+	for range 5 {
+		got, _, _ = collect(t, Auto{}, Options{Root: root}, Query{Text: "txt", Match: fuzzy})
+		if want := []string{"indexed.txt", "new.txt", "src/main.go"}; !slices.Equal(rels(got), want) {
+			t.Fatalf("results = %q, want each once: %q", rels(got), want)
+		}
+	}
+
+	// A slow Spotlight is stopped once the walk is done
+	f = &fakeSpotlight{sleep: "2", out: []string{filepath.Join(real, "indexed.txt")}}
+	f.install(t)
+	start := time.Now()
+	got, _, err = collect(t, Auto{}, Options{Root: root}, Query{Text: "txt", Match: fuzzy})
+	if err != nil || len(got) != 3 {
+		t.Fatalf("results %q, err %v", rels(got), err)
+	}
+	if took := time.Since(start); took > 1500*time.Millisecond {
+		t.Fatalf("took %v: it waited for Spotlight", took)
 	}
 }
 
