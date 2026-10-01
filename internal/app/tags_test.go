@@ -371,3 +371,46 @@ func TestFindByTag(t *testing.T) {
 		t.Fatalf("with tags off, #name found %s", got)
 	}
 }
+
+func TestFindByNameStartingWithATagSign(t *testing.T) {
+	root := makeTree(t, map[string]string{"#autosave#.txt": "", "tag:notes.md": "", "plain.txt": "", "\\odd.txt": ""})
+
+	// A backslash makes # and tag: part of the name
+	for query, want := range map[string]string{`\#autosave#`: "#autosave#.txt", `\tag:notes`: "tag:notes.md", `\odd`: "\\odd.txt"} {
+		m := find(t, newTestModel(t, root, nil), "f", query)
+		if got := strings.Join(resultPaths(m), " "); got != want {
+			t.Errorf("%s found %q, want %q", query, got, want)
+		}
+		if title := strings.Join(plain(m.View()), "\n"); !strings.Contains(title, "Find files below this folder") {
+			t.Errorf("%s isn't a search by name:\n%s", query, title)
+		}
+	}
+	// The name shows the match underlined from its first letter
+	m := find(t, newTestModel(t, root, nil), "f", `\#auto`)
+	if hits := namePositions(m.nameQuery(), "#autosave#.txt"); !hits[0] || !hits[4] || hits[5] {
+		t.Errorf("positions %v", hits)
+	}
+	// Without it, a search by tag
+	if m := find(t, newTestModel(t, root, nil), "f", "#autosave"); len(m.find.results) != 0 {
+		t.Errorf("#autosave found %q", resultPaths(m))
+	}
+}
+
+func TestFindByNameShowsTags(t *testing.T) {
+	needTags(t)
+	root := makeTree(t, map[string]string{"report.pdf": "", "report.txt": ""})
+	tagFile(t, filepath.Join(root, "report.pdf"), red, work)
+
+	m := find(t, newTestModel(t, root, nil), "f", "report")
+	view := strings.Join(plain(m.View()), "\n")
+	if !strings.Contains(view, "report.pdf ●○") || strings.Contains(view, "report.txt ●") {
+		t.Fatalf("palette:\n%s", view)
+	}
+	// Not with tags off
+	cfg := config.DefaultConfig()
+	cfg.Tags = false
+	m = find(t, newTestModel(t, root, cfg), "f", "report")
+	if view := strings.Join(plain(m.View()), "\n"); strings.Contains(view, "●") {
+		t.Fatalf("tags off:\n%s", view)
+	}
+}

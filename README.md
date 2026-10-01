@@ -13,7 +13,7 @@ Sushi is made for macOS, the only system it supports: it still builds on Linux, 
 - 👀 Quick Look, as the space bar in Finder
 - 📝 Open files in your editor, their default app, or an app you pick; reveal them in Finder
 - 🔍 Fuzzy search within the current directory
-- 🔎 Find files by name, by Finder tag, or by text inside them, with Spotlight, below the current folder or everywhere
+- 🔎 Find files by name, by Finder tag, or by text inside them, below the current folder or, with Spotlight, everywhere
 - 🏷️ Finder tags: see their colors in the list, and add or remove them
 - 🌿 Git status badges and the branch, in repositories
 - ✅ Multi-file selection
@@ -456,21 +456,13 @@ Hidden files are searched when they are shown (`.`). `.git`, `node_modules` and 
 
 #### Spotlight
 
-`f`, `F` and `#` ask Spotlight (`mdfind`), which answers from its index instead of reading every folder. When Spotlight found the results, the palette's footer says so after where it looked, as in `in ~/projects · Spotlight`. Sushi walks the folder itself, reading every name and file, when:
+Below a folder, `f`, `F` and `#` walk it, reading every name and file, so they find everything there, indexed by Spotlight or not: hidden folders when they are shown, folders kept out of Spotlight, files too new to be indexed yet, and the text of source code, YAML and Makefiles, which Spotlight doesn't read. `F` also asks Spotlight (`mdfind`), at the same time, for the documents whose text a walk can't read, such as PDFs: they are listed as files, without a line, and the palette's footer says so after where it looked, as in `in ~/projects · Spotlight`. If Spotlight is missing, fails, or hasn't answered 4 seconds after the walk is done, the walk's results are all there is.
 
-- Hidden files are shown (`.`), as Spotlight doesn't index hidden folders
-- Spotlight finds nothing, so "No matches" means there are none
-- Spotlight has found nothing after 4 seconds, as when it is busy indexing
-- `mdfind` is missing or fails
+`Ctrl+e` searches everywhere Spotlight looks: every volume it indexes, with results outside the folder shown by their full path. Only Spotlight can do that, and it trades some results for speed:
 
-`Ctrl+e` searches everywhere Spotlight looks: every volume it indexes, with results outside the folder shown by their full path. Only Spotlight can do that; a search everywhere that it can't do says so.
-
-Spotlight trades some results for speed:
-
-- A name search through Spotlight finds names that contain the query, ignoring case. Fuzzy matches, such as `mgo` for `main.go`, come only from a walk.
-- Once Spotlight finds a match, the folder isn't walked, so what Spotlight hasn't indexed is left out: folders kept out of Spotlight, files too new to be indexed yet, and for `F`, files whose text Spotlight doesn't read. Show hidden files (`.`) to search by walking instead.
-- `F` also finds text in documents Spotlight reads, such as PDFs, which a walk skips. They are listed as files, without a line. In text files, every line that contains the query is listed, as with a walk.
-- Spotlight takes a moment to answer, so in a small folder results may come later than a walk's.
+- A name search finds names that contain the query, ignoring case. Fuzzy matches, such as `mgo` for `main.go`, come only from a walk.
+- What Spotlight hasn't indexed is left out: hidden and excluded folders, files too new to be indexed yet, and for `F`, text Spotlight doesn't read, such as source code. In the text files it did read, every line that contains the query is listed, as with a walk.
+- Without `mdfind`, the palette says `Spotlight isn't available, so only this folder can be searched`. A search Spotlight hasn't finished after 30 seconds gives up, and says so.
 
 ### View and Bookmarks
 
@@ -582,7 +574,7 @@ Finder tags show after the name as a dot for each of their colors, then `○` fo
 
 The mouse works too: click a tag to tick it, the field to type in it, or outside to close. Changes are written at once, as in Finder. `Ctrl+z` afterwards undoes everything the picker changed, file by file; a file whose tags have changed again since is left as it is.
 
-`#` opens the Find palette on every tagged file and folder below this one; type the start of a tag's name to narrow it down. In a name search (`f`), a query that starts with `#` or `tag:` looks for tags: `#Red` or `tag:red` finds entries with a tag whose name starts with `Red`, ignoring case, those with a tag of exactly that name first. Results show their tags' dots. In a text search (`F`), `#` is just text.
+`#` opens the Find palette on every tagged file and folder below this one; type the start of a tag's name to narrow it down. In a name search (`f`), a query that starts with `#` or `tag:` looks for tags: `#Red` or `tag:red` finds entries with a tag whose name starts with `Red`, ignoring case, those with a tag of exactly that name first. Results show their tags' dots, as do those of a search by name. To find names that start with `#` or `tag:`, put a backslash first: `\#autosave#` finds `#autosave#.txt`. In a text search (`F`), `#` is just text.
 
 `tags: false` in the config hides the dots, leaves `L` and `#` without keys, and makes `#` in the Find palette plain text.
 

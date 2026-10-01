@@ -274,7 +274,7 @@ func TestSpotlightFailureIsReported(t *testing.T) {
 	}
 
 	t.Setenv("PATH", t.TempDir()) // No mdfind at all
-	if _, _, err := collect(t, Spotlight{}, Options{Root: root}, Query{Text: "a"}); !errors.Is(err, ErrSpotlight) {
+	if _, _, err := collect(t, Spotlight{}, Options{Root: root}, Query{Text: "a"}); !errors.Is(err, ErrSpotlight) || !errors.Is(err, ErrNoSpotlight) {
 		t.Fatalf("without mdfind, err = %v", err)
 	}
 	if _, _, err := collect(t, Spotlight{}, Options{Root: root}, Query{Text: "*"}); !errors.Is(err, ErrSpotlight) {
@@ -333,24 +333,97 @@ func TestWalkerCantSearchEverywhere(t *testing.T) {
 	}
 }
 
-func TestAutoUsesSpotlightsResults(t *testing.T) {
-	root := tree(t, map[string]string{"indexed.txt": "", "new.txt": ""})
-	f := &fakeSpotlight{out: []string{filepath.Join(realRoot(t, root), "indexed.txt")}}
+func TestSpotlightListsEachFileOnce(t *testing.T) {
+	root := tree(t, map[string]string{"a.txt": "", "b.txt": ""})
+	real := realRoot(t, root)
+	a := filepath.Join(real, "a.txt")
+	f := &fakeSpotlight{out: []string{a, filepath.Join(real, "b.txt"), a, real + "/./a.txt", real + "//a.txt"}}
 	f.install(t)
-
-	got, report, err := collect(t, Auto{}, Options{Root: root}, Query{Text: "txt"})
-	if err != nil || !report.Spotlight {
-		t.Fatalf("report %+v, err %v", report, err)
+	got, _, err := collect(t, Spotlight{}, Options{Root: root}, Query{Text: "txt"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Only what the index has: no walk
-	if want := []string{"indexed.txt"}; !slices.Equal(rels(got), want) {
+	if want := []string{"a.txt", "b.txt"}; !slices.Equal(rels(got), want) {
 		t.Fatalf("results = %q, want %q", rels(got), want)
 	}
 }
 
+func TestAutoWalksBelowAFolder(t *testing.T) {
+	root := tree(t, map[string]string{"indexed.txt": "", "new.txt": "", "src/main.go": "", "other.md": ""})
+	// Spotlight knows only one of them, and nothing of fuzzy matches
+	f := &fakeSpotlight{out: []string{filepath.Join(realRoot(t, root), "indexed.txt")}}
+	f.install(t)
+
+	fuzzy := func(rel, name string) (int, bool) {
+		return 0, strings.Contains(name, "txt") || name == "main.go"
+	}
+	got, report, err := collect(t, Auto{}, Options{Root: root}, Query{Text: "txt", Match: fuzzy})
+	if err != nil || report.Spotlight {
+		t.Fatalf("report %+v, err %v", report, err)
+	}
+	if want := []string{"indexed.txt", "new.txt", "src/main.go"}; !slices.Equal(rels(got), want) {
+		t.Fatalf("results = %q, want every match: %q", rels(got), want)
+	}
+	if _, err := os.Stat(f.args); err == nil {
+		t.Fatal("a search by name below a folder asked Spotlight")
+	}
+}
+
+func TestAutoFindsTextSpotlightDoesntRead(t *testing.T) {
+	root := tree(t, map[string]string{
+		"README.md":       "the needle\n",
+		"main.go":         "package main // needle\n",
+		"config.yaml":     "key: needle\n",
+		"Makefile":        "all:\n\techo needle\n",
+		"src/lib.rs":      "// a needle in Rust\n",
+		"paper.pdf":       "%PDF-1.4\x00\x01binary",
+		"nothing.txt":     "hay",
+		"vendor/x.go":     "needle", // Skipped, as in any walk
+		"report.docx":     "PK\x03\x04\x00binary, but Spotlight didn't say",
+		"old/indexed.pdf": "%PDF\x00gone from the index since",
+	})
+	real := realRoot(t, root)
+	// Spotlight read the README and the PDF, but not the source code
+	f := &fakeSpotlight{out: []string{
+		filepath.Join(real, "README.md"), filepath.Join(real, "paper.pdf"), filepath.Join(real, "paper.pdf"),
+		filepath.Join(real, "vendor", "x.go"),
+	}}
+	f.install(t)
+
+	got, report, err := collect(t, Auto{}, Options{Root: root, Skip: DefaultSkip}, Query{Text: "needle", Content: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Makefile:2: echo needle", "README.md:1: the needle", "config.yaml:1: key: needle", "main.go:1: package main // needle",
+		"paper.pdf", "src/lib.rs:1: // a needle in Rust"}
+	if !slices.Equal(rels(got), want) {
+		t.Fatalf("results = %q\nwant %q", rels(got), want)
+	}
+	if !report.Spotlight || report.Truncated {
+		t.Errorf("report = %+v, want Spotlight's document noted", report)
+	}
+	if args := f.calledWith(t); !slices.Equal(args[:3], []string{"-0", "-onlyin", root}) {
+		t.Errorf("mdfind ran with %q", args)
+	}
+
+	// Without Spotlight, the walk's lines all the same
+	t.Setenv("PATH", t.TempDir())
+	got, report, err = collect(t, Auto{}, Options{Root: root, Skip: DefaultSkip}, Query{Text: "needle", Content: true})
+	if err != nil || report.Spotlight || !slices.Equal(rels(got), slices.DeleteFunc(slices.Clone(want), func(s string) bool { return s == "paper.pdf" })) {
+		t.Fatalf("without Spotlight: %q, report %+v, err %v", rels(got), report, err)
+	}
+
+	// The limit counts both
+	f.install(t)
+	got, report, err = collect(t, Auto{}, Options{Root: root, Skip: DefaultSkip, Limit: 3}, Query{Text: "needle", Content: true})
+	if err != nil || len(got) != 3 || !report.Truncated {
+		t.Fatalf("limit 3: %q, report %+v, err %v", rels(got), report, err)
+	}
+}
+
 func TestAutoWalksWhenSpotlightCantHelp(t *testing.T) {
-	root := tree(t, map[string]string{"a.txt": "", "b.txt": ""})
-	want := []string{"a.txt", "b.txt"}
+	root := tree(t, map[string]string{"a.txt": "a needle", "b.txt": "b needle"})
+	want := []string{"a.txt:1: a needle", "b.txt:1: b needle"}
 	cases := map[string]func(t *testing.T){
 		"finds nothing": func(t *testing.T) { (&fakeSpotlight{}).install(t) },
 		"fails":         func(t *testing.T) { (&fakeSpotlight{exit: 1}).install(t) },
@@ -359,7 +432,7 @@ func TestAutoWalksWhenSpotlightCantHelp(t *testing.T) {
 	for name, setup := range cases {
 		t.Run(name, func(t *testing.T) {
 			setup(t)
-			got, report, err := collect(t, Auto{}, Options{Root: root}, Query{Text: "txt", Match: contains("txt")})
+			got, report, err := collect(t, Auto{}, Options{Root: root}, Query{Text: "needle", Content: true})
 			if err != nil || report.Spotlight || !slices.Equal(rels(got), want) {
 				t.Fatalf("results %q, report %+v, err %v; want a walk's %q", rels(got), report, err, want)
 			}
@@ -379,14 +452,14 @@ func TestAutoWalksWhenHiddenFilesAreShown(t *testing.T) {
 }
 
 func TestAutoGivesUpOnASlowSpotlight(t *testing.T) {
-	root := tree(t, map[string]string{"a.txt": ""})
+	root := tree(t, map[string]string{"a.txt": "needle", "paper.pdf": "%PDF\x00needle"})
 	// It would answer, but too late, and its answer must not be added
-	f := &fakeSpotlight{sleep: "2", out: []string{filepath.Join(realRoot(t, root), "a.txt")}}
+	f := &fakeSpotlight{sleep: "2", out: []string{filepath.Join(realRoot(t, root), "paper.pdf")}}
 	f.install(t)
 
 	start := time.Now()
-	got, report, err := collect(t, Auto{Patience: 100 * time.Millisecond}, Options{Root: root}, Query{Text: "a", Match: contains("a")})
-	if err != nil || report.Spotlight || !slices.Equal(rels(got), []string{"a.txt"}) {
+	got, report, err := collect(t, Auto{Patience: 100 * time.Millisecond}, Options{Root: root}, Query{Text: "needle", Content: true})
+	if err != nil || report.Spotlight || !slices.Equal(rels(got), []string{"a.txt:1: needle"}) {
 		t.Fatalf("results %q, report %+v, err %v; want the walk's one", rels(got), report, err)
 	}
 	if took := time.Since(start); took > 1500*time.Millisecond {
@@ -397,8 +470,21 @@ func TestAutoGivesUpOnASlowSpotlight(t *testing.T) {
 func TestAutoEverywhereIsSpotlightsAlone(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	_, _, err := collect(t, Auto{}, Options{Root: t.TempDir(), Everywhere: true}, Query{Text: "a"})
-	if !errors.Is(err, ErrSpotlight) {
-		t.Fatalf("err = %v, want Spotlight's failure rather than a walk", err)
+	if !errors.Is(err, ErrNoSpotlight) || !errors.Is(err, ErrSpotlight) || err.Error() != "Spotlight isn't available, so only this folder can be searched" {
+		t.Fatalf("err = %v, want Spotlight's absence rather than a walk", err)
+	}
+}
+
+func TestAutoEverywhereGivesUp(t *testing.T) {
+	f := &fakeSpotlight{sleep: "30"}
+	f.install(t)
+	start := time.Now()
+	_, _, err := collect(t, Auto{Timeout: 200 * time.Millisecond}, Options{Root: t.TempDir(), Everywhere: true}, Query{Text: "a"})
+	if !errors.Is(err, ErrGaveUp) || !strings.Contains(err.Error(), "gave up") {
+		t.Fatalf("err = %v, want it to give up", err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("gave up after %v", took)
 	}
 }
 
@@ -442,6 +528,16 @@ func TestSearchByTag(t *testing.T) {
 	got, _, _ = collect(t, Walker{}, Options{Root: root}, Query{Tagged: true})
 	if want := []string{"redo.txt", "report.pdf", "sub", "sub/budget.xlsx"}; !slices.Equal(rels(got), want) {
 		t.Fatalf("# found %q, want everything tagged: %q", rels(got), want)
+	}
+
+	// A search by name brings the tags of what it finds, when asked
+	for _, withTags := range []bool{false, true} {
+		got, _, _ = collect(t, Walker{}, Options{Root: root, Tags: withTags}, Query{Text: "re", Match: contains("re")})
+		for _, r := range got {
+			if tagged := r.Rel != "plain.txt"; withTags && tagged != (len(r.Tags) > 0) || !withTags && len(r.Tags) > 0 {
+				t.Errorf("tags: %v, %s has %q", withTags, r.Rel, r.Tags)
+			}
+		}
 	}
 
 	// Spotlight's candidates are checked against the files' own tags

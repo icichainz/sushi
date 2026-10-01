@@ -26,8 +26,24 @@ type Spotlight struct{}
 // ErrSpotlight wraps the reasons Spotlight couldn't search
 var ErrSpotlight = errors.New("Spotlight can't search")
 
+// ErrNoSpotlight is returned when there is no mdfind to ask; it is an
+// ErrSpotlight
+var ErrNoSpotlight error = spotlightError{"Spotlight isn't available, so only this folder can be searched"}
+
+// spotlightError is an ErrSpotlight that says why in its own words
+type spotlightError struct{ msg string }
+
+func (e spotlightError) Error() string        { return e.msg }
+func (e spotlightError) Is(target error) bool { return target == ErrSpotlight }
+
 // Search asks mdfind, below opts.Root or everywhere
-func (Spotlight) Search(ctx context.Context, opts Options, q Query, emit func(Result)) (Report, error) {
+func (s Spotlight) Search(ctx context.Context, opts Options, q Query, emit func(Result)) (Report, error) {
+	return s.search(ctx, opts, q, false, emit)
+}
+
+// search asks mdfind; for a text search, docsOnly leaves out the text
+// files, whose lines a walk finds
+func (Spotlight) search(ctx context.Context, opts Options, q Query, docsOnly bool, emit func(Result)) (Report, error) {
 	report := Report{Spotlight: true}
 	expr, ok := spotlightQuery(q)
 	if !ok {
@@ -50,6 +66,9 @@ func (Spotlight) Search(ctx context.Context, opts Options, q Query, emit func(Re
 	if err == nil {
 		err = cmd.Start()
 	}
+	if errors.Is(err, exec.ErrNotFound) {
+		return report, ErrNoSpotlight
+	}
 	if err != nil {
 		return report, fmt.Errorf("%w: %w", ErrSpotlight, err)
 	}
@@ -68,11 +87,13 @@ func (Spotlight) Search(ctx context.Context, opts Options, q Query, emit func(Re
 		return nil
 	}
 	reader := bufio.NewReader(out)
+	seen := make(map[string]bool) // mdfind can list a file twice
 	var halt error
 	for halt == nil {
 		path, err := reader.ReadString(0)
-		if path = strings.TrimSuffix(path, "\x00"); path != "" {
-			halt = visitSpotlight(run, f, q, path, keep)
+		if path = filepath.Clean(strings.TrimSuffix(path, "\x00")); path != "." && !seen[path] {
+			seen[path] = true
+			halt = visitSpotlight(run, f, q, docsOnly, path, keep)
 		}
 		if err != nil {
 			break
@@ -100,8 +121,9 @@ func (Spotlight) Search(ctx context.Context, opts Options, q Query, emit func(Re
 	return report, nil
 }
 
-// visitSpotlight reports what matches q at path, which Spotlight found
-func visitSpotlight(ctx context.Context, f filter, q Query, path string, keep func(Result) error) error {
+// visitSpotlight reports what matches q at path, which Spotlight found;
+// with docsOnly, a text search leaves out the lines of text files
+func visitSpotlight(ctx context.Context, f filter, q Query, docsOnly bool, path string, keep func(Result) error) error {
 	r, mode, ok := f.accept(path)
 	if !ok {
 		return nil
@@ -126,8 +148,8 @@ func visitSpotlight(ctx context.Context, f filter, q Query, path string, keep fu
 		}
 		// A document Spotlight read the text of, such as a PDF, is a
 		// match without a line
-		if binary, err := fs.IsBinary(r.Path); err != nil || binary {
-			if err != nil {
+		if binary, err := fs.IsBinary(r.Path); err != nil || binary || docsOnly {
+			if err != nil || !binary {
 				return nil
 			}
 			return keep(r)
@@ -148,6 +170,9 @@ func visitSpotlight(ctx context.Context, f filter, q Query, path string, keep fu
 			return nil
 		}
 		r.Score = score
+	}
+	if f.opts.Tags {
+		r.Tags, _ = tags.Read(r.Path)
 	}
 	return keep(r)
 }
