@@ -559,7 +559,7 @@ Browsing a repository never runs a program the repository names. Its own configu
 
 ## Finder Tags
 
-Finder tags show after the name as a dot for each of their colors, then `○` for tags without a color (`*` and `o` with `--ascii`). They keep Finder's colors in every theme. Dots that don't fit are left out, rather than leave the name fewer than 4 columns. Old-style color labels show as tags of their color too, and are kept in step when tags change. As in Finder, a symbolic link has tags of its own, apart from what it points to. Copies, duplicates and moves to another drive keep the tags.
+Finder tags show after the name as a dot for each of their colors, then `○` for tags without a color (`*` and `o` with `--ascii`). They keep Finder's colors in every theme. Dots that don't fit are left out, rather than leave the name fewer than 4 columns. Old-style color labels show as tags of their color too, and are kept in step when tags change. As in Finder, a symbolic link has tags of its own, apart from what it points to. Copies, duplicates and moves to another drive keep the tags. On network volumes (SMB, AFP, NFS) the list shows no dots, as reading the tags would take a round trip to the server for every file; `L` still shows and changes them.
 
 `L` opens the tag picker for the selection, or the file under the cursor. It lists Finder's seven colors, then the other tags used in the folder, each marked `[x]` if every file has it, `[-]` if only some do, and `[ ]` if none do, with a field below for a new tag:
 
