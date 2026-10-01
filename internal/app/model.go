@@ -103,6 +103,8 @@ type Model struct {
 	jump         previewJump // Preview line to show once a search result's file loads
 	watch        *dirWatcher // Reloads tabs when their directories change; nil when off
 	keepShellDir bool        // Quit with Q: don't tell the shell to change directory
+
+	pb pbState // What sushi knows of the macOS pasteboard; see pasteboard.go
 }
 
 // tab returns a pointer to the active tab

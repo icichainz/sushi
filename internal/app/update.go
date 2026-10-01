@@ -479,7 +479,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.yank("cut")
 
 	case key.Matches(msg, m.keys.Paste):
-		return m.startPaste()
+		return m.paste()
 
 	case m.keys.isToolKey(msg):
 		return m.handleToolKey(msg)
