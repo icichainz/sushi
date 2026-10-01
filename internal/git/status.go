@@ -2,7 +2,8 @@
 // of its entries are changed, untracked or ignored, and the branch checked
 // out, for the badges of the file list. It runs the git command, so it
 // knows about repositories exactly as git does: worktrees, submodules,
-// ignore rules and all.
+// ignore rules and all; but never so that git runs a program a
+// repository's own configuration names (see Read).
 package git
 
 import (
