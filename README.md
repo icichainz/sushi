@@ -420,7 +420,7 @@ Renaming a folder, or moving it with `x` and `v`, takes the tabs, bookmarks and 
 | `Ctrl+z` | Undo the last operation; press again to go further back (up to 20) |
 | `Ctrl+x` | Cancel the operation running in the background |
 | `y` | Duplicate beside the original, as `name copy.ext`, then `name copy 2.ext`; duplicating `name copy.ext` makes `name copy 2.ext` too |
-| `V` | Paste sushi's clipboard as symbolic links to its files, leaving the pasteboard alone. Never replaces anything |
+| `V` | Paste symbolic links to the files `v` would paste. Never replaces anything |
 | `m` | Change permissions (not recursively): a prompt shows the current mode, such as `644`; type 3 or 4 octal digits. Several items all get the mode typed, and the prompt starts empty when theirs differ. Symlinks are left as they are, as is what they point to |
 | `R` | Bulk rename the selection in `$VISUAL` / `$EDITOR`. Without a selection, the same as `r` |
 | `a` | Compress into a new `.zip`, asking for its name |
@@ -586,7 +586,7 @@ The mouse works too: click a tag to tick it, the field to type in it, or outside
 
 `c` and `x` also put the files on the macOS pasteboard, so `Cmd+V` in Finder pastes them. Finder has no cut for files, so files cut in sushi paste in Finder as a copy; pasted in sushi with `v`, they still move.
 
-`v` pastes the files Finder or another app has put on the pasteboard since sushi last put its own there, as a copy, asking before overwriting anything. Otherwise it pastes sushi's clipboard. Files pasted from the pasteboard become sushi's clipboard, so `v` pastes them again. `V` pastes only sushi's clipboard, as symbolic links. Reading the files another app put on the pasteboard can make macOS ask whether to allow it.
+`v` pastes the files Finder or another app has put on the pasteboard while sushi runs, and since sushi last put its own there, as a copy, asking before overwriting anything; the status bar says `Pasting 2 items copied in Finder`. Otherwise it pastes sushi's clipboard. What was on the pasteboard when sushi started, however long ago it was copied, is left alone. Files pasted from the pasteboard become sushi's clipboard, so `v` pastes them again. `V` takes the same files as `v`, and pastes symbolic links to them. Reading the files another app put on the pasteboard can make macOS ask whether to allow it. While sushi reads the pasteboard the status bar says `Reading the pasteboard…`; if a dialog opens meanwhile, the paste is cancelled, and the status bar says so.
 
 Sushi reaches the pasteboard through `osascript`. Where it can't, as over SSH, copying says `Can't share the clipboard with Finder`, and the files stay in sushi's clipboard for `v`. `pasteboard: false` in the config leaves the pasteboard alone.
 

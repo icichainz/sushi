@@ -7,11 +7,20 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/fs"
 	"github.com/icichainz/sushi/internal/pasteboard"
 )
+
+// started applies what sushi reads of the pasteboard when it starts, as
+// Init has it do
+func started(t *testing.T, m Model) Model {
+	t.Helper()
+	return drain(t, m, m.startPasteboard())
+}
 
 func TestCopyAndCutPutFilesOnThePasteboard(t *testing.T) {
 	f := useFakeMac(t)
@@ -51,7 +60,7 @@ func TestPasteTakesWhatFinderCopied(t *testing.T) {
 	os.Mkdir(filepath.Join(src, "photos"), 0755)
 	writeTestFile(t, filepath.Join(src, "photos", "1.jpg"), "jpg")
 
-	m := newTestModel(t, dst, nil)
+	m := started(t, newTestModel(t, dst, nil))
 	f.finderCopies(report, filepath.Join(src, "photos"))
 	m, cmd := press(t, m, "v")
 	if m.statusMsg != "Reading the pasteboard…" {
@@ -194,21 +203,21 @@ func TestPasteFromThePasteboardOnlyWhereItWasAsked(t *testing.T) {
 	src, dst, elsewhere := t.TempDir(), t.TempDir(), t.TempDir()
 	report := filepath.Join(src, "report.pdf")
 	writeTestFile(t, report, "pdf")
-	f.finderCopies(report, filepath.Join(src, "deleted since.txt"))
 
 	// The folder changed while the pasteboard was read
-	m := newTestModel(t, dst, nil)
+	m := started(t, newTestModel(t, dst, nil))
+	f.finderCopies(report, filepath.Join(src, "deleted since.txt"))
 	m, cmd := press(t, m, "v")
 	m = drain(t, at(t, m, elsewhere), cmd)
 	if len(dirNames(t, dst))+len(dirNames(t, elsewhere)) != 0 || !strings.Contains(m.statusMsg, "folder shown changed") {
 		t.Fatalf("statusMsg = %q", m.statusMsg)
 	}
 
-	// A dialog opened meanwhile: dropped
+	// A dialog opened meanwhile: dropped, and said so
 	m, cmd = press(t, m, "v")
 	m, _ = press(t, m, "s")
-	if m = drain(t, m, cmd); m.mode != ModeSort || len(dirNames(t, elsewhere)) != 0 {
-		t.Fatalf("mode %v, pasted %v", m.mode, dirNames(t, elsewhere))
+	if m = drain(t, m, cmd); m.mode != ModeSort || len(dirNames(t, elsewhere)) != 0 || m.statusMsg != "Paste cancelled" {
+		t.Fatalf("mode %v, pasted %v, statusMsg %q", m.mode, dirNames(t, elsewhere), m.statusMsg)
 	}
 	m, _ = press(t, m, "esc")
 
@@ -232,5 +241,123 @@ func TestPasteboardOnlyOnMacOS(t *testing.T) {
 	// A paste is from sushi's clipboard, at once
 	if m, _ = press(t, m, "v"); m.pb.readSeq != 0 || !strings.Contains(m.statusMsg, "Can't paste") {
 		t.Fatalf("readSeq %d, statusMsg %q", m.pb.readSeq, m.statusMsg)
+	}
+}
+
+// readPasteboard presses key, and applies the pasteboard's contents it
+// reads, returning the model then and what follows
+func readPasteboard(t *testing.T, m Model, key string) (Model, tea.Cmd) {
+	t.Helper()
+	m, cmd := press(t, m, key)
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("%s didn't read the pasteboard", key)
+	}
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		if msg, ok := c().(pasteboardReadMsg); ok {
+			updated, next := m.Update(msg)
+			return updated.(Model), next
+		}
+	}
+	t.Fatalf("%s didn't read the pasteboard", key)
+	return m, nil
+}
+
+func TestPasteLeavesWhatWasCopiedBeforeSushiStarted(t *testing.T) {
+	f := useFakeMac(t)
+	src, dst := t.TempDir(), t.TempDir()
+	old, report := filepath.Join(src, "old.txt"), filepath.Join(src, "report.pdf")
+	writeTestFile(t, old, "copied last week")
+	writeTestFile(t, report, "pdf")
+
+	// On the pasteboard since before sushi started: not pasted, nor read
+	f.finderCopies(old)
+	m := started(t, newTestModel(t, dst, nil))
+	m, cmd := press(t, m, "v")
+	if m = drain(t, m, cmd); len(dirNames(t, dst)) != 0 || m.statusMsg != "Nothing in clipboard" {
+		t.Fatalf("pasted %v, statusMsg %q", dirNames(t, dst), m.statusMsg)
+	}
+	if f.counts != 1 || f.reads != 1 {
+		t.Fatalf("%d counts, %d reads", f.counts, f.reads)
+	}
+
+	// Copied in Finder since: pasted, saying where from
+	f.finderCopies(report, old)
+	m, cmd = readPasteboard(t, m, "v")
+	if m.statusMsg != "Pasting 2 items copied in Finder" {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+	if m = drain(t, m, cmd); !slices.Equal(dirNames(t, dst), []string{"old.txt", "report.pdf"}) {
+		t.Fatalf("pasted %v, statusMsg %q", dirNames(t, dst), m.statusMsg)
+	}
+
+	// A paste before the count at startup is known takes nothing either
+	f.finderCopies(report)
+	m = newTestModel(t, t.TempDir(), nil)
+	startup := m.startPasteboard()
+	m, cmd = press(t, m, "v")
+	if m = drain(t, m, cmd); len(m.clipboard) != 0 || m.statusMsg != "Nothing in clipboard" {
+		t.Fatalf("clipboard %q, statusMsg %q", m.clipboard, m.statusMsg)
+	}
+	f.finderCopies(report)
+	if m = drain(t, m, startup); m.pb.startCount != f.count-1 {
+		t.Fatalf("the late count replaced the one read first: %d", m.pb.startCount)
+	}
+}
+
+func TestPasteLinksTakesWhatFinderCopied(t *testing.T) {
+	f := useFakeMac(t)
+	src, dst := t.TempDir(), t.TempDir()
+	report := filepath.Join(src, "report.pdf")
+	writeTestFile(t, report, "pdf")
+
+	m := started(t, newTestModel(t, dst, nil))
+	f.finderCopies(report)
+	m, cmd := press(t, m, "V")
+	m = drain(t, m, cmd)
+	if target, err := os.Readlink(filepath.Join(dst, "report.pdf")); err != nil || target != report {
+		t.Fatalf("link to %q (%v), statusMsg %q", target, err, m.statusMsg)
+	}
+	if !slices.Equal(m.clipboard, []string{report}) || m.clipboardMode != "copy" || !strings.HasPrefix(m.statusMsg, "Linked") {
+		t.Fatalf("clipboard %q (%s), statusMsg %q", m.clipboard, m.clipboardMode, m.statusMsg)
+	}
+}
+
+func TestReadingThePasteboardSaysSoUntilItIsIn(t *testing.T) {
+	useFakeMac(t)
+	src, dst := t.TempDir(), t.TempDir()
+	writeTestFile(t, filepath.Join(src, "a.txt"), "a")
+	writeTestFile(t, filepath.Join(dst, "a.txt"), "old")
+	var lasts []time.Duration
+	defer func(old func(time.Duration, func(time.Time) tea.Msg) tea.Cmd) { statusTimer = old }(statusTimer)
+	statusTimer = func(d time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
+		lasts = append(lasts, d)
+		return func() tea.Msg { return nil }
+	}
+
+	m := started(t, newTestModel(t, src, nil))
+	m, cmd := press(t, m, "c")
+	m = at(t, drain(t, m, cmd), dst)
+
+	// As long as the read may take, however slow osascript is
+	lasts = nil
+	m, cmd = press(t, m, "v")
+	if m.statusMsg != "Reading the pasteboard…" || len(lasts) != 1 || lasts[0] < macTimeout {
+		t.Fatalf("statusMsg %q for %v", m.statusMsg, lasts)
+	}
+	// Gone once it is in: here the paste asks before overwriting a.txt
+	if m = drain(t, m, cmd); m.mode != ModeConfirm || strings.Contains(m.statusMsg, "Reading") {
+		t.Fatalf("mode %v, statusMsg %q", m.mode, m.statusMsg)
+	}
+	m, _ = press(t, m, "n")
+
+	// A message that came meanwhile stays
+	m, cmd = press(t, m, "v")
+	m.statusMsg, m.statusID = "Something else", m.statusID+1
+	if m = drain(t, m, cmd); m.statusMsg != "Something else" {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
 	}
 }

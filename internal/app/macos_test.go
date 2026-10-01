@@ -33,6 +33,7 @@ type fakeMac struct {
 	apps     string   // What the app lookup answers, as JSON
 	lookups  []string // Scripts that looked apps up
 	reads    int      // Reads of the pasteboard
+	counts   int      // Reads of its change count alone
 	opened   [][]string
 	revealed [][]string
 	fail     error // Every osascript call fails with it, if set
@@ -85,6 +86,9 @@ func (f *fakeMac) osascript(_ context.Context, script string) ([]byte, error) {
 	case strings.Contains(script, "activateFileViewerSelectingURLs"):
 		f.revealed = append(f.revealed, scriptPaths(script))
 		return []byte("{}"), nil
+	case strings.Contains(script, "changeCount"):
+		f.counts++
+		return fmt.Appendf(nil, `{"count":%d}`, f.count), nil
 	}
 	return nil, errors.New("unexpected script")
 }

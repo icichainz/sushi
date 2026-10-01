@@ -574,7 +574,7 @@ func loadTheme(cfg *config.Config) (ui.Theme, []string) {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.initCmd, m.watch.listen(), m.startGit()}
+	cmds := []tea.Cmd{m.initCmd, m.watch.listen(), m.startGit(), m.startPasteboard()}
 	if m.tab().Preview.Pending {
 		cmds = append(cmds, m.previewCmd(m.tab()))
 	}

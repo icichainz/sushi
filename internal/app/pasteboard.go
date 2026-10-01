@@ -17,6 +17,8 @@ import (
 // files), and pasting takes the files Finder or any other app has put
 // there since sushi last did, as a copy. The pasteboard's change count,
 // which goes up whenever anything is put on it, tells which is newer.
+// What was there before sushi started, however long ago it was copied,
+// isn't taken: only what is put there while sushi runs.
 
 // generalPasteboard is the pasteboard Cmd+C and Cmd+V use
 var generalPasteboard = pasteboard.New(runOsascript, "")
@@ -27,6 +29,20 @@ type pbState struct {
 	count    int
 	writeSeq int // The latest write, so one finishing late is ignored
 	readSeq  int // The latest read, likewise
+
+	// The change count when sushi started, read in the background; what
+	// the pasteboard holds at that count isn't pasted. -1 if it couldn't
+	// be read, when anything is.
+	startCount int
+	started    bool
+
+	readStatus int // The status message saying a read is under way, while it is shown
+}
+
+// pasteboardStartMsg brings the pasteboard's change count at startup
+type pasteboardStartMsg struct {
+	count int
+	err   error
 }
 
 // pasteboardWrittenMsg says how putting files on the pasteboard went
@@ -42,6 +58,7 @@ type pasteboardReadMsg struct {
 	seq      int
 	tabID    int
 	dir      string
+	links    bool // Paste symlinks, as V does
 	contents pasteboard.Contents
 	err      error
 }
@@ -52,6 +69,31 @@ func (m Model) board() *pasteboard.Board {
 		return nil
 	}
 	return generalPasteboard
+}
+
+// startPasteboard returns the command for Init that reads the pasteboard's
+// change count, or nil with the pasteboard left alone
+func (m Model) startPasteboard() tea.Cmd {
+	board := m.board()
+	if board == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), macTimeout)
+		defer cancel()
+		count, err := board.Count(ctx)
+		return pasteboardStartMsg{count: count, err: err}
+	}
+}
+
+func (msg pasteboardStartMsg) apply(m Model) (tea.Model, tea.Cmd) {
+	if !m.pb.started {
+		m.pb.started, m.pb.startCount = true, msg.count
+		if msg.err != nil {
+			m.pb.startCount = -1
+		}
+	}
+	return m, nil
 }
 
 // putOnPasteboard puts paths, just put in sushi's clipboard, on the
@@ -86,72 +128,100 @@ func (msg pasteboardWrittenMsg) apply(m Model) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// paste pastes into the current folder. With the pasteboard shared, it
-// first reads what is there, which takes osascript a moment, and goes on
-// when pasteboardReadMsg brings it. While sushi's own write isn't in, or
-// after it failed, sushi's clipboard is the newer, so that is pasted at
-// once, unless it is empty.
-func (m Model) paste() (tea.Model, tea.Cmd) {
+// paste pastes into the current folder, as symlinks with links. With the
+// pasteboard shared, it first reads what is there, which takes osascript
+// a moment, and goes on when pasteboardReadMsg brings it. While sushi's
+// own write isn't in, or after it failed, sushi's clipboard is the newer,
+// so that is pasted at once, unless it is empty.
+func (m Model) paste(links bool) (tea.Model, tea.Cmd) {
 	board := m.board()
 	if board == nil || !m.pb.ours && len(m.clipboard) > 0 {
-		return m.startPaste()
+		return m.pasteClipboard(links)
 	}
-	// What sushi put there is in its clipboard already, so the files are
-	// read only if something else has been put there since
+	// What sushi put there is in its clipboard already, and what was there
+	// when it started isn't for it, so the files are read only if
+	// something else has been put there since
 	known := -1
-	if m.pb.ours {
+	switch {
+	case m.pb.ours:
 		known = m.pb.count
+	case m.pb.started:
+		known = m.pb.startCount
 	}
 	m.pb.readSeq++
 	tab := m.tab()
-	msg := pasteboardReadMsg{seq: m.pb.readSeq, tabID: tab.ID, dir: tab.CurrentPath}
+	msg := pasteboardReadMsg{seq: m.pb.readSeq, tabID: tab.ID, dir: tab.CurrentPath, links: links}
 	read := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), macTimeout)
 		defer cancel()
 		msg.contents, msg.err = board.Read(ctx, known)
 		return msg
 	}
-	status := m.setStatus("Reading the pasteboard" + currentGlyphs().more)
+	// Shown for as long as the read may take, and cleared when it is in
+	status := m.setStatusFor("Reading the pasteboard"+currentGlyphs().more, macTimeout)
+	m.pb.readStatus = m.statusID
 	return m, tea.Batch(status, read)
 }
 
-// apply pastes the files on the pasteboard, if they are newer than sushi's
-// clipboard, and sushi's clipboard otherwise, through startPaste, which
-// asks before overwriting anything. Only a paste still wanted where it was
-// asked for goes ahead.
-func (msg pasteboardReadMsg) apply(m Model) (tea.Model, tea.Cmd) {
-	if msg.seq != m.pb.readSeq || m.mode != ModeNormal {
-		return m, nil
-	}
-	if m.tab().ID != msg.tabID || m.tab().CurrentPath != msg.dir {
-		cmd := m.setStatus("The folder shown changed, so nothing was pasted")
-		return m, cmd
-	}
-	if m.job != nil {
-		cmd := m.stillBusy()
-		return m, cmd
-	}
-	if msg.err != nil {
-		if len(m.clipboard) == 0 {
-			cmd := m.setStatus(fmt.Sprintf("Can't read the pasteboard: %v", msg.err))
-			return m, cmd
-		}
-		return m.startPaste()
-	}
-	if files := m.fromPasteboard(msg.contents); files != nil {
-		// They are sushi's clipboard now, as a copy, so pasting again
-		// pastes them again, as in Finder
-		m.clipboard, m.clipboardMode = files, "copy"
-		m.pb.ours, m.pb.count = true, msg.contents.Count
+// pasteClipboard pastes sushi's clipboard, as symlinks with links
+func (m Model) pasteClipboard(links bool) (tea.Model, tea.Cmd) {
+	if links {
+		return m.pasteLinks()
 	}
 	return m.startPaste()
 }
 
+// apply pastes the files on the pasteboard, if they are newer than sushi's
+// clipboard, and sushi's clipboard otherwise, through startPaste, which
+// asks before overwriting anything, or pasteLinks. Only a paste still
+// wanted where it was asked for goes ahead.
+func (msg pasteboardReadMsg) apply(m Model) (tea.Model, tea.Cmd) {
+	if msg.seq != m.pb.readSeq {
+		return m, nil // A newer paste is under way
+	}
+	// The read is in, so it is no longer under way
+	if m.statusID == m.pb.readStatus {
+		m.statusMsg = ""
+	}
+	if !m.pb.started {
+		// Read before the count at startup came in: the pasteboard has
+		// held this since then at least
+		m.pb.started, m.pb.startCount = true, msg.contents.Count
+	}
+	switch {
+	case m.mode != ModeNormal:
+		cmd := m.setStatus("Paste cancelled")
+		return m, cmd
+	case m.tab().ID != msg.tabID || m.tab().CurrentPath != msg.dir:
+		cmd := m.setStatus("The folder shown changed, so nothing was pasted")
+		return m, cmd
+	case m.job != nil:
+		cmd := m.stillBusy()
+		return m, cmd
+	case msg.err != nil && len(m.clipboard) == 0:
+		cmd := m.setStatus(fmt.Sprintf("Can't read the pasteboard: %v", msg.err))
+		return m, cmd
+	case msg.err != nil:
+		return m.pasteClipboard(msg.links)
+	}
+	files := m.fromPasteboard(msg.contents)
+	if files == nil {
+		return m.pasteClipboard(msg.links)
+	}
+	// They are sushi's clipboard now, as a copy, so pasting again pastes
+	// them again, as in Finder
+	m.clipboard, m.clipboardMode = files, "copy"
+	m.pb.ours, m.pb.count = true, msg.contents.Count
+	status := m.setStatus(fmt.Sprintf("Pasting %s copied in Finder", plural(len(files), "item")))
+	updated, cmd := m.pasteClipboard(msg.links)
+	return updated, tea.Batch(status, cmd)
+}
+
 // fromPasteboard returns the files a paste takes from the pasteboard, or
 // nil if it takes sushi's clipboard. They have to be there still, and put
-// there by another app since sushi last put its clipboard there; when
-// sushi's own write isn't in, or failed, its clipboard is the newer,
-// unless it is empty.
+// there by another app since sushi started, and since sushi last put its
+// clipboard there; when sushi's own write isn't in, or failed, its
+// clipboard is the newer, unless it is empty.
 func (m Model) fromPasteboard(c pasteboard.Contents) []string {
 	var files []string
 	for _, f := range c.Files {
@@ -162,6 +232,8 @@ func (m Model) fromPasteboard(c pasteboard.Contents) []string {
 	switch {
 	case len(files) == 0, sameFiles(files, m.clipboard):
 		return nil
+	case m.pb.started && c.Count == m.pb.startCount:
+		return nil // From before sushi started
 	case m.pb.ours && c.Count == m.pb.count, !m.pb.ours && len(m.clipboard) > 0:
 		return nil
 	}
