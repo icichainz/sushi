@@ -37,6 +37,8 @@ type Tab struct {
 	Loading         bool
 	reloadWanted    bool // Changed while loading: reload once the load is in
 	resortWanted    bool // Sort order changed while loading: sort the load once in
+
+	git gitState // What Git says about CurrentPath; see git.go
 }
 
 // Model represents the application state
@@ -104,8 +106,9 @@ type Model struct {
 	watch        *dirWatcher // Reloads tabs when their directories change; nil when off
 	keepShellDir bool        // Quit with Q: don't tell the shell to change directory
 
-	pb       pbState       // What sushi knows of the macOS pasteboard; see pasteboard.go
-	openWith openWithState // The Open with list; see openwith.go
+	pb           pbState          // What sushi knows of the macOS pasteboard; see pasteboard.go
+	openWith     openWithState    // The Open with list; see openwith.go
+	quickLookWin *quickLookWindow // The Quick Look window open, if any; see quicklook.go
 }
 
 // tab returns a pointer to the active tab
@@ -188,6 +191,7 @@ type KeyMap struct {
 	Open        key.Binding
 	OpenWith    key.Binding
 	Reveal      key.Binding
+	QuickLook   key.Binding
 	Rename      key.Binding
 	NewFile     key.Binding
 	NewDir      key.Binding
@@ -293,6 +297,10 @@ func DefaultKeyMap() KeyMap {
 		Reveal: key.NewBinding(
 			key.WithKeys("ctrl+o"),
 			key.WithHelp("ctrl+o", "reveal in Finder"),
+		),
+		QuickLook: key.NewBinding(
+			key.WithKeys("i"),
+			key.WithHelp("i", "quick look"),
 		),
 		Rename: key.NewBinding(
 			key.WithKeys("r"),
@@ -550,7 +558,7 @@ func loadTheme(cfg *config.Config) (ui.Theme, []string) {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.initCmd, m.watch.listen()}
+	cmds := []tea.Cmd{m.initCmd, m.watch.listen(), m.startGit()}
 	if m.tab().Preview.Pending {
 		cmds = append(cmds, m.previewCmd(m.tab()))
 	}

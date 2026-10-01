@@ -462,9 +462,10 @@ func existingDir(path string) string {
 
 // refresh reloads every tab, for changes the watcher can't see, such as on
 // network drives, or when watch: false. It also tries again to watch the
-// directories that weren't watched.
+// directories that weren't watched, and to read their Git status.
 func (m Model) refresh() (tea.Model, tea.Cmd) {
 	m.watch.rewatch()
+	m.retryGit()
 	cmds := []tea.Cmd{m.setStatus("Refreshed")}
 	for i := range m.tabs {
 		// A load in flight may have read its directory before the change

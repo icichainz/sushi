@@ -100,7 +100,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateSearchResults()
 			m.cursorToMatch()
 		}
-		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt)
+		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt, m.gitAfterLoad(tab))
 		return m, cmd
 
 	case previewLoadedMsg:
@@ -456,6 +456,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Reveal):
 		return m.reveal()
+
+	case key.Matches(msg, m.keys.QuickLook):
+		return m.quickLook(m.targets())
 
 	case key.Matches(msg, m.keys.Left), key.Matches(msg, m.keys.Back):
 		return m.goParent()
