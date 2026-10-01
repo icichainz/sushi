@@ -256,7 +256,9 @@ func (m Model) renderHeader() string {
 
 	// The sort order shows only where the whole path fits beside it. The
 	// note, then the branch, matter more than the path's leading
-	// directories, which make room for them.
+	// directories, which make room for them; but the current directory's
+	// name matters more than the branch, which is cut short to leave it
+	// whole, or left out.
 	segs := pathSegments(tab.CurrentPath)
 	width := func(s []string) int { return utils.Width(strings.Join(s, " / ")) }
 	if width(segs)+2+rightW > inner {
@@ -270,7 +272,11 @@ func (m Model) renderHeader() string {
 				}
 			}
 		case branch != "":
-			right, rightW = m.branchLabel(inner - 2 - minPathWidth)
+			current := utils.Width(segs[len(segs)-1])
+			if len(segs) > 1 {
+				current += utils.Width(g.more + " / ")
+			}
+			right, rightW = m.branchLabel(inner - 2 - max(current, minPathWidth))
 		}
 	}
 	room := inner

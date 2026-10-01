@@ -214,11 +214,12 @@ func TestGitBranchLabel(t *testing.T) {
 	}
 	ui.SetIconMode(ui.IconModeNerd)
 
-	// A long branch beside a long path: the path makes room for the
-	// branch, which is cut short when even that isn't enough
+	// A long branch beside a long path: the path's leading directories
+	// make room for the branch, which is cut short to leave the current
+	// directory's name whole, or left out
 	branch := "feature/" + strings.Repeat("long-branch-name-", 4)
 	gittest.Run(t, repo, "checkout", "-q", "-b", branch)
-	deep := filepath.Join(repo, strings.Repeat("very-long-directory-name-", 4))
+	deep := filepath.Join(repo, "a-long-directory-name")
 	os.Mkdir(deep, 0755)
 	writeTestFile(t, filepath.Join(deep, "a.txt"), "")
 	m = gitModel(t, deep, nil)
@@ -228,10 +229,14 @@ func TestGitBranchLabel(t *testing.T) {
 		lines := assertFills(t, label, m)
 		h := lines[1]
 		switch {
+		case !strings.Contains(h, " a-long-directory-name "):
+			t.Errorf("%s: the current directory's name isn't whole: %q", label, h)
 		case size.Width >= 120 && !strings.Contains(h, "⎇ "+branch+"*"):
 			t.Errorf("%s: the branch isn't whole: %q", label, h)
-		case size.Width == 60 && (!strings.Contains(h, "⎇ feature/") || !strings.Contains(h, "...*")):
+		case (size.Width == 60 || size.Width == 80) && (!strings.Contains(h, "⎇ feature/") || !strings.Contains(h, "...*")):
 			t.Errorf("%s: the branch isn't cut short: %q", label, h)
+		case size.Width == 30 && strings.Contains(h, "⎇"):
+			t.Errorf("%s: the branch is there: %q", label, h)
 		case size.Width < 120 && strings.Contains(h, "sort"):
 			t.Errorf("%s: the sort order shows beside a path cut short: %q", label, h)
 		}
@@ -244,6 +249,14 @@ func TestGitBranchLabel(t *testing.T) {
 			}
 			assertFills(t, label+" after "+keys, screen)
 		}
+	}
+
+	// A name too long to leave room for the branch leaves it out
+	deeper := filepath.Join(deep, strings.Repeat("very-long-directory-name-", 2))
+	os.Mkdir(deeper, 0755)
+	m = resize(gitModel(t, deeper, nil), tea.WindowSizeMsg{Width: 60, Height: 15})
+	if h := assertFills(t, "a long name", m)[1]; strings.Contains(h, "⎇") || !strings.Contains(h, "directory-name-very-long-directory-name-") {
+		t.Errorf("beside a long name: %q", h)
 	}
 }
 
