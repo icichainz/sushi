@@ -38,15 +38,16 @@ type Options struct {
 	ShowHidden bool     // Include dotfiles and dot-directories
 	Skip       []string // Names of directories not to enter; the root is always searched
 	Limit      int      // Most results to report; 0 means no limit
+	Everywhere bool     // Search every indexed volume, not just below Root; Spotlight only
 }
 
 // Result is a match: an entry for a name search, or a line of a file for a
 // content search
 type Result struct {
 	Path  string // Absolute path
-	Rel   string // Path relative to the search root
+	Rel   string // Path relative to the search root, or absolute if outside it
 	IsDir bool
-	Line  int    // Line number, from 1; 0 for name matches
+	Line  int    // Line number, from 1; 0 for name matches, and documents Spotlight found the text in
 	Text  string // The matching line, trimmed and made safe to display
 	Col   int    // Where the match starts in Text, in runes
 	Score int    // Lower is better; set by the matcher of a name search
