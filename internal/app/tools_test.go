@@ -564,7 +564,9 @@ func TestBusyRefusesChangesButNotMoving(t *testing.T) {
 	m := newTestModel(t, dir, nil)
 	m, _ = press(t, m, "d")
 	running := m.job.id
-	for _, k := range []string{"d", "D", "r", "n", "N", "v", "V", "R", "y", "m", "a", "X"} {
+	// L too: tags written to a file being trashed would go with it, or be
+	// lost
+	for _, k := range []string{"d", "D", "r", "n", "N", "v", "V", "R", "y", "m", "a", "X", "L"} {
 		m.statusMsg = ""
 		m, _ = press(t, m, k)
 		if m.mode != ModeNormal || m.job.id != running || !strings.Contains(m.statusMsg, "Still moving to trash") {
