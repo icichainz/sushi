@@ -848,7 +848,7 @@ func (m Model) renderBottomRow() string {
 	if len(m.tabs[m.activeTabIdx].Selected) > 0 {
 		return m.renderHints([]hint{keyHint("toggle", k.Select), keyHint("invert", k.Invert), keyHint("clear", k.Unselect),
 			keyHint("copy", k.Copy), keyHint("cut", k.Cut), keyHint("delete", k.Delete), keyHint("edit", k.Edit),
-			keyHint("open", k.Open), keyHint("shell", k.Shell), keyHint("all keys", k.Help)})
+			keyHint("open", k.Open), keyHint("quick look", k.QuickLook), keyHint("shell", k.Shell), keyHint("all keys", k.Help)})
 	}
 	return m.renderHints([]hint{keyHint("open", k.Enter), keyHint("select", k.Select), keyHint("copy", k.Copy), keyHint("cut", k.Cut),
 		keyHint("paste", k.Paste), keyHint("rename", k.Rename), keyHint("new", k.NewFile), keyHint("delete", k.Delete),
@@ -1071,7 +1071,7 @@ func (k KeyMap) helpGroups() []helpGroup {
 			keyHint("chmod, bulk rename", k.Chmod, k.BulkRename), keyHint("zip, extract", k.Archive, k.Extract)}},
 		{"Select", []hint{keyHint("toggle", k.Select), keyHint("invert", k.Invert), keyHint("clear", k.Unselect),
 			keyHint("copy, cut, paste", k.Copy, k.Cut, k.Paste)}},
-		{"View", []hint{keyHint("search", k.Search), keyHint("preview", k.Preview), keyHint("scroll preview", k.PreviewDown, k.PreviewUp),
+		{"View", []hint{keyHint("search", k.Search), keyHint("preview, quick look", k.Preview, k.QuickLook), keyHint("scroll preview", k.PreviewDown, k.PreviewUp),
 			keyHint("hidden files", k.Hidden), keyHint("this panel", k.Help)}},
 		{"Find", []hint{keyHint("find by name", k.Find), keyHint("find in files", k.Grep), keyHint("sort by, reverse", k.Sort, k.Reverse),
 			keyHint("refresh", k.Refresh), keyHint("quit without cd", k.QuitNoCd)}},

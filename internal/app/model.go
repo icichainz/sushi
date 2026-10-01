@@ -105,6 +105,8 @@ type Model struct {
 	jump         previewJump // Preview line to show once a search result's file loads
 	watch        *dirWatcher // Reloads tabs when their directories change; nil when off
 	keepShellDir bool        // Quit with Q: don't tell the shell to change directory
+
+	quickLookWin *quickLookWindow // The Quick Look window open, if any; see quicklook.go
 }
 
 // tab returns a pointer to the active tab
@@ -184,6 +186,7 @@ type KeyMap struct {
 	Delete      key.Binding
 	Edit        key.Binding
 	Open        key.Binding
+	QuickLook   key.Binding
 	Rename      key.Binding
 	NewFile     key.Binding
 	NewDir      key.Binding
@@ -280,6 +283,10 @@ func DefaultKeyMap() KeyMap {
 		Open: key.NewBinding(
 			key.WithKeys("o"),
 			key.WithHelp("o", "open with default app"),
+		),
+		QuickLook: key.NewBinding(
+			key.WithKeys("i"),
+			key.WithHelp("i", "quick look"),
 		),
 		Rename: key.NewBinding(
 			key.WithKeys("r"),

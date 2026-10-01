@@ -217,7 +217,7 @@ func (m Model) whileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 
 	case key.Matches(msg, k.Delete, k.HardDelete, k.Paste, k.PasteLink, k.Rename, k.BulkRename,
 		k.NewFile, k.NewDir, k.Duplicate, k.Chmod, k.Archive, k.Extract, k.Undo,
-		k.Plugins, k.Shell, k.Edit, k.Open):
+		k.Plugins, k.Shell, k.Edit, k.Open, k.QuickLook):
 		cmd := m.stillBusy()
 		return m, cmd, true
 	}

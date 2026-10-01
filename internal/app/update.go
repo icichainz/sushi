@@ -448,6 +448,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Open):
 		return m.openWithSystem(m.targets())
 
+	case key.Matches(msg, m.keys.QuickLook):
+		return m.quickLook(m.targets())
+
 	case key.Matches(msg, m.keys.Left), key.Matches(msg, m.keys.Back):
 		return m.goParent()
 
