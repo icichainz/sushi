@@ -721,14 +721,6 @@ func TestChmod(t *testing.T) {
 	if mode() != 0644 {
 		t.Fatalf("undo left mode %v", mode())
 	}
-
-	real := goos
-	goos = "windows"
-	t.Cleanup(func() { goos = real })
-	m, _ = press(t, m, "m")
-	if m.mode != ModeNormal || !strings.Contains(m.statusMsg, "Windows") {
-		t.Fatalf("on Windows: mode=%v statusMsg=%q", m.mode, m.statusMsg)
-	}
 }
 
 func TestModeFormat(t *testing.T) {
@@ -757,7 +749,6 @@ func TestModeFormat(t *testing.T) {
 // and runs it synchronously as tea.ExecProcess can't without a terminal
 func fakeEditor(t *testing.T, body string) {
 	t.Helper()
-	skipWithoutSh(t)
 	script := filepath.Join(t.TempDir(), "editor")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\n"+body+"\n"), 0755); err != nil {
 		t.Fatal(err)

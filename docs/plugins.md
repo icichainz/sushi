@@ -107,7 +107,3 @@ echo "cd $target" > "$SUSHI_CMD_FILE"
 ## Keys
 
 Keys are written the way sushi receives them: a single character (`Z`, `%`, `#`), or a name such as `ctrl+g`, `alt+x` or `f5`. Plugins can't take over sushi's own keys: those of its actions, as remapped under `keys:` in the config (see [Remapping Keys](../README.md#remapping-keys)), and the digits `1`-`9`, which jump to bookmarks. If a plugin asks for one, or two plugins ask for the same key, sushi says so in the status bar at startup, and `sushi --list-keys` lists it; the plugin stays available from the Run palette, shown there without a key.
-
-## Windows
-
-Config commands run with `cmd /C` and should use the `%SUSHI_...%` environment variables rather than arguments. Script plugins need to be `.exe`, `.bat`, `.cmd` or `.com` files. The example scripts are for macOS and Linux.

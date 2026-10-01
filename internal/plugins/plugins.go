@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -141,13 +140,6 @@ func Discover(dir string) ([]Plugin, []string) {
 
 // isExecutable reports whether a file can be run directly
 func isExecutable(info os.FileInfo) bool {
-	if runtime.GOOS == "windows" {
-		switch strings.ToLower(filepath.Ext(info.Name())) {
-		case ".exe", ".bat", ".cmd", ".com":
-			return true
-		}
-		return false
-	}
 	return info.Mode()&0111 != 0
 }
 
@@ -189,15 +181,12 @@ func readHeader(path string, p *Plugin) {
 }
 
 // Cmd builds the process that runs p. Shell commands run with sh -c,
-// where "$@" is the selection; scripts get the selection as arguments. On
-// Windows, commands run with cmd /C and should use the environment variables.
+// where "$@" is the selection; scripts get the selection as arguments.
 func (p Plugin) Cmd(ctx Context) *exec.Cmd {
 	var cmd *exec.Cmd
 	switch {
 	case p.Script != "":
 		cmd = exec.Command(p.Script, ctx.Selection...)
-	case runtime.GOOS == "windows":
-		cmd = exec.Command("cmd", "/C", p.Command)
 	default:
 		// "sushi" becomes $0, so the selection starts at $1
 		cmd = exec.Command("sh", append([]string{"-c", p.Command, "sushi"}, ctx.Selection...)...)

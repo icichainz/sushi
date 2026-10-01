@@ -69,12 +69,11 @@ func newDirWatcher() *dirWatcher {
 	}
 }
 
-// watchBudget limits the files watches may hold open where fsnotify uses
-// kqueue: watching a very large directory could otherwise use up the
-// files sushi needs to open for itself
+// watchBudget limits the files watches may hold open on macOS, where
+// fsnotify uses kqueue: watching a very large directory could otherwise use
+// up the files sushi needs to open for itself
 func watchBudget() int {
-	switch runtime.GOOS {
-	case "darwin", "freebsd", "openbsd", "netbsd", "dragonfly":
+	if runtime.GOOS == "darwin" {
 		return kqueueBudget
 	}
 	return 0

@@ -1,5 +1,3 @@
-//go:build linux || openbsd || dragonfly || solaris
-
 package fs
 
 import (

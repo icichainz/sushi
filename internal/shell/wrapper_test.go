@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -12,9 +11,6 @@ import (
 // needShell returns the path of a shell, skipping the test if it's missing
 func needShell(t *testing.T, name string) string {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the wrappers are for Unix shells")
-	}
 	path, err := exec.LookPath(name)
 	if err != nil {
 		t.Skipf("%s is not installed", name)

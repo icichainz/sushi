@@ -10,7 +10,7 @@ import (
 )
 
 // EditorCommand returns the command that opens paths in the user's editor:
-// $VISUAL, then $EDITOR, then vi (notepad on Windows). The variables may
+// $VISUAL, then $EDITOR, then vi. The variables may
 // include arguments, as in "code --wait".
 func EditorCommand(paths ...string) *exec.Cmd {
 	editor := os.Getenv("VISUAL")
@@ -20,9 +20,6 @@ func EditorCommand(paths ...string) *exec.Cmd {
 	fields := strings.Fields(editor)
 	if len(fields) == 0 {
 		fields = []string{"vi"}
-		if runtime.GOOS == "windows" {
-			fields = []string{"notepad"}
-		}
 	}
 	return exec.Command(fields[0], append(fields[1:], paths...)...)
 }
@@ -30,13 +27,8 @@ func EditorCommand(paths ...string) *exec.Cmd {
 // SystemCommand returns the command that opens path with the default
 // application, as double-clicking it would
 func SystemCommand(path string) *exec.Cmd {
-	switch runtime.GOOS {
-	case "darwin":
+	if runtime.GOOS == "darwin" {
 		return exec.Command("open", path)
-	case "windows":
-		// Avoids "cmd /c start", which would interpret & and ^ in the path
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
-	default:
-		return exec.Command("xdg-open", path)
 	}
+	return exec.Command("xdg-open", path)
 }
