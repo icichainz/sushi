@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -369,6 +370,24 @@ func TestFindByTag(t *testing.T) {
 	m = find(t, newTestModel(t, root, cfg), "f", "#name")
 	if got := strings.Join(resultPaths(m), " "); got != "#name.txt" {
 		t.Fatalf("with tags off, #name found %s", got)
+	}
+}
+
+func TestTaggingAReadOnlyFileSaysWhich(t *testing.T) {
+	needTags(t)
+	dir := filepath.Join(t.TempDir(), "a", "rather", "long", "folder", "name")
+	os.MkdirAll(dir, 0755)
+	writeTestFile(t, filepath.Join(dir, "locked.txt"), "")
+	os.Chmod(filepath.Join(dir, "locked.txt"), 0444)
+
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "L")
+	m, _ = press(t, m, " ") // Red
+	if m.statusMsg == "" {
+		t.Skip("read-only files take tags here")
+	}
+	if !strings.HasPrefix(m.statusMsg, "Error: can't tag locked.txt: ") || strings.Contains(m.statusMsg, "folder") {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
 	}
 }
 

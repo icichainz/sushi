@@ -1,6 +1,7 @@
 package tags
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -238,6 +239,63 @@ func TestReadMissingFile(t *testing.T) {
 	}
 	if err := Write(filepath.Join(t.TempDir(), "gone"), []Tag{{"Red", Red}}); err == nil {
 		t.Fatal("no error tagging a file that isn't there")
+	}
+}
+
+func TestWriteKeepsTagsItDoesntChange(t *testing.T) {
+	path := tempFile(t, "odd.txt")
+	old := encodeObjects(oddObjects)
+	if err := unix.Lsetxattr(path, Attr, old, 0); err != nil {
+		t.Skipf("can't set attributes here: %v", err)
+	}
+	list, err := Read(path)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("Read = %q, %v", list, err)
+	}
+	ctime := func() unix.Timespec {
+		var st unix.Stat_t
+		if err := unix.Lstat(path, &st); err != nil {
+			t.Fatal(err)
+		}
+		return st.Ctim
+	}
+
+	// Ticking an unrelated tag leaves the three strings byte for byte
+	if err := Write(path, With(list, Tag{"Red", Red})); err != nil {
+		t.Fatal(err)
+	}
+	data, err := getAttr(path, Attr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := objects(t, data); len(got) != 4 || !slices.EqualFunc(got[:3], oddObjects, bytes.Equal) {
+		t.Fatalf("objects = %x", got)
+	}
+	// Unticking it puts back what was there
+	if err := Write(path, list); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := getAttr(path, Attr); !bytes.Equal(data, old) {
+		t.Fatalf("attribute = %x, want %x", data, old)
+	}
+	// Writing what is there writes nothing
+	before := ctime()
+	if err := Write(path, list); err != nil || ctime() != before {
+		t.Fatalf("written again (%v)", err)
+	}
+}
+
+func TestErrorsNameTheFileByItsName(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "some", "long", "folder")
+	os.MkdirAll(dir, 0755)
+	path := filepath.Join(dir, "locked.txt")
+	os.WriteFile(path, nil, 0444)
+	err := Write(path, []Tag{{"Red", Red}})
+	if err == nil {
+		t.Skip("read-only files take tags here")
+	}
+	if !strings.HasPrefix(err.Error(), "can't tag locked.txt: ") || strings.Contains(err.Error(), dir) {
+		t.Fatalf("err = %v", err)
 	}
 }
 

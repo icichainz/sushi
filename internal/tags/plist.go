@@ -34,14 +34,41 @@ const (
 
 var errPlist = errors.New("not a list of tags")
 
+// rawString is a string of a property list as read, with the object that
+// holds it in a binary one, to write back exactly as it was: text that
+// isn't quite Unicode, as an unpaired surrogate, reads as something else
+type rawString struct {
+	s   string
+	obj []byte // nil for an XML property list
+}
+
 // decodeStrings reads a property list holding an array of strings
 func decodeStrings(data []byte) ([]string, error) {
+	raw, err := decodeRaw(data)
+	if err != nil {
+		return nil, err
+	}
+	strs := make([]string, len(raw))
+	for i, r := range raw {
+		strs[i] = r.s
+	}
+	return strs, nil
+}
+
+// decodeRaw reads a property list holding an array of strings, keeping
+// each string's object
+func decodeRaw(data []byte) ([]rawString, error) {
 	if bytes.HasPrefix(data, []byte(bplistMagic)) {
 		return decodeBinary(data)
 	}
 	trimmed := bytes.TrimSpace(data)
 	if bytes.HasPrefix(trimmed, []byte("<?xml")) || bytes.HasPrefix(trimmed, []byte("<plist")) {
-		return decodeXML(trimmed)
+		strs, err := decodeXML(trimmed)
+		raw := make([]rawString, len(strs))
+		for i, s := range strs {
+			raw[i] = rawString{s: s}
+		}
+		return raw, err
 	}
 	return nil, fmt.Errorf("%w: unknown property list format", errPlist)
 }
@@ -56,7 +83,7 @@ type bplist struct {
 
 // decodeBinary reads a binary property list whose top object is an array
 // of strings
-func decodeBinary(data []byte) ([]string, error) {
+func decodeBinary(data []byte) ([]rawString, error) {
 	if len(data) < len(bplistMagic)+trailerSize {
 		return nil, fmt.Errorf("%w: too short", errPlist)
 	}
@@ -90,7 +117,7 @@ func decodeBinary(data []byte) ([]string, error) {
 	if uint64(length) > uint64(len(body))/uint64(refSize) {
 		return nil, fmt.Errorf("%w: array runs past the end", errPlist)
 	}
-	out := make([]string, 0, length)
+	out := make([]rawString, 0, length)
 	for i := range length {
 		ref := readUint(body[i*refSize : (i+1)*refSize])
 		s, err := p.str(ref)
@@ -151,10 +178,14 @@ func (p bplist) object(ref uint64) (marker byte, length int, body []byte, err er
 }
 
 // str reads string object ref
-func (p bplist) str(ref uint64) (string, error) {
+func (p bplist) str(ref uint64) (rawString, error) {
 	marker, length, body, err := p.object(ref)
 	if err != nil {
-		return "", err
+		return rawString{}, err
+	}
+	// The object runs from its marker to the end of its text
+	obj := func(size int) []byte {
+		return p.data[p.offsets[ref] : p.objectsEnd-uint64(len(body)-size)]
 	}
 	switch marker {
 	case markerASCII:
@@ -164,24 +195,51 @@ func (p bplist) str(ref uint64) (string, error) {
 		for _, c := range body[:length] {
 			b.WriteRune(rune(c))
 		}
-		return b.String(), nil
+		return rawString{b.String(), obj(length)}, nil
 	case markerUTF16:
 		if 2*length > len(body) {
-			return "", fmt.Errorf("%w: string runs past the end", errPlist)
+			return rawString{}, fmt.Errorf("%w: string runs past the end", errPlist)
 		}
 		units := make([]uint16, length)
 		for i := range units {
 			units[i] = binary.BigEndian.Uint16(body[2*i:])
 		}
-		return string(utf16.Decode(units)), nil
+		return rawString{string(utf16.Decode(units)), obj(2 * length)}, nil
 	}
-	return "", fmt.Errorf("%w: holds something other than text", errPlist)
+	return rawString{}, fmt.Errorf("%w: holds something other than text", errPlist)
 }
 
 // encodeStrings writes strs as a binary property list: an array, then
 // each string, ASCII where it can be and UTF-16 otherwise, as Finder does
 func encodeStrings(strs []string) []byte {
-	count := len(strs) + 1 // The array and its strings
+	objs := make([][]byte, len(strs))
+	for i, s := range strs {
+		objs[i] = stringObject(s)
+	}
+	return encodeObjects(objs)
+}
+
+// stringObject returns the object for s: ASCII where it can be, and
+// UTF-16 otherwise
+func stringObject(s string) []byte {
+	var b bytes.Buffer
+	if isASCII(s) {
+		writeMarker(&b, markerASCII, len(s))
+		b.WriteString(s)
+		return b.Bytes()
+	}
+	units := utf16.Encode([]rune(s))
+	writeMarker(&b, markerUTF16, len(units))
+	for _, u := range units {
+		b.Write([]byte{byte(u >> 8), byte(u)})
+	}
+	return b.Bytes()
+}
+
+// encodeObjects writes a binary property list of an array holding objs,
+// string objects as stringObject makes them or as they were read
+func encodeObjects(objs [][]byte) []byte {
+	count := len(objs) + 1 // The array and its strings
 	refSize := 1
 	if count > 0xFF {
 		refSize = 2
@@ -195,22 +253,13 @@ func encodeStrings(strs []string) []byte {
 	b.WriteString(bplistMagic)
 
 	offsets = append(offsets, uint64(b.Len()))
-	writeMarker(&b, markerArray, len(strs))
-	for i := range strs {
+	writeMarker(&b, markerArray, len(objs))
+	for i := range objs {
 		writeUint(&b, uint64(i+1), refSize)
 	}
-	for _, s := range strs {
+	for _, obj := range objs {
 		offsets = append(offsets, uint64(b.Len()))
-		if isASCII(s) {
-			writeMarker(&b, markerASCII, len(s))
-			b.WriteString(s)
-			continue
-		}
-		units := utf16.Encode([]rune(s))
-		writeMarker(&b, markerUTF16, len(units))
-		for _, u := range units {
-			b.Write([]byte{byte(u >> 8), byte(u)})
-		}
+		b.Write(obj)
 	}
 
 	tableAt := uint64(b.Len())
