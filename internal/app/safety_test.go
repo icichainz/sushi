@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +27,6 @@ func symlinkOrSkip(t *testing.T, target, link string) {
 // withPlugin returns a model in dir with one background plugin on Z
 func withPlugin(t *testing.T, dir, command string) Model {
 	t.Helper()
-	skipWithoutSh(t)
 	cfg := config.DefaultConfig()
 	cfg.Plugins = []plugins.Plugin{{Name: "pick", Key: "Z", Mode: plugins.ModeBackground, Command: command}}
 	return newTestModel(t, dir, cfg)
@@ -104,7 +102,7 @@ func TestPasteOverALinkedFolderLeavesItsTargetAlone(t *testing.T) {
 }
 
 // ignoresCase reports whether the filesystem holding dir takes names that
-// differ only in case for the same, as macOS and Windows do by default
+// differ only in case for the same, as macOS does by default
 func ignoresCase(t *testing.T, dir string) bool {
 	t.Helper()
 	probe := filepath.Join(dir, "CaseProbe")
@@ -302,9 +300,6 @@ func modeOf(t *testing.T, path string) os.FileMode {
 }
 
 func TestChmodLeavesSymlinksAndWhatTheyPointTo(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("no Unix permissions")
-	}
 	dir := t.TempDir()
 	keys := t.TempDir()
 	key := filepath.Join(keys, "id_ed25519")
@@ -337,9 +332,6 @@ func TestChmodLeavesSymlinksAndWhatTheyPointTo(t *testing.T) {
 }
 
 func TestChmodOfSeveralSaysTheyAllGetTheMode(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("no Unix permissions")
-	}
 	dir := t.TempDir()
 	public, private := filepath.Join(dir, "a.txt"), filepath.Join(dir, "b.key")
 	writeTestFile(t, public, "")
@@ -371,9 +363,6 @@ func TestChmodOfSeveralSaysTheyAllGetTheMode(t *testing.T) {
 }
 
 func TestUndoChmodDoesNotFollowALinkPutInItsPlace(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("no Unix permissions")
-	}
 	dir := t.TempDir()
 	f := filepath.Join(dir, "a.sh")
 	writeTestFile(t, f, "")

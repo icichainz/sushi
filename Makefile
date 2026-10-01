@@ -4,7 +4,7 @@
 BINARY_NAME=sushi
 
 # The version sushi --version prints: VERSION=1.2.3 make build
-VERSION ?= 0.2.0
+VERSION ?= 0.3.0
 LDFLAGS = -X main.version=$(VERSION)
 
 # Build the application
@@ -44,7 +44,6 @@ build-all:
 	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-linux-amd64 main.go
 	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-darwin-amd64 main.go
 	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-darwin-arm64 main.go
-	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY_NAME)-windows-amd64.exe main.go
 
 # Development mode with auto-reload (requires air)
 dev:

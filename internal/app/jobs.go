@@ -190,9 +190,10 @@ func (msg jobDoneMsg) apply(m Model) (tea.Model, tea.Cmd) {
 
 // whileBusy handles keys while a job runs: ctrl+x cancels it, every way of
 // quitting (q, Q, closing the last tab) stops it first, and keys that
-// change files, open the Run palette, or open files in other programs are
-// refused until it is done; runPlugin refuses plugins, however they are
-// started. Everything else, like moving around, works as usual.
+// change files or their tags, open the Run palette, or open files in
+// other programs are refused until it is done; runPlugin refuses plugins,
+// however they are started. Everything else, like moving around, works as
+// usual.
 func (m Model) whileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	k := m.keys
 	doing := strings.ToLower(m.job.doing)
@@ -217,7 +218,7 @@ func (m Model) whileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 
 	case key.Matches(msg, k.Delete, k.HardDelete, k.Paste, k.PasteLink, k.Rename, k.BulkRename,
 		k.NewFile, k.NewDir, k.Duplicate, k.Chmod, k.Archive, k.Extract, k.Undo,
-		k.Plugins, k.Shell, k.Edit, k.Open):
+		k.Plugins, k.Shell, k.Edit, k.Open, k.OpenWith, k.Reveal, k.QuickLook, k.Tag):
 		cmd := m.stillBusy()
 		return m, cmd, true
 	}

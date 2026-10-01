@@ -69,12 +69,11 @@ func newDirWatcher() *dirWatcher {
 	}
 }
 
-// watchBudget limits the files watches may hold open where fsnotify uses
-// kqueue: watching a very large directory could otherwise use up the
-// files sushi needs to open for itself
+// watchBudget limits the files watches may hold open on macOS, where
+// fsnotify uses kqueue: watching a very large directory could otherwise use
+// up the files sushi needs to open for itself
 func watchBudget() int {
-	switch runtime.GOOS {
-	case "darwin", "freebsd", "openbsd", "netbsd", "dragonfly":
+	if runtime.GOOS == "darwin" {
 		return kqueueBudget
 	}
 	return 0
@@ -386,22 +385,29 @@ func countEntries(dir string, limit int) (int, error) {
 }
 
 // watchTabs points the watcher at the directories the tabs show, and the
-// parents shown beside them: the active tab's first, as they matter most
+// parents shown beside them: the active tab's first, as they matter most.
+// Last, so they are the first left out, come their Git repositories, for
+// what git commands run elsewhere change.
 func (m *Model) watchTabs() {
 	if m.watch == nil {
 		return
 	}
 	dirs := make([]string, 0, 2*len(m.tabs))
-	add := func(tab *Tab) {
-		for _, dir := range []string{tab.CurrentPath, filepath.Dir(tab.CurrentPath)} {
+	add := func(list ...string) {
+		for _, dir := range list {
 			if !slices.Contains(dirs, dir) {
 				dirs = append(dirs, dir)
 			}
 		}
 	}
-	add(m.tab())
+	add(m.tab().CurrentPath, filepath.Dir(m.tab().CurrentPath))
 	for i := range m.tabs {
-		add(&m.tabs[i])
+		add(m.tabs[i].CurrentPath, filepath.Dir(m.tabs[i].CurrentPath))
+	}
+	for i := range m.tabs {
+		if tab := &m.tabs[i]; tab.git.dir == tab.CurrentPath {
+			add(tab.git.watch...)
+		}
 	}
 	m.watch.watchDirs(dirs)
 }
@@ -410,7 +416,8 @@ func (m *Model) watchTabs() {
 // reload keeps each tab's cursor and selection, and leaves any open prompt,
 // menu or search as it is. A tab that is loading is reloaded once its
 // load is in, however many changes come meanwhile, rather than now, which
-// would cut its load short.
+// would cut its load short. A tab whose Git repository changed reads its
+// status again, as a reload does too.
 func (m *Model) handleDirsChanged(msg dirsChangedMsg) tea.Cmd {
 	changed := make(map[string]bool, len(msg.dirs))
 	for _, dir := range msg.dirs {
@@ -421,6 +428,9 @@ func (m *Model) handleDirsChanged(msg dirsChangedMsg) tea.Cmd {
 	for i := range m.tabs {
 		tab := &m.tabs[i]
 		if !changed[tab.CurrentPath] && !changed[filepath.Dir(tab.CurrentPath)] {
+			if tab.gitChanged(changed) && !tab.Loading {
+				cmds = append(cmds, m.runGit(tab))
+			}
 			continue
 		}
 		if tab.Loading {
@@ -463,9 +473,12 @@ func existingDir(path string) string {
 
 // refresh reloads every tab, for changes the watcher can't see, such as on
 // network drives, or when watch: false. It also tries again to watch the
-// directories that weren't watched.
+// directories that weren't watched, and to read their Git status, and
+// forgets the apps found for Open with, as apps come and go.
 func (m Model) refresh() (tea.Model, tea.Cmd) {
 	m.watch.rewatch()
+	m.retryGit()
+	m.openWith.cache = nil
 	cmds := []tea.Cmd{m.setStatus("Refreshed")}
 	for i := range m.tabs {
 		// A load in flight may have read its directory before the change

@@ -37,6 +37,8 @@ type Tab struct {
 	Loading         bool
 	reloadWanted    bool // Changed while loading: reload once the load is in
 	resortWanted    bool // Sort order changed while loading: sort the load once in
+
+	git gitState // What Git says about CurrentPath; see git.go
 }
 
 // Model represents the application state
@@ -100,9 +102,15 @@ type Model struct {
 	sortCursor  int // Row of the sort menu
 
 	find         finder      // Recursive search palette (f, F)
+	tagger       tagPicker   // Finder tag picker (L)
 	jump         previewJump // Preview line to show once a search result's file loads
 	watch        *dirWatcher // Reloads tabs when their directories change; nil when off
 	keepShellDir bool        // Quit with Q: don't tell the shell to change directory
+
+	gitWarned    map[string]bool  // Repositories whose missing badges were explained; see git.go
+	pb           pbState          // What sushi knows of the macOS pasteboard; see pasteboard.go
+	openWith     openWithState    // The Open with list; see openwith.go
+	quickLookWin *quickLookWindow // The Quick Look window open, if any; see quicklook.go
 }
 
 // tab returns a pointer to the active tab
@@ -126,6 +134,7 @@ func (m *Model) scanOptions() fs.ScanOptions {
 		ShowHidden:  m.showHidden,
 		SortBy:      m.sortBy,
 		SortReverse: m.sortReverse,
+		Tags:        m.tagsOn(),
 	}
 }
 
@@ -164,6 +173,8 @@ const (
 	ModePlugins
 	ModeSort
 	ModeFind
+	ModeOpenWith
+	ModeTags
 )
 
 // KeyMap defines all key bindings. Each field is an action that keys: in
@@ -182,6 +193,9 @@ type KeyMap struct {
 	Delete      key.Binding
 	Edit        key.Binding
 	Open        key.Binding
+	OpenWith    key.Binding
+	Reveal      key.Binding
+	QuickLook   key.Binding
 	Rename      key.Binding
 	NewFile     key.Binding
 	NewDir      key.Binding
@@ -200,6 +214,7 @@ type KeyMap struct {
 	BulkRename  key.Binding
 	Archive     key.Binding
 	Extract     key.Binding
+	Tag         key.Binding
 	Search      key.Binding
 	Bookmark    key.Binding
 	AddBookmark key.Binding
@@ -221,6 +236,7 @@ type KeyMap struct {
 	Reverse     key.Binding
 	Find        key.Binding
 	Grep        key.Binding
+	FindTag     key.Binding
 	QuitNoCd    key.Binding
 }
 
@@ -278,6 +294,19 @@ func DefaultKeyMap() KeyMap {
 		Open: key.NewBinding(
 			key.WithKeys("o"),
 			key.WithHelp("o", "open with default app"),
+		),
+		// macOS; see openwith.go
+		OpenWith: key.NewBinding(
+			key.WithKeys("O"),
+			key.WithHelp("O", "open with app"),
+		),
+		Reveal: key.NewBinding(
+			key.WithKeys("ctrl+o"),
+			key.WithHelp("ctrl+o", "reveal in Finder"),
+		),
+		QuickLook: key.NewBinding(
+			key.WithKeys("i"),
+			key.WithHelp("i", "quick look"),
 		),
 		Rename: key.NewBinding(
 			key.WithKeys("r"),
@@ -351,6 +380,11 @@ func DefaultKeyMap() KeyMap {
 		Extract: key.NewBinding(
 			key.WithKeys("X"),
 			key.WithHelp("X", "extract archive"),
+		),
+		// Finder tags; see tags.go
+		Tag: key.NewBinding(
+			key.WithKeys("L"),
+			key.WithHelp("L", "Finder tags"),
 		),
 		Search: key.NewBinding(
 			key.WithKeys("/"),
@@ -436,6 +470,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("F"),
 			key.WithHelp("F", "find in files"),
 		),
+		FindTag: key.NewBinding(
+			key.WithKeys("#"),
+			key.WithHelp("#", "find by tag"),
+		),
 		QuitNoCd: key.NewBinding(
 			key.WithKeys("Q"),
 			key.WithHelp("Q", "quit without cd"),
@@ -466,6 +504,7 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	problems = append(slices.Clone(cfg.Problems), problems...)
 	keys, keyProblems := loadKeyMap(cfg.Keys)
 	problems = append(problems, keyProblems...)
+	tagKeys(&keys, cfg)
 
 	m := Model{
 		theme:       theme,
@@ -535,7 +574,7 @@ func loadTheme(cfg *config.Config) (ui.Theme, []string) {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.initCmd, m.watch.listen()}
+	cmds := []tea.Cmd{m.initCmd, m.watch.listen(), m.startGit(), m.startPasteboard()}
 	if m.tab().Preview.Pending {
 		cmds = append(cmds, m.previewCmd(m.tab()))
 	}

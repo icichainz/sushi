@@ -20,13 +20,13 @@ plugins:
     command: du -shc "$@" | tail -n 1
 
   - name: lazygit
-    key: L
+    key: W
     mode: terminal
     command: lazygit
 ```
 
 | Field | Required | Meaning |
-|-------|----------|---------|
+| ----- | -------- | ------- |
 | `name` | yes | Shown in the Run palette and in messages |
 | `command` | yes | Run with `sh -c`; `"$@"` is the selection |
 | `key` | no | Shortcut, e.g. `Z`, `ctrl+l`, `alt+x`, `f5` |
@@ -58,7 +58,7 @@ ln -s "$PWD"/examples/plugins/* ~/.config/sushi/plugins/
 ```
 
 | Example | Key | What it does |
-|---------|-----|--------------|
+| ------- | --- | ------------ |
 | `fzf-jump` | `ctrl+f` | Fuzzy-find a file below the current directory and jump to it (needs [fzf](https://github.com/junegunn/fzf)) |
 | `git-status` | `ctrl+g` | Show `git status` |
 | `disk-usage` | | Total size of the selection |
@@ -71,7 +71,7 @@ ln -s "$PWD"/examples/plugins/* ~/.config/sushi/plugins/
 - **Environment variables:**
 
 | Variable | Value |
-|----------|-------|
+| -------- | ----- |
 | `SUSHI_DIR` | The current directory |
 | `SUSHI_FILE` | The file under the cursor |
 | `SUSHI_SELECTION` | The selected paths (or the file under the cursor), one per line |
@@ -80,7 +80,7 @@ ln -s "$PWD"/examples/plugins/* ~/.config/sushi/plugins/
 ## Modes
 
 | Mode | Behaviour | Good for |
-|------|-----------|----------|
+| ---- | --------- | -------- |
 | `wait` | Sushi steps aside, the plugin runs in the terminal, then sushi waits for Enter so you can read the output | Commands that print something: `git status`, `ls -l` |
 | `terminal` | Like `wait`, but returns to sushi as soon as the plugin exits | Interactive programs: `fzf`, `lazygit`, `htop` |
 | `background` | Runs without leaving sushi; the last line of output is shown in the status bar | Quick actions: copying paths, measuring sizes |
@@ -92,7 +92,7 @@ After any plugin finishes, sushi reloads its tabs, so files the plugin created, 
 A plugin can tell sushi what to do next by writing lines to the file named in `$SUSHI_CMD_FILE`:
 
 | Instruction | Effect |
-|-------------|--------|
+| ----------- | ------ |
 | `cd PATH` | Go to `PATH`. If it is a file, go to its directory and put the cursor on it |
 | `select PATH` | Add `PATH` to the selection. It must name something that exists: paths are checked, and one that doesn't exist is reported in the status bar rather than selected, so a delete never starts on a mistyped path |
 | `status TEXT` | Show `TEXT` in the status bar |
@@ -106,8 +106,4 @@ echo "cd $target" > "$SUSHI_CMD_FILE"
 
 ## Keys
 
-Keys are written the way sushi receives them: a single character (`Z`, `%`, `#`), or a name such as `ctrl+g`, `alt+x` or `f5`. Plugins can't take over sushi's own keys: those of its actions, as remapped under `keys:` in the config (see [Remapping Keys](../README.md#remapping-keys)), and the digits `1`-`9`, which jump to bookmarks. If a plugin asks for one, or two plugins ask for the same key, sushi says so in the status bar at startup, and `sushi --list-keys` lists it; the plugin stays available from the Run palette, shown there without a key.
-
-## Windows
-
-Config commands run with `cmd /C` and should use the `%SUSHI_...%` environment variables rather than arguments. Script plugins need to be `.exe`, `.bat`, `.cmd` or `.com` files. The example scripts are for macOS and Linux.
+Keys are written the way sushi receives them: a single character (`Z`, `%`, `@`), or a name such as `ctrl+g`, `alt+x` or `f5`. Plugins can't take over sushi's own keys: those of its actions, as remapped under `keys:` in the config (see [Remapping Keys](../README.md#remapping-keys)), and the digits `1`-`9`, which jump to bookmarks. If a plugin asks for one, or two plugins ask for the same key, sushi says so in the status bar at startup, and `sushi --list-keys` lists it; the plugin stays available from the Run palette, shown there without a key.

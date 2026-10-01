@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -123,9 +122,6 @@ func TestSearchStartsInsideASkippedRoot(t *testing.T) {
 }
 
 func TestSearchDoesNotFollowSymlinkedDirectories(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlinks need privileges on Windows")
-	}
 	root := tree(t, map[string]string{"a/b/target.txt": "needle"})
 	// Links back up the tree would loop forever if followed
 	if err := os.Symlink(root, filepath.Join(root, "a", "b", "loop")); err != nil {

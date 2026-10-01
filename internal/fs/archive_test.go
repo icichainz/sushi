@@ -9,7 +9,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -188,9 +187,6 @@ func TestCancelledZipIsRemoved(t *testing.T) {
 }
 
 func TestZipIsNoMoreOpenThanItsFiles(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows files have no Unix permissions")
-	}
 	real := umask
 	umask = 0o022
 	t.Cleanup(func() { umask = real })
@@ -399,10 +395,7 @@ func TestArchiveKind(t *testing.T) {
 }
 
 func TestExtractMasksModesWithTheUmask(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows files have no Unix permissions")
-	}
-	// Zips made on Windows store everything as 0777 and 0666
+	// Some zip tools store everything as 0777 and 0666
 	real := umask
 	umask = 0o027
 	t.Cleanup(func() { umask = real })

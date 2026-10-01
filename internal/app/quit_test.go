@@ -3,7 +3,6 @@ package app
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -29,9 +28,6 @@ func cwdFile(t *testing.T) string {
 func TestQuitWritesTheDirectoryForTheShell(t *testing.T) {
 	root := t.TempDir()
 	name := "my dir\nwith a newline\n"
-	if runtime.GOOS == "windows" {
-		name = "my dir"
-	}
 	dir := filepath.Join(root, name)
 	if err := os.MkdirAll(filepath.Join(dir, "inner"), 0755); err != nil {
 		t.Fatal(err)

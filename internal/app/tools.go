@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,9 +15,6 @@ import (
 	"github.com/icichainz/sushi/internal/opener"
 	"github.com/icichainz/sushi/internal/ui/components"
 )
-
-// goos is the operating system; tests pretend to be on another
-var goos = runtime.GOOS
 
 // execProcess hands the terminal to a program until it exits; tests
 // replace it, as a real one needs a terminal
@@ -40,7 +36,7 @@ func (m Model) handleToolKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Duplicate):
 		return m.startDuplicate()
 	case key.Matches(msg, m.keys.PasteLink):
-		return m.pasteLinks()
+		return m.paste(true)
 	case key.Matches(msg, m.keys.Chmod):
 		return m.startChmod()
 	case key.Matches(msg, m.keys.BulkRename):
@@ -129,7 +125,8 @@ func (m Model) startDuplicate() (tea.Model, tea.Cmd) {
 }
 
 // pasteLinks creates symlinks in the current directory to the clipboard
-// items. It never replaces anything, and leaves the clipboard as it is.
+// items, which V, as v, may first take from the pasteboard (see paste). It
+// never replaces anything, and leaves the clipboard as it is.
 func (m Model) pasteLinks() (tea.Model, tea.Cmd) {
 	if len(m.clipboard) == 0 {
 		cmd := m.setStatus("Nothing in clipboard")
@@ -160,15 +157,11 @@ func (m Model) pasteLinks() (tea.Model, tea.Cmd) {
 // anywhere, and on most systems a link has no mode of its own. With one
 // item, or several of the same mode, the prompt starts from that mode; with
 // several of different modes it starts empty, as they all get the one
-// typed. Windows files have no Unix permissions, so there it only says so.
+// typed.
 func (m Model) startChmod() (tea.Model, tea.Cmd) {
 	targets := m.targets()
 	if len(targets) == 0 {
 		return m, nil
-	}
-	if goos == "windows" {
-		cmd := m.setStatus("Permissions can't be changed on Windows")
-		return m, cmd
 	}
 	var paths []string
 	var modes []string

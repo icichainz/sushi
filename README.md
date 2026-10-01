@@ -2,17 +2,22 @@
 
 A fast and elegant terminal-based file explorer written in Go.
 
+Sushi is made for macOS, the only system it supports: it still builds on Linux, but without its Finder, Quick Look and Spotlight features.
+
 ## Features
 
 - 🚀 Fast, asynchronous navigation with Vim-style keybindings
 - 🗂️ Three panes (parent folder, files, preview) that adapt to the terminal width, with tabs
 - 👁️ Scrollable preview with syntax highlighting, line numbers and file details
 - 🖼️ Image, archive and PDF previews: pictures drawn right in the terminal
-- 📝 Open files in your editor or their default app
+- 👀 Quick Look, as the space bar in Finder
+- 📝 Open files in your editor, their default app, or an app you pick; reveal them in Finder
 - 🔍 Fuzzy search within the current directory
-- 🔎 Find files by name, or text inside them, in every folder below the current one
+- 🔎 Find files by name, by Finder tag, or by text inside them, below the current folder or, with Spotlight, everywhere
+- 🏷️ Finder tags: see their colors in the list, and add or remove them
+- 🌿 Git status badges and the branch, in repositories
 - ✅ Multi-file selection
-- 📋 Copy, cut, paste, delete, rename and create, with safeguards against overwriting a file with itself
+- 📋 Copy, cut, paste, delete, rename and create, with safeguards against overwriting a file with itself; copy and paste files between sushi and Finder
 - 🗑️ Trash and undo (`Ctrl+z`), with progress and cancel (`Ctrl+x`) for long operations
 - 🧰 Duplicate, symlink paste, permissions, bulk rename in your editor, zip and extract
 - 🔄 Lists refresh by themselves when files change on disk
@@ -54,12 +59,14 @@ make macos    # builds all three into dist/
 | File | What it is |
 | ---- | ---------- |
 | `dist/Sushi.app` | The app. Double-click to run it. |
-| `dist/Sushi-0.2.0.pkg` | Installer: puts Sushi in Applications and the `sushi` command in `/usr/local/bin` |
-| `dist/Sushi-0.2.0.dmg` | Disk image: drag Sushi to Applications |
+| `dist/Sushi-0.3.0.pkg` | Installer: puts Sushi in Applications and the `sushi` command in `/usr/local/bin` |
+| `dist/Sushi-0.3.0.dmg` | Disk image: drag Sushi to Applications |
 
 `make app`, `make pkg` and `make dmg` build them one at a time, and `VERSION=1.2.3 make macos` sets the version.
 
 The app opens in your home folder and runs sushi through your login shell, so plugins and `$EDITOR` work as they do in a terminal. `Cmd` `+` and `Cmd` `-` change the text size. Quitting sushi with `q` closes the app.
+
+`Cmd+C` and `Cmd+V` copy and paste text in the app, as in a terminal. To copy files, use `c`, `x` and `v`, which share them with Finder (see [Finder Pasteboard](#finder-pasteboard)).
 
 The mouse works in the app as in a terminal (see Mouse below), which means dragging selects files rather than text. Hold `Shift` while dragging to select text, or set `mouse: false` in the config.
 
@@ -94,7 +101,7 @@ sushi --ascii ~/projects
 | `--list-keys` | Print every action and its keys as a `keys:` section for the config file, then the keys that can't be changed and the plugins' keys. Problems with the config go to stderr, and the exit status is 1 if there are any (see [Remapping Keys](#remapping-keys)) |
 | `--cwd-file FILE` | When you quit with `q`, write the directory shown to `FILE`, for the `sushicd` shell function (`Q` quits without writing) |
 | `--print-shell-wrapper [SHELL]` | Print the `sushicd` shell function for `zsh`, `bash` or `fish` (by default, the shell in `$SHELL`) |
-| `--version` | Print the version, as in `sushi 0.2.0` (`sushi dev` when built without the Makefile) |
+| `--version` | Print the version, as in `sushi 0.3.0` (`sushi dev` when built without the Makefile) |
 | `--help`, `-h` | Show help message |
 
 ### Changing Directory on Quit
@@ -155,6 +162,10 @@ preview_width: 50
 # false to select text without it.
 mouse: true
 
+# Finder tags: dots of their colors after names, "L" to change them and
+# "#" to find files by tag. Set to false to hide them and unbind both keys.
+tags: true
+
 # Ask before deleting permanently (d with delete_to_trash off; D always asks)
 confirm_delete: true
 
@@ -177,6 +188,14 @@ sort_reverse: false
 # Reload file lists when files change on disk. Turn off to refresh only
 # with ctrl+r, for example on slow network drives.
 watch: true
+
+# Share the files you copy or cut with Finder through the macOS pasteboard,
+# and paste the files Finder and other apps put there
+pasteboard: true
+
+# In Git repositories, a column of status badges and the branch in the
+# breadcrumb
+git: true
 
 # Color theme: "default", "light", "dark" (Dracula-inspired) or "classic"
 # (the colors sushi used before its redesign)
@@ -203,7 +222,7 @@ keys:
   hidden: H
 ```
 
-Color names for `colors`: `header_fg`, `text`, `muted`, `faint`, `raised`, `directory`, `cursor_fg`, `cursor_bg`, `bar_fg`, `bar_bg`, `tab_bar_bg`, `tab_active_fg`, `tab_inactive_fg`, `tab_inactive_bg`, `accent`, `border`, `title`, `highlight`, `danger`, `selected`.
+Color names for `colors`: `header_fg`, `text`, `muted`, `faint`, `raised`, `directory`, `cursor_fg`, `cursor_bg`, `bar_fg`, `bar_bg`, `tab_bar_bg`, `tab_active_fg`, `tab_inactive_fg`, `tab_inactive_bg`, `accent`, `border`, `title`, `highlight`, `danger`, `selected`, `git_modified`, `git_added`, `git_untracked`. Finder tags keep Finder's colors in every theme.
 
 Problems with the config are reported in the status bar when sushi starts, and the rest of the file still applies. They are a config file that can't be read, settings sushi doesn't know (`shw_hidden: true` is reported by its line, with the setting you probably meant), values of the wrong kind, which keep their defaults, invalid values, which are replaced (`icon_mode: unknown value "emoji", using nerd`), unknown themes and colors, and problems with keys and plugins. The status bar shows the first problem for 10 seconds, with how many more there are; `sushi --list-keys` lists them all.
 
@@ -256,9 +275,11 @@ These keys don't change:
 - `ctrl+c` quits from anywhere, stopping a running operation first, as `q` does.
 - `1`-`9` jump to bookmarks, unless an action has taken the digit.
 - Confirmations take `y` or `Enter` to go ahead, and `n`, `Esc` or `q` to cancel.
-- Typing in the search (`/`), in prompts and in the Find palette goes into the text. Search moves between matches with `↑` and `↓`, and the Find palette has its own keys (see [Search](#search)).
-- Dialogs close with `Esc` and act with `Enter`; the Run palette switches with `Tab` and `Shift+Tab`, and the sort menu sorts with its letters `n`, `s`, `m` and `t`. Otherwise they follow the actions: the `up` and `down` keys move in the bookmark list, the sort menu and the Run palette, `delete` removes a bookmark, `reverse` reverses the sort, and `shell` switches the Run palette to its command line.
+- Typing in the search (`/`), in prompts, in the Find palette and in the tag picker goes into the text. Search moves between matches with `↑` and `↓`, and the Find palette and the tag picker have their own keys (see [Search](#search) and [Finder Tags](#finder-tags)).
+- Dialogs close with `Esc` and act with `Enter`; the Run palette switches with `Tab` and `Shift+Tab`, and the sort menu sorts with its letters `n`, `s`, `m` and `t`. Otherwise they follow the actions: the `up` and `down` keys move in the bookmark list, the sort menu, the Run palette and the Open with list, `home` and `end` go to the first and last app in the Open with list, `delete` removes a bookmark, `reverse` reverses the sort, and `shell` switches the Run palette to its command line.
 - The key panel closes with `Esc`, the `help` key and the `quit` key it lists, and scrolls with the `up` and `down` keys.
+
+With `tags: false` in the config, `tag` and `find_tag` have no keys, whatever `keys:` says.
 
 The actions, with their default keys as the config writes them:
 
@@ -277,15 +298,18 @@ The actions, with their default keys as the config writes them:
 | `delete` | `d` | Move to the trash |
 | `edit` | `e` | Edit in `$VISUAL` / `$EDITOR` |
 | `open` | `o` | Open with the default app |
+| `open_with` | `O` | Open with an app picked from those that can |
+| `reveal` | `ctrl+o` | Show in Finder |
+| `quick_look` | `i` | Show in Quick Look |
 | `rename` | `r` | Rename |
 | `new_file` | `n` | New file |
 | `new_dir` | `N` | New directory |
 | `select` | `space` | Select the file and move down |
 | `invert` | `"*"` | Invert the selection |
 | `unselect` | `u` | Clear the selection |
-| `copy` | `c` | Copy to the clipboard |
-| `cut` | `x` | Cut to the clipboard |
-| `paste` | `v` | Paste into the current directory |
+| `copy` | `c` | Copy to the clipboard, and the pasteboard |
+| `cut` | `x` | Cut to the clipboard, and the pasteboard |
+| `paste` | `v` | Paste into the current directory, from the pasteboard if it is newer |
 | `hard_delete` | `D` | Delete permanently |
 | `undo` | `ctrl+z` | Undo the last operation |
 | `cancel` | `ctrl+x` | Cancel the operation running in the background |
@@ -295,6 +319,7 @@ The actions, with their default keys as the config writes them:
 | `bulk_rename` | `R` | Bulk rename in the editor |
 | `archive` | `a` | Compress into a `.zip` |
 | `extract` | `X` | Extract archives |
+| `tag` | `L` | Change Finder tags |
 | `search` | `"/"` | Fuzzy search in the current directory |
 | `bookmark` | `b` | Open the bookmarks |
 | `add_bookmark` | `B` | Bookmark the current directory |
@@ -316,6 +341,7 @@ The actions, with their default keys as the config writes them:
 | `reverse` | `S` | Reverse the sort order |
 | `find` | `f` | Find files by name below this directory |
 | `grep` | `F` | Find text in the files below this directory |
+| `find_tag` | `"#"` | Find files by Finder tag below this directory |
 | `quit_no_cd` | `Q` | Quit without changing the shell's directory |
 
 ## Layout
@@ -342,7 +368,7 @@ The preview pane shows the file under the cursor. `J` and `K`, or the mouse whee
 | Symbolic links | The preview of what the link points to, with its target in the heading. A link without an extension is previewed by its target's name, so `latest` pointing to `photo.png` shows the picture |
 | Other files | Type, size, permissions and modification date |
 
-Images show their details instead of the picture in ASCII icon mode (`--ascii`), in terminals with fewer than 256 colors, and when larger than 50 megapixels. Without poppler (`brew install poppler`, `apt install poppler-utils`), PDFs show their details too. Image previews don't yet follow EXIF orientation, so some photos from phones show on their side; TIFF and animated GIFs aren't supported.
+Images show their details instead of the picture in ASCII icon mode (`--ascii`), in terminals with fewer than 256 colors, and when larger than 50 megapixels. Without poppler (`brew install poppler`, `apt install poppler-utils`), PDFs show their details too. Image previews don't yet follow EXIF orientation, so some photos from phones show on their side; TIFF and animated GIFs aren't supported. For those, and anything else the pane can't show, `i` opens [Quick Look](#quick-look).
 
 ## Keybindings
 
@@ -370,9 +396,9 @@ Keys that act on files use the selection when there is one, and the file under t
 | `Space` | Select file and move down |
 | `*` | Invert selection |
 | `u` | Clear selection |
-| `c` | Copy to clipboard |
-| `x` | Cut to clipboard |
-| `v` | Paste into current directory |
+| `c` | Copy to clipboard, and to the pasteboard for Finder (see [Finder Pasteboard](#finder-pasteboard)) |
+| `x` | Cut to clipboard, and to the pasteboard for Finder |
+| `v` | Paste into current directory: files copied in Finder or another app since, or else the clipboard |
 | `d` | Move to the trash, without asking (`Ctrl+z` brings it back; see [Trash and Undo](#trash-and-undo)) |
 | `D` | Delete permanently. Always asks first |
 | `r` | Rename |
@@ -380,6 +406,10 @@ Keys that act on files use the selection when there is one, and the file under t
 | `N` | New directory |
 | `e` | Edit in `$VISUAL` / `$EDITOR` |
 | `o` | Open with the default app |
+| `O` | Open with an app picked from a list (see [Open With and Reveal in Finder](#open-with-and-reveal-in-finder)) |
+| `Ctrl+o` | Show in Finder |
+| `i` | Show in Quick Look; `i` again closes it (see [Quick Look](#quick-look)) |
+| `L` | Change Finder tags (see [Finder Tags](#finder-tags)) |
 
 Renaming a folder, or moving it with `x` and `v`, takes the tabs, bookmarks and selections inside it along. Files deleted by another program leave the selection when the list reloads. `v` asks before overwriting anything; if, while it asks, the folder is deleted, the tab moves elsewhere or other names would be overwritten, `y` pastes nothing and says why.
 
@@ -390,8 +420,8 @@ Renaming a folder, or moving it with `x` and `v`, takes the tabs, bookmarks and 
 | `Ctrl+z` | Undo the last operation; press again to go further back (up to 20) |
 | `Ctrl+x` | Cancel the operation running in the background |
 | `y` | Duplicate beside the original, as `name copy.ext`, then `name copy 2.ext`; duplicating `name copy.ext` makes `name copy 2.ext` too |
-| `V` | Paste the clipboard as symbolic links to its files. Never replaces anything |
-| `m` | Change permissions (not recursively): a prompt shows the current mode, such as `644`; type 3 or 4 octal digits. Several items all get the mode typed, and the prompt starts empty when theirs differ. Symlinks are left as they are, as is what they point to. Not available on Windows |
+| `V` | Paste symbolic links to the files `v` would paste. Never replaces anything |
+| `m` | Change permissions (not recursively): a prompt shows the current mode, such as `644`; type 3 or 4 octal digits. Several items all get the mode typed, and the prompt starts empty when theirs differ. Symlinks are left as they are, as is what they point to |
 | `R` | Bulk rename the selection in `$VISUAL` / `$EDITOR`. Without a selection, the same as `r` |
 | `a` | Compress into a new `.zip`, asking for its name |
 | `X` | Extract `.zip`, `.tar`, `.tar.gz` and `.tgz` archives, each into a new folder named after it |
@@ -409,8 +439,9 @@ Undo, duplicate, compress and extract run in the background, like copying; see [
 | `/` | Fuzzy search: the list narrows to the matches (`↑`/`↓` between them, `Enter` to keep, `Esc` to cancel) |
 | `f` | Find files and folders by name, in every folder below this one |
 | `F` | Find text inside the files below this one |
+| `#` | Find files and folders by Finder tag, below this one (see [Finder Tags](#finder-tags)) |
 
-`f` matches names fuzzily, like `/`, listing names that start with the query first; a query with a `/`, such as `src/main`, matches the path instead. `F` finds the lines containing the query, ignoring case unless the query has capitals. Both open the Find palette:
+`f` lists names that start with the query first, then names that contain it, then fuzzy matches like those of `/`; a query with a `/`, such as `src/main`, matches the path instead. `F` finds the lines containing the query, ignoring case unless the query has capitals. All three open the Find palette, whose heading says what it looks for and where, as in `Find files below this folder`:
 
 | Key | Action |
 | --- | ------ |
@@ -418,9 +449,20 @@ Undo, duplicate, compress and extract run in the background, like copying; see [
 | `↑`/`↓`, `Ctrl+p`/`Ctrl+n`, `PgUp`/`PgDn` | Move through the results |
 | `Enter` | Go to the result: its folder, with the cursor on it. For `F`, the preview shows the matching line |
 | `Tab` | Switch between name and text search, keeping the query |
+| `Ctrl+e` | Switch between searching below this folder and everywhere Spotlight looks, keeping the query |
 | `Esc` | Close |
 
-Hidden files are searched when they are shown (`.`). `.git`, `node_modules` and `vendor` folders and binary files are skipped, symbolic links aren't followed, and at most 1000 results are listed. The preview holds only the first 2000 lines of a file, so it can't scroll to a match further down.
+Hidden files are searched when they are shown (`.`). `.git`, `node_modules` and `vendor` folders are skipped, and so are binary files, except documents Spotlight has read the text of. Symbolic links aren't followed, and at most 1000 results are listed. The preview holds only the first 2000 lines of a file, so it can't scroll to a match further down.
+
+#### Spotlight
+
+Below a folder, `f`, `F` and `#` walk it, reading every name and file, so they find everything there, indexed by Spotlight or not: hidden folders when they are shown, folders kept out of Spotlight, files too new to be indexed yet, fuzzy matches, and the text of source code, YAML and Makefiles, which Spotlight doesn't read. Spotlight (`mdfind`) searches alongside: it answers from its index at once, where walking a large folder takes a while, so what it finds shows first, and the walk adds the rest; each result is listed once. For `F`, Spotlight adds only the documents whose text a walk can't read, such as PDFs: they are listed as files, without a line, and the palette's footer says so after where it looked, as in `in ~/projects · Spotlight`. Spotlight is stopped once the walk is done, or for `F`, 4 seconds after; if it is missing or fails, the walk's results are all there is.
+
+`Ctrl+e` searches everywhere Spotlight looks: every volume it indexes, with results outside the folder shown by their full path. Only Spotlight can do that, and it trades some results for speed:
+
+- A name search finds names that contain the query, ignoring case. Fuzzy matches, such as `mgo` for `main.go`, come only from a walk.
+- What Spotlight hasn't indexed is left out: hidden and excluded folders, files too new to be indexed yet, and for `F`, text Spotlight doesn't read, such as source code. In the text files it did read, every line that contains the query is listed, as with a walk.
+- Without `mdfind`, the palette says `Spotlight isn't available, so only this folder can be searched`. A search Spotlight hasn't finished after 30 seconds gives up, and says so.
 
 ### View and Bookmarks
 
@@ -438,7 +480,7 @@ Hidden files are searched when they are shown (`.`). `.git`, `node_modules` and 
 
 The sort order applies to every tab for the rest of the session; `sort_by` and `sort_reverse` in the config set the order sushi starts with. A newly chosen order starts in its usual direction: size largest first, modified newest first.
 
-Tabs also reload by themselves when files change on disk, once the changes pause for 200 ms, or every 2 seconds while they keep coming, keeping the cursor and the selection. If a tab's directory is deleted, the tab moves up to the nearest directory that still exists. Directories that can't be watched, such as on some network drives, reload only with `Ctrl+r`. On macOS and the BSDs, watching a directory holds a file open for each of its entries, and sushi keeps to 2048 in all, so very large directories there reload only with `Ctrl+r` too. `watch: false` turns watching off.
+Tabs also reload by themselves when files change on disk, once the changes pause for 200 ms, or every 2 seconds while they keep coming, keeping the cursor and the selection. If a tab's directory is deleted, the tab moves up to the nearest directory that still exists. Directories that can't be watched, such as on some network drives, reload only with `Ctrl+r`. On macOS, watching a directory holds a file open for each of its entries, and sushi keeps to 2048 in all, so very large directories reload only with `Ctrl+r` too. `watch: false` turns watching off.
 
 ### Plugins
 
@@ -479,14 +521,84 @@ Plugins can also have their own keys. See [docs/plugins.md](docs/plugins.md).
 | Click the parent pane's heading | Go up |
 | Click a tab | Switch to it |
 | Wheel over the file list / preview | Move the cursor / scroll the preview, 3 rows at a time |
-| Click / double-click in Bookmarks or the Run palette | Pick a row / go there or run it |
+| Click / double-click in Bookmarks, the Run palette, the Find palette or the Open with list | Pick a row / go there, run it or open with that app |
 | Click the command line in the Run palette | Type a shell command |
-| Click outside Bookmarks or the Run palette | Close it |
+| Click an order in the sort menu | Sort by it |
+| Click a tag / the field in the tag picker | Tick or untick it / type a new tag |
+| Wheel while a dialog is open | Move through its rows |
+| Click outside a dialog | Close it |
 | Wheel / click on the key panel | Scroll it / close it |
 
-While searching with `/`, clicks and the wheel move between the matches, and a double-click keeps the match and opens it. Prompts, confirmations, the sort menu and the Find palette ignore the mouse. Terminals don't pass `Cmd`-clicks on to programs.
+While searching with `/`, clicks and the wheel move between the matches, and a double-click keeps the match and opens it. Prompts and confirmations ignore the mouse. Terminals don't pass `Cmd`-clicks on to programs.
 
 While sushi uses the mouse, terminals select text only with a key held: `Shift` in most, `Option` in iTerm2. In macOS Terminal, `Cmd+R` (View > Allow Mouse Reporting) switches the mouse between sushi and the terminal. Set `mouse: false` to leave the mouse to the terminal for good.
+
+## Git
+
+In a Git repository, the file list has a narrow column after the selection marker with each entry's status:
+
+| Badge | Meaning |
+| ----- | ------- |
+| `M` | Modified. On a folder: something inside is changed |
+| `A` | Added to the index, or copied |
+| `R` | Renamed |
+| `D` | Deleted from the index but still on disk, as after `git rm --cached` |
+| `?` | Untracked. On a folder: all that is new inside is untracked, as in a new folder |
+| `!` | Ignored. The row is drawn faint, as is everything in an ignored folder |
+| `U` | In conflict. On a folder: a conflict inside |
+
+An entry with more than one status shows the strongest, from `U` down: `U`, `R`, `A`, `D`, `M`, `?`, `!`. The badges take the theme's colors `git_modified` (`M`), `git_added` (`A` and `R`), `git_untracked` (`?`) and `danger` (`D` and `U`).
+
+The breadcrumb shows the branch on the right, before the sort order: `⎇ main` (`git:main` with `--ascii`), or the commit for a detached HEAD, as in `⎇ (1a2b3c4)`, with a `*` once anything in the repository is changed or untracked. Where the row is tight, the branch takes the sort order's place, and is shortened, or left out, so that the current folder's name stays whole.
+
+Sushi runs `git status` in the background each time a folder loads, which includes the reloads when files change and `Ctrl+r`. It also watches the repository's `HEAD`, index and branches, so a commit, checkout or `git add` in another terminal updates the badges and the branch at once, without reloading the list. It only reads: with `GIT_OPTIONAL_LOCKS=0`, git doesn't refresh the index, so sushi never writes to the repository or takes a lock that git in another terminal could trip over. A folder that git takes more than 2 seconds to read, or where git fails, is given up on until you move to another folder or press `Ctrl+r`. Sushi ignores the `GIT_` variables that point git at a repository, as `GIT_DIR` and `GIT_WORK_TREE` do in a shell started by a git hook, so every folder shows as what it is.
+
+Browsing a repository never runs a program the repository names. Its own configuration, which comes along when a folder is downloaded, AirDropped or unpacked, can name programs for git to run: a file system monitor (`core.fsmonitor`) and filters (`filter.<name>.clean`, `smudge` and `process`), which `git status` runs on files to compare them. So sushi always runs git with the file system monitor and hooks off, and doesn't look inside the work trees of submodules, which have configurations of their own: a submodule shows `M` once its checked-out commit changes, and the changes inside it show once you go in. In a repository whose own configuration (`.git/config`, the files it includes, or a work tree's `config.worktree`) sets `core.fsmonitor`, a filter, `core.sshCommand` or a credential helper, sushi doesn't run `git status` at all: the breadcrumb shows the branch, without the `*` as the changes aren't known, there are no badges, and the status bar says once `Git badges off for this repository: it configures filters/fsmonitor; see README`. Reading the configuration and the branch runs nothing. The same settings in your own `~/.gitconfig` don't count, so Git LFS installed for your account (`git lfs install`) keeps the badges; installed for one repository (`git lfs install --local`), it turns them off there.
+
+`git: false` in the config turns the badges and the branch off.
+
+## Finder Tags
+
+Finder tags show after the name as a dot for each of their colors, then `○` for tags without a color (`*` and `o` with `--ascii`). They keep Finder's colors in every theme. Dots that don't fit are left out, rather than leave the name fewer than 4 columns. Old-style color labels show as tags of their color too, and are kept in step when tags change. As in Finder, a symbolic link has tags of its own, apart from what it points to. Copies, duplicates and moves to another drive keep the tags. On network volumes (SMB, AFP, NFS) the list shows no dots, as reading the tags would take a round trip to the server for every file; `L` still shows and changes them.
+
+`L` opens the tag picker for the selection, or the file under the cursor. It lists Finder's seven colors, then the other tags used in the folder, each marked `[x]` if every file has it, `[-]` if only some do, and `[ ]` if none do, with a field below for a new tag:
+
+| Key | Action |
+| --- | ------ |
+| `Space` / `Enter` | Tick or untick the tag. On `[-]`, it gives the tag to the files that don't have it |
+| `↑`/`↓`, `Ctrl+p`/`Ctrl+n`, and on the list `k`/`j` (the up and down keys, as remapped) | Move |
+| `Tab` | Switch between the list and the field |
+| Typing | Type in the field, from anywhere in the list but for the up and down keys |
+| `Enter` in the field | Add the tag typed. With the field empty, close |
+| `Esc` | Close |
+
+The mouse works too: click a tag to tick it, the field to type in it, or outside to close. Changes are written at once, as in Finder. `Ctrl+z` afterwards undoes everything the picker changed, file by file; a file whose tags have changed again since is left as it is.
+
+`#` opens the Find palette on every tagged file and folder below this one; type the start of a tag's name to narrow it down. In a name search (`f`), a query that starts with `#` or `tag:` looks for tags: `#Red` or `tag:red` finds entries with a tag whose name starts with `Red`, ignoring case, those with a tag of exactly that name first. Results show their tags' dots, as do those of a search by name. To find names that start with `#` or `tag:`, put a backslash first: `\#autosave#` finds `#autosave#.txt`. In a text search (`F`), `#` is just text.
+
+`tags: false` in the config hides the dots, leaves `L` and `#` without keys, and makes `#` in the Find palette plain text.
+
+## Quick Look
+
+`i` shows the file under the cursor, or the selection, in Quick Look, as the space bar does in Finder: in a window in front of the terminal, opened with `qlmanage -p`. Closing the window brings you back to sushi. Back in the terminal, `i` closes the window, or on other files, shows those instead. Quitting sushi closes it too.
+
+## Finder Pasteboard
+
+`c` and `x` also put the files on the macOS pasteboard, so `Cmd+V` in Finder pastes them. Finder has no cut for files, so files cut in sushi paste in Finder as a copy; pasted in sushi with `v`, they still move.
+
+`v` pastes the files Finder or another app has put on the pasteboard while sushi runs, and since sushi last put its own there, as a copy, asking before overwriting anything; the status bar says `Pasting 2 items copied in Finder`. Otherwise it pastes sushi's clipboard. What was on the pasteboard when sushi started, however long ago it was copied, is left alone. Files pasted from the pasteboard become sushi's clipboard, so `v` pastes them again. `V` takes the same files as `v`, and pastes symbolic links to them. Reading the files another app put on the pasteboard can make macOS ask whether to allow it. While sushi reads the pasteboard the status bar says `Reading the pasteboard…`; if a dialog opens meanwhile, the paste is cancelled, and the status bar says so.
+
+Sushi reaches the pasteboard through `osascript`. Where it can't, as over SSH, copying says `Can't share the clipboard with Finder`, and the files stay in sushi's clipboard for `v`. `pasteboard: false` in the config leaves the pasteboard alone.
+
+In the [macOS app](#macos-app), `Cmd+C` and `Cmd+V` remain the terminal's text copy and paste.
+
+## Open With and Reveal in Finder
+
+`O` lists the apps that can open the file under the cursor, or the selection's first file, as Finder's Open With menu does: each with the folder it is in, and the default app first, marked `●` (`*` with `--ascii`). `Enter` or a double-click opens every file with the app chosen, `↑`/`↓` and `g`/`G` move, and `Esc` closes the list. The apps are looked up once for each extension, and remembered until `Ctrl+r`; for folders, files without an extension, and files given an app of their own in Finder's Get Info, they are looked up each time.
+
+`Ctrl+o` shows the file in Finder, selected in a window of its folder. With a selection, all of it is selected.
+
+Sushi reaches macOS for these, and for the pasteboard, through `osascript` and `open`, which get 10 seconds each: one that takes longer, as when Launch Services or the pasteboard server hangs, is stopped, and the status bar says so.
 
 ## Trash and Undo
 
@@ -495,12 +607,11 @@ While sushi uses the mouse, terminals select text only with a key held: `Shift` 
 | System | Trash |
 | ------ | ----- |
 | macOS | `~/.Trash`, the Trash in the Dock |
-| Linux and BSD | The freedesktop.org trash in `$XDG_DATA_HOME/Trash`, or `~/.local/share/Trash`, so desktop file managers can show and restore what sushi trashed |
-| Windows | Sushi's own trash in `%AppData%\sushi\Trash`. The Recycle Bin doesn't show it: restore with `Ctrl+z`, or by moving files out of its `files` folder |
+| Linux | The freedesktop.org trash in `$XDG_DATA_HOME/Trash`, or `~/.local/share/Trash`, so desktop file managers can show and restore what sushi trashed |
 
 Nothing in the trash is ever replaced or merged into: a name that is taken gets a number, as in `notes 2.txt`, even when another program trashes something of the same name at the same moment. Files on another drive are copied into the trash and then deleted, which takes longer; only what was copied is deleted, so files added meanwhile stay where they were. The Finder's Put Back doesn't know where files trashed by sushi came from; use `Ctrl+z` instead.
 
-`Ctrl+z` undoes the last of up to 20 operations: trash, rename, move, copy, new file or folder, duplicate, symlink paste, permissions, bulk rename, compress and extract. Undo history lasts until sushi quits.
+`Ctrl+z` undoes the last of up to 20 operations: trash, rename, move, copy, new file or folder, duplicate, symlink paste, permissions, bulk rename, compress, extract and Finder tags. Undo history lasts until sushi quits.
 
 - Undo never replaces anything. If something now sits where a file would go back, sushi says so and keeps that step, so you can move it out of the way and press `Ctrl+z` again.
 - Undoing an operation that created files, such as a copy, removes only what it created, and only if it hasn't changed since. Anything that isn't empty goes to the trash rather than being deleted, unless `delete_to_trash` is off; then a copy whose original is gone or has changed is kept, as it may be the only one left.
@@ -514,9 +625,11 @@ Copy, move, delete, trash, duplicate, compress, extract and undo run in the back
 Copying 3/120 files 45% ████░░░░░░
 ```
 
-Where the status bar is short of room, the progress drops its bar, as in `Copying 3/120 45%`. You can keep browsing meanwhile. Keys that change files are refused until the operation finishes or you cancel it with `Ctrl+x`, with a message beside the progress (`Still copying: wait, or ctrl+x to cancel`), and so are plugins, the Run palette and opening files in other programs. A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q`, `Q` and closing the last tab stop a running operation before quitting; press the key again to quit at once, and sushi still waits a few seconds for the operation to clean up. Files are copied, and zips written, under a hidden `.sushi-partial-` name and renamed once complete, so nothing half-written ever has its real name; if sushi is killed, what it leaves is removed when its folder is listed a day later. Copies keep their permissions and modification times.
+Where the status bar is short of room, the progress drops its bar, as in `Copying 3/120 45%`. You can keep browsing meanwhile. Keys that change files are refused until the operation finishes or you cancel it with `Ctrl+x`, with a message beside the progress (`Still copying: wait, or ctrl+x to cancel`), and so are plugins, the Run palette, opening files in other programs (`e`, `o`, `O`), Quick Look (`i`), showing files in Finder (`Ctrl+o`) and changing Finder tags (`L`). A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q`, `Q` and closing the last tab stop a running operation before quitting; press the key again to quit at once, and sushi still waits a few seconds for the operation to clean up. Files are copied, and zips written, under a hidden `.sushi-partial-` name and renamed once complete, so nothing half-written ever has its real name; if sushi is killed, what it leaves is removed when its folder is listed a day later. Copies keep their permissions, modification times, Finder tags and other extended attributes, as Finder's do; an attribute the destination can't take, as on a drive without them, is left behind.
 
 ## Requirements
+
+- **macOS 12 (Monterey) or later** - The only system sushi supports. It still builds and runs on Linux, but without Finder tags, Quick Look, Open With, Reveal in Finder, the pasteboard or Spotlight
 
 - **Nerd Font** (default mode) - For proper icon display, you need a Nerd Font. Install automatically with:
 
@@ -537,6 +650,8 @@ Where the status bar is short of room, the progress drops its bar, as in `Copyin
 - **No font required** - Use `--ascii` flag for ASCII text icons that work in any terminal
 
 - **poppler** (optional) - `pdftotext` and `pdfinfo` enable PDF text previews: `brew install poppler` on macOS, `apt install poppler-utils` on Debian and Ubuntu
+
+- **git** (optional) - For the [Git](#git) badges and branch. It comes with Xcode's Command Line Tools (`xcode-select --install`), or `brew install git`
 
 ## Development
 
@@ -571,10 +686,14 @@ sushi/
 │   ├── config/      # Configuration and bookmarks
 │   ├── fonts/       # Nerd Font installer
 │   ├── fs/          # File system scanning and operations, trash and archives
-│   ├── opener/      # Editor and default-app commands
+│   ├── git/         # Reading git status for the badges and the branch
+│   ├── jxa/         # Running JavaScript for Automation with osascript
+│   ├── opener/      # Editor and default-app commands, Open With and Reveal in Finder
+│   ├── pasteboard/  # Files on the macOS pasteboard
 │   ├── plugins/     # Plugin loading and running
-│   ├── search/      # Finding files by name and content below a directory
+│   ├── search/      # Finding files by name, tag and content, with Spotlight or a walk
 │   ├── shell/       # The sushicd shell functions
+│   ├── tags/        # Reading and writing Finder tags
 │   ├── ui/          # Icons, themes, styles and UI components
 │   └── utils/       # Formatting helpers
 ├── macos/           # The macOS app: Swift window, icon and build script
@@ -611,9 +730,17 @@ sushi/
 - [x] Sort menu
 - [x] Change the shell's directory on quit
 - [x] Customizable keybindings
-- [ ] Test on Windows, and use the Recycle Bin there rather than sushi's own trash
+- [x] Quick Look
+- [x] Git status badges and branch
+- [x] Copy and paste files with Finder through the pasteboard
+- [x] Open With and Reveal in Finder
+- [x] Finder tags: show, change and find them
+- [x] Search with Spotlight, below a folder or everywhere
 - [ ] Signed and notarized macOS builds, so other Macs open them without a warning
+- [ ] Open a folder in sushi from Finder, rather than the app always starting in the home folder
+- [ ] Notifications when a long operation finishes while sushi is in the background
 - [ ] Follow EXIF orientation in image previews, and preview TIFF and animated GIFs
+- [ ] Search past Spotlight's limits: fuzzy name matches and folders it hasn't indexed, even when it finds something
 - [ ] Per-volume trashes (`.Trashes` on macOS, `.Trash-$uid` on Linux), so trashing on another drive doesn't copy
 - [ ] Extract more formats, such as `.tar.bz2`, `.tar.xz` and `.7z`
 

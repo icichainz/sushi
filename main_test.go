@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -18,9 +17,6 @@ func build(t *testing.T, ldflags string) string {
 		t.Skip("go is not on the PATH")
 	}
 	bin := filepath.Join(t.TempDir(), "sushi")
-	if runtime.GOOS == "windows" {
-		bin += ".exe"
-	}
 	cmd := exec.Command(gobin, "build", "-ldflags", ldflags, "-o", bin, ".")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
@@ -36,7 +32,7 @@ func TestVersionFlag(t *testing.T) {
 	home := t.TempDir()
 	sushi := func(bin string, args ...string) *exec.Cmd {
 		cmd := exec.Command(bin, args...)
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+home, "XDG_DATA_HOME="+home, "AppData="+home)
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+home, "XDG_DATA_HOME="+home)
 		return cmd
 	}
 

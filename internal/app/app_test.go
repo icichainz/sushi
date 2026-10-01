@@ -21,6 +21,7 @@ import (
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/fs"
 	"github.com/icichainz/sushi/internal/plugins"
+	"github.com/icichainz/sushi/internal/testutil"
 	"github.com/icichainz/sushi/internal/ui/components"
 	"github.com/icichainz/sushi/internal/utils"
 )
@@ -42,9 +43,8 @@ func newTestModel(t *testing.T, dir string, cfg *config.Config) Model {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	// Where the trash is on Linux and Windows, which HOME doesn't cover
+	// Where the trash is on Linux, which HOME doesn't cover
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
-	t.Setenv("AppData", filepath.Join(home, "AppData"))
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
@@ -760,6 +760,20 @@ func TestDialogsKeepTheBrowserVisible(t *testing.T) {
 	}
 }
 
+func TestKeyPanelLabelsAreWholeOnCommonWidths(t *testing.T) {
+	for _, width := range []int{100, 120, 160, 200} {
+		m := resize(newTestModel(t, t.TempDir(), nil), tea.WindowSizeMsg{Width: width, Height: 40})
+		panel := ansi.Strip(strings.Join(m.helpLines(), "\n"))
+		for _, group := range m.keys.helpGroups() {
+			for _, k := range group.keys {
+				if !strings.Contains(panel, k.label) {
+					t.Errorf("%d columns: %q is cut short:\n%s", width, k.label, panel)
+				}
+			}
+		}
+	}
+}
+
 func TestKeyPanel(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "a.txt"), "")
@@ -790,7 +804,7 @@ func TestKeyPanel(t *testing.T) {
 		}
 		for _, group := range m.keys.helpGroups() {
 			for _, k := range group.keys {
-				if !strings.Contains(seen, utils.Truncate(k.key, helpKeyW)) {
+				if !strings.Contains(seen, utils.Truncate(k.key, helpColW/2)) {
 					t.Errorf("%s: key %q is unreachable", label, k.key)
 				}
 			}
@@ -805,9 +819,9 @@ func TestKeyPanel(t *testing.T) {
 			labels = append(labels, k.key)
 		}
 	}
-	want := []string{"j k", "h l", "backspace", "g G", "ctrl+u d", "enter", "e o", "r", "n N", "d D",
-		"ctrl+z", "ctrl+x", "y V", "m R", "a X", "space", "*", "u", "c x v", "/", "p", "J K", ".", "?",
-		"f", "F", "s S", "ctrl+r", "Q", "t T", "tab", "shift+tab", "ctrl+w", "b B", "1-9", "P", "!", "q"}
+	want := []string{"j k", "h l", "backspace", "g G", "ctrl+u d", "enter", "e o", "r L", "n N", "d D",
+		"ctrl+z", "ctrl+x", "y V", "m R", "a X", "space", "*", "u", "c x v", "O ctrl+o", "/", "p i", "J K", ".", "?",
+		"f #", "F", "s S", "ctrl+r", "Q", "t T", "tab", "shift+tab", "ctrl+w", "b B", "1-9", "P", "!", "q"}
 	if !slices.Equal(labels, want) {
 		t.Errorf("panel keys = %q\nwant %q", labels, want)
 	}
@@ -1238,7 +1252,7 @@ func drain(t *testing.T, m Model, cmd tea.Cmd) Model {
 		}
 		updated, next := m.Update(msg)
 		return drain(t, updated.(Model), next)
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("command did not finish")
 		return m
 	}
@@ -1384,19 +1398,13 @@ func TestOpenerChoosesEditorForText(t *testing.T) {
 // path it was asked to open
 func fakeOpener(t *testing.T) (record string) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("uses a shell script")
-	}
 	bin := t.TempDir()
 	record = filepath.Join(bin, "opened")
 	name := "xdg-open"
 	if runtime.GOOS == "darwin" {
 		name = "open"
 	}
-	script := "#!/bin/sh\nprintf '%s' \"$1\" > " + record + "\n"
-	if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Script(t, filepath.Join(bin, name), "#!/bin/sh\n"+testutil.Warm+"printf '%s' \"$1\" > "+record+"\n")
 	t.Setenv("PATH", bin)
 	return record
 }
@@ -1444,15 +1452,7 @@ func TestEnterOnDirectoryStillNavigates(t *testing.T) {
 	}
 }
 
-func skipWithoutSh(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("plugins here are sh commands")
-	}
-}
-
 func TestBackgroundPluginSendsInstructions(t *testing.T) {
-	skipWithoutSh(t)
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")
 	os.Mkdir(target, 0755)
@@ -1476,7 +1476,6 @@ func TestBackgroundPluginSendsInstructions(t *testing.T) {
 }
 
 func TestPluginGetsSelection(t *testing.T) {
-	skipWithoutSh(t)
 	dir := t.TempDir()
 	for _, name := range []string{"a", "b", "c"} {
 		writeTestFile(t, filepath.Join(dir, name), "")
@@ -1485,13 +1484,13 @@ func TestPluginGetsSelection(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Plugins = []plugins.Plugin{{
-		Name: "list", Key: "L", Mode: plugins.ModeBackground,
+		Name: "list", Key: "W", Mode: plugins.ModeBackground,
 		Command: `printf '%s\n' "$@" > ` + out + `; echo "select c" > "$SUSHI_CMD_FILE"`,
 	}}
 	m := newTestModel(t, dir, cfg)
 	m, _ = press(t, m, " ") // a
 	m, _ = press(t, m, " ") // b
-	m, cmd := press(t, m, "L")
+	m, cmd := press(t, m, "W")
 	m = drain(t, m, cmd)
 
 	b, _ := os.ReadFile(out)
@@ -1505,7 +1504,6 @@ func TestPluginGetsSelection(t *testing.T) {
 }
 
 func TestPluginFailureIsReported(t *testing.T) {
-	skipWithoutSh(t)
 	cfg := config.DefaultConfig()
 	cfg.Plugins = []plugins.Plugin{{Name: "broken", Key: "Z", Mode: plugins.ModeBackground, Command: "echo boom >&2; exit 3"}}
 
@@ -1547,13 +1545,12 @@ func TestPluginKeyConflictsAreReported(t *testing.T) {
 }
 
 func TestScriptPluginsAreDiscovered(t *testing.T) {
-	skipWithoutSh(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dir := filepath.Join(home, ".config", "sushi", "plugins")
 	os.MkdirAll(dir, 0755)
-	script := "#!/bin/sh\n# sushi-key: ctrl+g\n# sushi-mode: background\n# sushi-description: Says hi\necho hi from script\n"
-	os.WriteFile(filepath.Join(dir, "greet.sh"), []byte(script), 0755)
+	script := "#!/bin/sh\n# sushi-key: ctrl+g\n# sushi-mode: background\n# sushi-description: Says hi\n" + testutil.Warm + "echo hi from script\n"
+	testutil.Script(t, filepath.Join(dir, "greet.sh"), script)
 
 	updated, _ := NewModelWithConfig(t.TempDir(), config.DefaultConfig()).Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m := updated.(Model)
@@ -1627,7 +1624,6 @@ func TestRunPaletteTakesShellCommands(t *testing.T) {
 }
 
 func TestWaitCommandWaitsForEnter(t *testing.T) {
-	skipWithoutSh(t)
 	var out strings.Builder
 	w := &waitCommand{Cmd: exec.Command("sh", "-c", "echo hello; exit 2")}
 	w.SetStdin(strings.NewReader("\n"))

@@ -100,7 +100,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateSearchResults()
 			m.cursorToMatch()
 		}
-		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt)
+		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt, m.gitAfterLoad(tab))
 		return m, cmd
 
 	case previewLoadedMsg:
@@ -316,6 +316,12 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == ModeFind {
 		return m.handleFindMode(msg)
 	}
+	if m.mode == ModeOpenWith {
+		return m.handleOpenWithMode(msg)
+	}
+	if m.mode == ModeTags {
+		return m.handleTagMode(msg)
+	}
 
 	// Plugin shortcuts; bindPluginKeys keeps them clear of built-in keys
 	if i, ok := m.pluginKeys[msg.String()]; ok {
@@ -353,6 +359,12 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Grep):
 		return m.openFind(true)
+
+	case key.Matches(msg, m.keys.FindTag):
+		return m.openFindTag()
+
+	case key.Matches(msg, m.keys.Tag):
+		return m.openTags()
 
 	case key.Matches(msg, m.keys.Help):
 		m.mode = ModeHelp
@@ -448,6 +460,15 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Open):
 		return m.openWithSystem(m.targets())
 
+	case key.Matches(msg, m.keys.OpenWith):
+		return m.startOpenWith()
+
+	case key.Matches(msg, m.keys.Reveal):
+		return m.reveal()
+
+	case key.Matches(msg, m.keys.QuickLook):
+		return m.quickLook(m.targets())
+
 	case key.Matches(msg, m.keys.Left), key.Matches(msg, m.keys.Back):
 		return m.goParent()
 
@@ -479,7 +500,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.yank("cut")
 
 	case key.Matches(msg, m.keys.Paste):
-		return m.startPaste()
+		return m.paste(false)
 
 	case m.keys.isToolKey(msg):
 		return m.handleToolKey(msg)

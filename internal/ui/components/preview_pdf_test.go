@@ -3,19 +3,17 @@ package components
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/icichainz/sushi/internal/testutil"
 )
 
 // fakeTools points the PDF preview at stand-ins for pdftotext and pdfinfo
 // running the given shell scripts; an empty script means not installed
 func fakeTools(t *testing.T, toText, info string) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-ins are shell scripts")
-	}
 	bin := t.TempDir()
 	oldToText, oldInfo, oldTimeout := pdfToText, pdfInfo, pdfTimeout
 	t.Cleanup(func() { pdfToText, pdfInfo, pdfTimeout = oldToText, oldInfo, oldTimeout })
@@ -26,9 +24,7 @@ func fakeTools(t *testing.T, toText, info string) {
 	for name, script := range map[string]string{"pdftotext": toText, "pdfinfo": info} {
 		path := filepath.Join(bin, name)
 		if script != "" {
-			if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script+"\n"), 0755); err != nil {
-				t.Fatal(err)
-			}
+			testutil.Script(t, path, "#!/bin/sh\n"+testutil.Warm+script+"\n")
 		}
 		if name == "pdftotext" {
 			pdfToText = path

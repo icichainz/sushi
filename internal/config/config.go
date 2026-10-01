@@ -21,6 +21,7 @@ type Config struct {
 	PreviewEnabled bool   `yaml:"preview_enabled"` // Enable preview pane by default
 	PreviewWidth   int    `yaml:"preview_width"`   // Preview pane width percentage (1-80)
 	Mouse          bool   `yaml:"mouse"`           // Clicks and the wheel; off leaves the mouse to the terminal
+	Tags           bool   `yaml:"tags"`            // Finder tags: shown in the list, set with L, found with #
 
 	// Behavior settings
 	ConfirmDelete bool   `yaml:"confirm_delete"` // Require confirmation for delete
@@ -28,6 +29,8 @@ type Config struct {
 	SortBy        string `yaml:"sort_by"`        // "name", "size", "modified", "type"
 	SortReverse   bool   `yaml:"sort_reverse"`   // Reverse sort order
 	Watch         bool   `yaml:"watch"`          // Reload when files change on disk
+	Pasteboard    bool   `yaml:"pasteboard"`     // Share copies with Finder through the macOS pasteboard
+	Git           bool   `yaml:"git"`            // Git status badges and the branch, in repositories
 
 	// d moves files to the trash, which ctrl+z can undo; D always deletes
 	DeleteToTrash bool `yaml:"delete_to_trash"`
@@ -56,12 +59,15 @@ func DefaultConfig() *Config {
 		PreviewEnabled: true,
 		PreviewWidth:   50,
 		Mouse:          true,
+		Tags:           true,
 		ConfirmDelete:  true,
 		DeleteToTrash:  true,
 		Opener:         "auto",
 		SortBy:         "name",
 		SortReverse:    false,
 		Watch:          true,
+		Pasteboard:     true,
+		Git:            true,
 		Theme:          "default",
 	}
 }

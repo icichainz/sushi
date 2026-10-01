@@ -135,8 +135,10 @@ func (m Model) yank(mode string) (tea.Model, tea.Cmd) {
 	if mode == "cut" {
 		verb = "Cut"
 	}
-	cmd := m.setStatus(fmt.Sprintf("%s to clipboard: %s", verb, describe(paths)))
-	return m, cmd
+	status := m.setStatus(fmt.Sprintf("%s to clipboard: %s", verb, describe(paths)))
+	// Finder pastes them too, but always as a copy
+	share := m.putOnPasteboard(paths)
+	return m, tea.Batch(status, share)
 }
 
 // startDelete moves the targets to the trash, or with delete_to_trash off,

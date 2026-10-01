@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/icichainz/sushi/internal/tags"
 )
 
 // ScanOptions controls which entries are listed and in what order
@@ -14,7 +16,12 @@ type ScanOptions struct {
 	ShowHidden  bool   // Include dotfiles
 	SortBy      string // "name", "size", "modified" or "type"
 	SortReverse bool   // Reverse the order within directories and files
+	Tags        bool   // Read Finder tags, of files on local volumes
 }
+
+// volumeIsLocal reports whether a path is on a local volume; tests
+// replace it to stand in for a network one
+var volumeIsLocal = isLocal
 
 // ScanDirectory scans a directory and returns a list of files. What an
 // unfinished copy left behind, a day old or more, is removed on the way.
@@ -25,6 +32,20 @@ func ScanDirectory(path string, opts ScanOptions) ([]FileInfo, error) {
 	}
 
 	files := make([]FileInfo, 0, len(entries))
+
+	// Tags are read from each file, which on a network volume is a round
+	// trip for every one, so only on local volumes. Each device is asked
+	// about once: the directory's, and those mounted in it.
+	local := make(map[uint64]bool)
+	onLocal := func(path string, info os.FileInfo) bool {
+		dev, _, _ := fileIDs(info)
+		is, ok := local[dev]
+		if !ok {
+			is = volumeIsLocal(path)
+			local[dev] = is
+		}
+		return is
+	}
 
 	for _, entry := range entries {
 		fullPath := filepath.Join(path, entry.Name())
@@ -50,6 +71,10 @@ func ScanDirectory(path string, opts ScanOptions) ([]FileInfo, error) {
 				fileInfo.IsDir = target.IsDir()
 				fileInfo.Size = target.Size()
 			}
+		}
+		if opts.Tags && onLocal(fullPath, info) {
+			// Cheap for untagged files; tags that can't be read are left out
+			fileInfo.Tags, _ = tags.Read(fullPath)
 		}
 		files = append(files, fileInfo)
 	}

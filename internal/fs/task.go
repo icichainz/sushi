@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"syscall"
 	"time"
 )
@@ -131,9 +130,10 @@ func (t *Task) count(bytes bool, paths []string) error {
 // the copy is complete, and a directory at dst is merged into; a symlink
 // where a directory is copied is replaced, never followed. Anything that
 // turns up at dst while the copy runs is kept, and the copy of that entry
-// fails. Symlinks are copied as links, and modes and modification times
-// are kept. If the task is cancelled, the file being copied is removed,
-// files already copied stay, and the error is the context's.
+// fails. Symlinks are copied as links, and modes, modification times and
+// extended attributes (Finder tags among them) are kept. If the task is
+// cancelled, the file being copied is removed, files already copied stay,
+// and the error is the context's.
 func (t *Task) Copy(src, dst string) error {
 	src, dst = filepath.Clean(src), filepath.Clean(dst)
 	if err := CheckTransfer(src, dst); err != nil {
@@ -274,8 +274,12 @@ func (t *Task) copyInto(src, dst string, info os.FileInfo, created bool) error {
 
 	// Keeping the mode and time is best effort: some filesystems have neither.
 	// The mode is set even after a failure, so a partial copy isn't left more
-	// open than the original; the time last, as copying in changes it.
+	// open than the original; the time last, as copying in changes it. The
+	// attributes come first, while the directory is still writable.
 	if created {
+		if err == nil {
+			copyXattrs(src, dst)
+		}
 		os.Chmod(dst, info.Mode().Perm())
 		if err == nil {
 			os.Chtimes(dst, time.Time{}, info.ModTime())
@@ -313,7 +317,9 @@ func (t *Task) copyFile(src, dst string, info os.FileInfo, replace bool) error {
 		err = cerr
 	}
 	if err == nil {
-		// Times before the mode, which may make the file read-only
+		// Attributes and times before the mode, which may make the file
+		// read-only
+		copyXattrs(src, tmp.Name())
 		os.Chtimes(tmp.Name(), time.Time{}, info.ModTime())
 		os.Chmod(tmp.Name(), info.Mode().Perm())
 		err = place(tmp.Name(), dst, replace)
@@ -383,6 +389,8 @@ func copySymlink(src, dst string, replace bool) error {
 	if err := os.Symlink(target, tmp); err != nil {
 		return fmt.Errorf("cannot create symlink: %w", err)
 	}
+	// A link has tags of its own, as Finder shows them
+	copyXattrs(src, tmp)
 	if err := place(tmp, dst, replace); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("cannot create symlink: %w", err)
@@ -570,9 +578,6 @@ func isCrossDevice(err error) bool {
 	var errno syscall.Errno
 	if !errors.As(err, &errno) {
 		return false
-	}
-	if runtime.GOOS == "windows" {
-		return errno == 17 // ERROR_NOT_SAME_DEVICE
 	}
 	return errno == syscall.EXDEV
 }

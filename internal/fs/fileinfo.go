@@ -3,6 +3,8 @@ package fs
 import (
 	"os"
 	"time"
+
+	"github.com/icichainz/sushi/internal/tags"
 )
 
 // FileInfo represents metadata about a file or directory
@@ -14,6 +16,7 @@ type FileInfo struct {
 	IsDir     bool
 	IsSymlink bool
 	Perms     os.FileMode
+	Tags      []tags.Tag // Finder tags, when the scan read them
 }
 
 // NewFileInfo creates a FileInfo from os.FileInfo

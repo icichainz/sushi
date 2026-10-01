@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/git"
 	"github.com/icichainz/sushi/internal/ui"
 	"github.com/icichainz/sushi/internal/ui/components"
 	"github.com/icichainz/sushi/internal/utils"
@@ -95,6 +96,10 @@ func (m Model) View() string {
 		lines = m.withDialog(lines, m.sortBox())
 	case ModeFind:
 		lines = m.withDialog(lines, m.findBox())
+	case ModeOpenWith:
+		lines = m.withDialog(lines, m.openWithBox())
+	case ModeTags:
+		lines = m.withDialog(lines, m.tagBox())
 	case ModeHelp:
 		lines = m.withHelp(lines)
 	}
@@ -218,8 +223,8 @@ func splitPath(path string) []string {
 	return segs
 }
 
-// renderHeader renders the breadcrumb, with the sort order and hidden-file
-// setting on the right
+// renderHeader renders the breadcrumb, with the Git branch, the sort order
+// and the hidden-file setting on the right
 func (m Model) renderHeader() string {
 	t := m.theme
 	g := currentGlyphs()
@@ -230,37 +235,48 @@ func (m Model) renderHeader() string {
 	if m.showHidden {
 		hidden = "on"
 	}
-	info := fmt.Sprintf("sort %s %s hidden %s", m.sortLabel(), g.dot, hidden)
+	sep := " " + g.dot + " "
+	info := fmt.Sprintf("sort %s%shidden %s", m.sortLabel(), sep, hidden)
+	right, rightW := m.fg(t.Muted).Render(info), utils.Width(info)
+	// In a Git repository, the branch; see git.go
+	branch, branchW := m.branchLabel(inner)
+	if branch != "" {
+		right, rightW = branch+m.fg(t.Muted).Render(sep)+right, branchW+utils.Width(sep)+rightW
+	}
 	// Changes to a directory that isn't watched show only after a refresh
 	note := ""
+	warn := m.fg(t.Highlight)
 	if m.watch.unwatched(tab.CurrentPath) {
 		note = "not watched"
 		if k := keysLabel(" ", m.keys.Refresh); k != "" {
 			note += ": " + k + " refreshes"
 		}
-		info = note + " " + g.dot + " " + info
+		right, rightW = warn.Render(note)+m.fg(t.Muted).Render(sep)+right, utils.Width(note+sep)+rightW
 	}
 
 	// The sort order shows only where the whole path fits beside it. The
-	// note matters more than the path's leading directories, which make
-	// room for it.
+	// note, then the branch, matter more than the path's leading
+	// directories, which make room for them; but the current directory's
+	// name matters more than the branch, which is cut short to leave it
+	// whole, or left out.
 	segs := pathSegments(tab.CurrentPath)
 	width := func(s []string) int { return utils.Width(strings.Join(s, " / ")) }
-	warn := m.fg(t.Highlight)
-	right, rightW := "", 0
-	switch {
-	case width(segs)+2+utils.Width(info) <= inner:
-		if note != "" {
-			right = warn.Render(note)
-		}
-		right += m.fg(t.Muted).Render(strings.TrimPrefix(info, note))
-		rightW = utils.Width(info)
-	case note != "":
-		for _, text := range []string{note, "not watched"} {
-			if utils.Width(text)+2+minPathWidth <= inner {
-				right, rightW = warn.Render(text), utils.Width(text)
-				break
+	if width(segs)+2+rightW > inner {
+		right, rightW = "", 0
+		switch {
+		case note != "":
+			for _, text := range []string{note, "not watched"} {
+				if utils.Width(text)+2+minPathWidth <= inner {
+					right, rightW = warn.Render(text), utils.Width(text)
+					break
+				}
 			}
+		case branch != "":
+			current := utils.Width(segs[len(segs)-1])
+			if len(segs) > 1 {
+				current += utils.Width(g.more + " / ")
+			}
+			right, rightW = m.branchLabel(inner - 2 - max(current, minPathWidth))
 		}
 	}
 	room := inner
@@ -340,6 +356,7 @@ func (m Model) renderParent(width, height int) []string {
 type columns struct {
 	inner, iconW, nameW int
 	size, date          bool
+	gitW                int // Git badges, after the marker; 0 outside repositories (see git.go)
 }
 
 const (
@@ -396,7 +413,7 @@ func (m Model) renderFileList(width, height int, divider bool) []string {
 	for i, idx := range visible {
 		files[i] = tab.Files[idx]
 	}
-	c := listColumns(inner, files)
+	c := m.withGitColumn(listColumns(inner, files))
 
 	// Heading, with an arrow on the sorted column. The type has no column,
 	// nor has the size or date once the list is too narrow for it, so
@@ -414,7 +431,7 @@ func (m Model) renderFileList(width, height int, divider bool) []string {
 	case by == "size" && !c.size, by == "modified" && !c.date:
 		nameHead = "Name (" + m.sortLabel() + ")"
 	}
-	head := strings.Repeat(" ", 3+c.iconW+2) + utils.Fit(nameHead, c.nameW)
+	head := strings.Repeat(" ", 3+c.gitW+c.iconW+2) + utils.Fit(nameHead, c.nameW)
 	if c.size {
 		head += utils.FitRight("Size"+arrow("size"), sizeW)
 	}
@@ -470,6 +487,7 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, matched map[int]b
 	t := m.theme
 	selected := m.tabs[m.activeTabIdx].Selected[file.Path]
 	cut := m.clipboardMode == "cut" && m.inClipboard(file.Path)
+	badge := m.gitBadge(file)
 
 	// A marker shows selection without relying on color alone
 	marker := " "
@@ -484,6 +502,9 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, matched map[int]b
 	if file.IsDir {
 		iconStyle = m.fg(t.Directory)
 		nameStyle = nameStyle.Bold(true)
+	}
+	if badge == git.Ignored {
+		iconStyle, nameStyle, metaStyle = m.fg(t.Faint), nameStyle.Foreground(t.Faint), m.fg(t.Faint)
 	}
 	if selected {
 		nameStyle = nameStyle.Foreground(t.Selected)
@@ -501,12 +522,16 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, matched map[int]b
 
 	var b strings.Builder
 	b.WriteString(markStyle.Render(" " + marker + " "))
+	b.WriteString(m.renderBadge(badge, c, isCursor))
 	b.WriteString(iconStyle.Render(utils.Fit(ui.GetFileIcon(file), c.iconW) + "  "))
+
+	// Finder tags' dots go right after the name, within its column
+	dots, dotsW := m.tagDots(file.Tags, c.nameW, isCursor)
 
 	// Underline the letters the search matched. Printable replaces rune
 	// for rune, so the matched positions still hold.
 	full := utils.Printable(file.Name)
-	name := utils.Truncate(full, c.nameW)
+	name := utils.Truncate(full, c.nameW-dotsW)
 	shown := []rune(name)
 	kept := len(shown)
 	if name != full {
@@ -525,7 +550,8 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, matched map[int]b
 		b.WriteString(style.Render(string(shown[i:j])))
 		i = j
 	}
-	b.WriteString(nameStyle.Underline(false).Render(strings.Repeat(" ", max(c.nameW-utils.Width(name), 0))))
+	b.WriteString(dots)
+	b.WriteString(nameStyle.Underline(false).Render(strings.Repeat(" ", max(c.nameW-utils.Width(name)-dotsW, 0))))
 
 	meta := ""
 	if c.size {
@@ -543,7 +569,7 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, matched map[int]b
 func (m Model) renderRenameRow(file fs.FileInfo, c columns) string {
 	t := m.theme
 	base := lipgloss.NewStyle().Background(t.Raised)
-	lead := base.Foreground(t.Accent).Render("   " + utils.Fit(ui.GetFileIcon(file), c.iconW) + "  ")
+	lead := base.Foreground(t.Accent).Render("   " + strings.Repeat(" ", c.gitW) + utils.Fit(ui.GetFileIcon(file), c.iconW) + "  ")
 
 	room := max(c.inner-utils.Width(lead)-1, 1)
 	errText := ""
@@ -656,6 +682,10 @@ func (m Model) modeBadge() (string, lipgloss.Color) {
 		return "SORT", t.Accent
 	case ModeFind:
 		return "FIND", t.Accent
+	case ModeOpenWith:
+		return "OPEN WITH", t.Accent
+	case ModeTags:
+		return "TAGS", t.Accent
 	case ModeHelp:
 		return "KEYS", t.Accent
 	}
@@ -823,6 +853,10 @@ func (m Model) renderBottomRow() string {
 		return m.renderHints([]hint{{sortLetters(), "sort by"}, {"enter", "choose"}, keyHint("reverse", k.Reverse), {"esc", "close"}})
 	case ModeFind:
 		return m.renderHints(m.findHints())
+	case ModeOpenWith:
+		return m.renderHints(m.openWithHints())
+	case ModeTags:
+		return m.renderHints(m.tagHints())
 	case ModeHelp:
 		if m.maxHelpScroll() > 0 {
 			return m.renderHints([]hint{{"esc", "close"}, {keysLabel("/", k.Down, k.Up), "scroll"}, {"any other key", "does what it says"}})
@@ -836,7 +870,7 @@ func (m Model) renderBottomRow() string {
 	if len(m.tabs[m.activeTabIdx].Selected) > 0 {
 		return m.renderHints([]hint{keyHint("toggle", k.Select), keyHint("invert", k.Invert), keyHint("clear", k.Unselect),
 			keyHint("copy", k.Copy), keyHint("cut", k.Cut), keyHint("delete", k.Delete), keyHint("edit", k.Edit),
-			keyHint("open", k.Open), keyHint("shell", k.Shell), keyHint("all keys", k.Help)})
+			keyHint("open", k.Open), keyHint("quick look", k.QuickLook), keyHint("shell", k.Shell), keyHint("all keys", k.Help)})
 	}
 	return m.renderHints([]hint{keyHint("open", k.Enter), keyHint("select", k.Select), keyHint("copy", k.Copy), keyHint("cut", k.Cut),
 		keyHint("paste", k.Paste), keyHint("rename", k.Rename), keyHint("new", k.NewFile), keyHint("delete", k.Delete),
@@ -1053,15 +1087,15 @@ func (k KeyMap) helpGroups() []helpGroup {
 	groups := []helpGroup{
 		{"Move", []hint{keyHint("down, up", k.Down, k.Up), keyHint("parent, open", k.Left, k.Right), keyHint("parent", k.Back),
 			keyHint("first, last", k.Home, k.End), keyHint("page up, down", k.PageUp, k.PageDown)}},
-		{"Files", []hint{keyHint("open", k.Enter), keyHint("edit, default app", k.Edit, k.Open), keyHint("rename", k.Rename),
+		{"Files", []hint{keyHint("open", k.Enter), keyHint("edit, default app", k.Edit, k.Open), keyHint("rename, tags", k.Rename, k.Tag),
 			keyHint("new file, folder", k.NewFile, k.NewDir), keyHint("trash, delete", k.Delete, k.HardDelete)}},
 		{"Tools", []hint{keyHint("undo", k.Undo), keyHint("cancel operation", k.Cancel), keyHint("duplicate, paste link", k.Duplicate, k.PasteLink),
 			keyHint("chmod, bulk rename", k.Chmod, k.BulkRename), keyHint("zip, extract", k.Archive, k.Extract)}},
 		{"Select", []hint{keyHint("toggle", k.Select), keyHint("invert", k.Invert), keyHint("clear", k.Unselect),
-			keyHint("copy, cut, paste", k.Copy, k.Cut, k.Paste)}},
-		{"View", []hint{keyHint("search", k.Search), keyHint("preview", k.Preview), keyHint("scroll preview", k.PreviewDown, k.PreviewUp),
+			keyHint("copy, cut, paste", k.Copy, k.Cut, k.Paste), keyHint("open with, reveal", k.OpenWith, k.Reveal)}},
+		{"View", []hint{keyHint("search", k.Search), keyHint("preview, quick look", k.Preview, k.QuickLook), keyHint("scroll preview", k.PreviewDown, k.PreviewUp),
 			keyHint("hidden files", k.Hidden), keyHint("this panel", k.Help)}},
-		{"Find", []hint{keyHint("find by name", k.Find), keyHint("find in files", k.Grep), keyHint("sort by, reverse", k.Sort, k.Reverse),
+		{"Find", []hint{keyHint("find by name, tag", k.Find, k.FindTag), keyHint("find in files", k.Grep), keyHint("sort by, reverse", k.Sort, k.Reverse),
 			keyHint("refresh", k.Refresh), keyHint("quit without cd", k.QuitNoCd)}},
 		{"Tabs", []hint{keyHint("new here, home", k.NewTab, k.NewTabHome), keyHint("next", k.NextTab), keyHint("previous", k.PrevTab),
 			keyHint("close", k.CloseTab)}},
@@ -1075,7 +1109,7 @@ func (k KeyMap) helpGroups() []helpGroup {
 }
 
 const (
-	helpKeyW = 10 // Narrowest key column
+	helpKeyW = 7 // Narrowest key column: ctrl+z and a space
 	helpColW = 30
 )
 

@@ -35,6 +35,9 @@ type Theme struct {
 	Highlight     lipgloss.Color // Key names and typed text
 	Danger        lipgloss.Color // Errors and delete confirmation
 	Selected      lipgloss.Color // Files marked for a multi-file operation
+	GitModified   lipgloss.Color // Badges of changed files and folders, and a dirty branch
+	GitAdded      lipgloss.Color // Badges of files added or renamed in the index
+	GitUntracked  lipgloss.Color // Badges of files Git doesn't track
 	Syntax        string         // Chroma style used for syntax highlighting
 }
 
@@ -49,6 +52,7 @@ var themes = map[string]Theme{
 		TabBarBg: "#1b1c23", TabActiveFg: "#14151a", TabInactiveFg: "#a8a59c", TabInactiveBg: "#1b1c23",
 		Accent: "#ff9478", Border: "#33353f", Title: "#ff9478", Highlight: "#ff9478",
 		Danger: "#ff6b6b", Selected: "#b5d46b",
+		GitModified: "#e8c46a", GitAdded: "#8fd18b", GitUntracked: "#7fb8e0",
 		Syntax: "sushi",
 	},
 	// The colors sushi used before the redesign
@@ -60,6 +64,7 @@ var themes = map[string]Theme{
 		TabBarBg: "235", TabActiveFg: "229", TabInactiveFg: "252", TabInactiveBg: "238",
 		Accent: "62", Border: "238", Title: "212", Highlight: "229",
 		Danger: "196", Selected: "214",
+		GitModified: "179", GitAdded: "114", GitUntracked: "110",
 		Syntax: "monokai",
 	},
 	// A Dracula-inspired palette
@@ -71,6 +76,7 @@ var themes = map[string]Theme{
 		TabBarBg: "#21222c", TabActiveFg: "#282a36", TabInactiveFg: "#f8f8f2", TabInactiveBg: "#21222c",
 		Accent: "#bd93f9", Border: "#44475a", Title: "#ff79c6", Highlight: "#f1fa8c",
 		Danger: "#ff5555", Selected: "#ffb86c",
+		GitModified: "#f1fa8c", GitAdded: "#50fa7b", GitUntracked: "#8be9fd",
 		Syntax: "dracula",
 	},
 	// For terminals with a light background
@@ -82,6 +88,7 @@ var themes = map[string]Theme{
 		TabBarBg: "#e4dfd0", TabActiveFg: "#ffffff", TabInactiveFg: "#55534d", TabInactiveBg: "#e4dfd0",
 		Accent: "#b8432a", Border: "#cfc9b8", Title: "#b8432a", Highlight: "#b8432a",
 		Danger: "#b3261e", Selected: "#4d6b12",
+		GitModified: "#8a5a00", GitAdded: "#2e7d32", GitUntracked: "#1f5f99",
 		Syntax: "sushi-light",
 	},
 }
@@ -131,6 +138,9 @@ func (t *Theme) colorFields() map[string]*lipgloss.Color {
 		"highlight":       &t.Highlight,
 		"danger":          &t.Danger,
 		"selected":        &t.Selected,
+		"git_modified":    &t.GitModified,
+		"git_added":       &t.GitAdded,
+		"git_untracked":   &t.GitUntracked,
 	}
 }
 
