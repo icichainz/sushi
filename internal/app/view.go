@@ -1109,7 +1109,7 @@ func (k KeyMap) helpGroups() []helpGroup {
 }
 
 const (
-	helpKeyW = 10 // Narrowest key column
+	helpKeyW = 7 // Narrowest key column: ctrl+z and a space
 	helpColW = 30
 )
 

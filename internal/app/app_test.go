@@ -760,6 +760,20 @@ func TestDialogsKeepTheBrowserVisible(t *testing.T) {
 	}
 }
 
+func TestKeyPanelLabelsAreWholeOnCommonWidths(t *testing.T) {
+	for _, width := range []int{100, 120, 160, 200} {
+		m := resize(newTestModel(t, t.TempDir(), nil), tea.WindowSizeMsg{Width: width, Height: 40})
+		panel := ansi.Strip(strings.Join(m.helpLines(), "\n"))
+		for _, group := range m.keys.helpGroups() {
+			for _, k := range group.keys {
+				if !strings.Contains(panel, k.label) {
+					t.Errorf("%d columns: %q is cut short:\n%s", width, k.label, panel)
+				}
+			}
+		}
+	}
+}
+
 func TestKeyPanel(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "a.txt"), "")
@@ -790,7 +804,7 @@ func TestKeyPanel(t *testing.T) {
 		}
 		for _, group := range m.keys.helpGroups() {
 			for _, k := range group.keys {
-				if !strings.Contains(seen, utils.Truncate(k.key, helpKeyW)) {
+				if !strings.Contains(seen, utils.Truncate(k.key, helpColW/2)) {
 					t.Errorf("%s: key %q is unreachable", label, k.key)
 				}
 			}
