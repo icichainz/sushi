@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,9 +15,6 @@ import (
 	"github.com/icichainz/sushi/internal/opener"
 	"github.com/icichainz/sushi/internal/ui/components"
 )
-
-// goos is the operating system; tests pretend to be on another
-var goos = runtime.GOOS
 
 // execProcess hands the terminal to a program until it exits; tests
 // replace it, as a real one needs a terminal
@@ -160,15 +156,11 @@ func (m Model) pasteLinks() (tea.Model, tea.Cmd) {
 // anywhere, and on most systems a link has no mode of its own. With one
 // item, or several of the same mode, the prompt starts from that mode; with
 // several of different modes it starts empty, as they all get the one
-// typed. Windows files have no Unix permissions, so there it only says so.
+// typed.
 func (m Model) startChmod() (tea.Model, tea.Cmd) {
 	targets := m.targets()
 	if len(targets) == 0 {
 		return m, nil
-	}
-	if goos == "windows" {
-		cmd := m.setStatus("Permissions can't be changed on Windows")
-		return m, cmd
 	}
 	var paths []string
 	var modes []string

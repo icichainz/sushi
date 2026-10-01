@@ -1,5 +1,3 @@
-//go:build darwin || freebsd || netbsd || linux || openbsd || dragonfly || solaris
-
 package fs
 
 import (

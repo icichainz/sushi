@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -17,15 +16,7 @@ func writeScript(t *testing.T, path, content string, mode os.FileMode) {
 	}
 }
 
-func skipOnWindows(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("uses sh and the executable bit")
-	}
-}
-
 func TestDiscoverReadsScriptHeaders(t *testing.T) {
-	skipOnWindows(t)
 	dir := t.TempDir()
 	writeScript(t, filepath.Join(dir, "du.sh"), "#!/bin/sh\n# sushi-key: ctrl+g\n# sushi-mode: background\n# sushi-description: Disk usage\ndu -sh \"$@\"\n", 0755)
 	writeScript(t, filepath.Join(dir, "plain"), "#!/bin/sh\necho hi\n", 0755)
@@ -57,7 +48,6 @@ func TestDiscoverMissingDirIsFine(t *testing.T) {
 }
 
 func TestLoadValidatesAndMerges(t *testing.T) {
-	skipOnWindows(t)
 	dir := t.TempDir()
 	writeScript(t, filepath.Join(dir, "git"), "#!/bin/sh\n", 0755)
 	writeScript(t, filepath.Join(dir, "extra"), "#!/bin/sh\n", 0755)
@@ -91,7 +81,6 @@ func TestLoadValidatesAndMerges(t *testing.T) {
 }
 
 func TestCommandPassesSelectionAndEnvironment(t *testing.T) {
-	skipOnWindows(t)
 	dir := t.TempDir()
 	ctx := Context{
 		Dir:       dir,
@@ -150,7 +139,6 @@ func TestReadInstructions(t *testing.T) {
 
 // The example plugins shipped in the repository must at least parse
 func TestExamplePluginsAreValidShell(t *testing.T) {
-	skipOnWindows(t)
 	examples, _ := filepath.Glob("../../examples/plugins/*")
 	if len(examples) == 0 {
 		t.Skip("no examples found")
@@ -168,7 +156,6 @@ func TestExamplePluginsAreValidShell(t *testing.T) {
 }
 
 func TestExamplePluginsLoadAndRun(t *testing.T) {
-	skipOnWindows(t)
 	found, warnings := Discover("../../examples/plugins")
 	if len(warnings) > 0 {
 		t.Fatalf("warnings: %v", warnings)

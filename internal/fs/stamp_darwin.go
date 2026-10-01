@@ -1,5 +1,3 @@
-//go:build darwin || freebsd || netbsd
-
 package fs
 
 import (

@@ -52,9 +52,6 @@ func GetFontDir() (string, error) {
 	case "linux":
 		// Linux: ~/.local/share/fonts
 		return filepath.Join(homeDir, ".local", "share", "fonts"), nil
-	case "windows":
-		// Windows: User fonts folder (requires admin for system fonts)
-		return filepath.Join(homeDir, "AppData", "Local", "Microsoft", "Windows", "Fonts"), nil
 	default:
 		return "", fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 	}
@@ -110,39 +107,14 @@ func InstallFont(font NerdFont, progressFn func(status string)) error {
 
 	progressFn(fmt.Sprintf("Installed %d font files to %s (%d already present)", added, fontDir, len(paths)-added))
 
-	// Platform-specific post-install
-	switch runtime.GOOS {
-	case "linux":
+	// macOS picks up new fonts by itself; Linux needs its cache refreshed
+	if runtime.GOOS == "linux" {
 		progressFn("Refreshing font cache...")
 		if out, err := exec.Command("fc-cache", "-f", fontDir).CombinedOutput(); err != nil {
 			progressFn(fmt.Sprintf("Could not refresh the font cache (%v %s); run: fc-cache -f", err, strings.TrimSpace(string(out))))
 		}
-	case "windows":
-		progressFn("Registering fonts...")
-		if err := registerWindowsFonts(paths); err != nil {
-			return fmt.Errorf("fonts were copied but not registered: %w", err)
-		}
 	}
 
-	return nil
-}
-
-// registerWindowsFonts adds per-user registry entries for the fonts.
-// Windows ignores fonts copied into the per-user font folder without them.
-func registerWindowsFonts(paths []string) error {
-	const key = `HKCU\Software\Microsoft\Windows NT\CurrentVersion\Fonts`
-	for _, path := range paths {
-		kind := " (TrueType)"
-		if strings.EqualFold(filepath.Ext(path), ".otf") {
-			kind = " (OpenType)"
-		}
-		name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)) + kind
-
-		out, err := exec.Command("reg", "add", key, "/v", name, "/t", "REG_SZ", "/d", path, "/f").CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("reg add %s: %v: %s", name, err, strings.TrimSpace(string(out)))
-		}
-	}
 	return nil
 }
 

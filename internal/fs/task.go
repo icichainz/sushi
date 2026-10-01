@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"syscall"
 	"time"
 )
@@ -570,9 +569,6 @@ func isCrossDevice(err error) bool {
 	var errno syscall.Errno
 	if !errors.As(err, &errno) {
 		return false
-	}
-	if runtime.GOOS == "windows" {
-		return errno == 17 // ERROR_NOT_SAME_DEVICE
 	}
 	return errno == syscall.EXDEV
 }

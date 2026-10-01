@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -421,12 +420,10 @@ func TestReloadKeepsThePreviewOfAnUnchangedFile(t *testing.T) {
 	if m = changeDirs(t, m, dir); !strings.Contains(m.tab().Preview.Content, "second") {
 		t.Fatalf("preview = %q after the file changed", m.tab().Preview.Content)
 	}
-	if runtime.GOOS != "windows" {
-		m.tab().Preview.Content = "kept"
-		os.Chmod(file, 0600)
-		if m = changeDirs(t, m, dir); m.tab().Preview.Content == "kept" {
-			t.Fatal("the preview wasn't loaded again after a chmod")
-		}
+	m.tab().Preview.Content = "kept"
+	os.Chmod(file, 0600)
+	if m = changeDirs(t, m, dir); m.tab().Preview.Content == "kept" {
+		t.Fatal("the preview wasn't loaded again after a chmod")
 	}
 }
 

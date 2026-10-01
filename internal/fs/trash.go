@@ -19,11 +19,6 @@ import (
 // items in files/ and a .trashinfo file for each in info/, so desktop file
 // managers can list and restore them.
 //
-// Windows' Recycle Bin can't be reached from Go's standard library, so there
-// sushi keeps its own trash in the user config directory, laid out like
-// freedesktop's. Explorer doesn't show it: items in it are restored with
-// undo, or by hand.
-//
 // Items on another filesystem than the trash are copied into it and then
 // deleted, rather than being put in a trash on their own volume (a
 // freedesktop $topdir/.Trash-$uid, or macOS's .Trashes), and Finder's Put
@@ -55,12 +50,6 @@ func trashFor(goos string) (*Trash, error) {
 			return nil, err
 		}
 		return &Trash{Files: filepath.Join(home, ".Trash")}, nil
-	case "windows":
-		dir, err := os.UserConfigDir()
-		if err != nil {
-			return nil, err
-		}
-		base = filepath.Join(dir, "sushi", "Trash")
 	default:
 		// The specification says relative values are to be ignored
 		data := os.Getenv("XDG_DATA_HOME")

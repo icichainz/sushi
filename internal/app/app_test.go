@@ -42,9 +42,8 @@ func newTestModel(t *testing.T, dir string, cfg *config.Config) Model {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	// Where the trash is on Linux and Windows, which HOME doesn't cover
+	// Where the trash is on Linux, which HOME doesn't cover
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
-	t.Setenv("AppData", filepath.Join(home, "AppData"))
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
@@ -806,7 +805,7 @@ func TestKeyPanel(t *testing.T) {
 		}
 	}
 	want := []string{"j k", "h l", "backspace", "g G", "ctrl+u d", "enter", "e o", "r", "n N", "d D",
-		"ctrl+z", "ctrl+x", "y V", "m R", "a X", "space", "*", "u", "c x v", "/", "p", "J K", ".", "?",
+		"ctrl+z", "ctrl+x", "y V", "m R", "a X", "space", "*", "u", "c x v", "O ctrl+o", "/", "p", "J K", ".", "?",
 		"f", "F", "s S", "ctrl+r", "Q", "t T", "tab", "shift+tab", "ctrl+w", "b B", "1-9", "P", "!", "q"}
 	if !slices.Equal(labels, want) {
 		t.Errorf("panel keys = %q\nwant %q", labels, want)
@@ -1384,9 +1383,6 @@ func TestOpenerChoosesEditorForText(t *testing.T) {
 // path it was asked to open
 func fakeOpener(t *testing.T) (record string) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("uses a shell script")
-	}
 	bin := t.TempDir()
 	record = filepath.Join(bin, "opened")
 	name := "xdg-open"
@@ -1444,15 +1440,7 @@ func TestEnterOnDirectoryStillNavigates(t *testing.T) {
 	}
 }
 
-func skipWithoutSh(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("plugins here are sh commands")
-	}
-}
-
 func TestBackgroundPluginSendsInstructions(t *testing.T) {
-	skipWithoutSh(t)
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")
 	os.Mkdir(target, 0755)
@@ -1476,7 +1464,6 @@ func TestBackgroundPluginSendsInstructions(t *testing.T) {
 }
 
 func TestPluginGetsSelection(t *testing.T) {
-	skipWithoutSh(t)
 	dir := t.TempDir()
 	for _, name := range []string{"a", "b", "c"} {
 		writeTestFile(t, filepath.Join(dir, name), "")
@@ -1505,7 +1492,6 @@ func TestPluginGetsSelection(t *testing.T) {
 }
 
 func TestPluginFailureIsReported(t *testing.T) {
-	skipWithoutSh(t)
 	cfg := config.DefaultConfig()
 	cfg.Plugins = []plugins.Plugin{{Name: "broken", Key: "Z", Mode: plugins.ModeBackground, Command: "echo boom >&2; exit 3"}}
 
@@ -1547,7 +1533,6 @@ func TestPluginKeyConflictsAreReported(t *testing.T) {
 }
 
 func TestScriptPluginsAreDiscovered(t *testing.T) {
-	skipWithoutSh(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dir := filepath.Join(home, ".config", "sushi", "plugins")
@@ -1627,7 +1612,6 @@ func TestRunPaletteTakesShellCommands(t *testing.T) {
 }
 
 func TestWaitCommandWaitsForEnter(t *testing.T) {
-	skipWithoutSh(t)
 	var out strings.Builder
 	w := &waitCommand{Cmd: exec.Command("sh", "-c", "echo hello; exit 2")}
 	w.SetStdin(strings.NewReader("\n"))

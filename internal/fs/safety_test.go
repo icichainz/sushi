@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -17,11 +16,7 @@ import (
 
 // crossDevice is the error a rename between filesystems fails with
 func crossDevice(src, dst string) error {
-	errno := syscall.EXDEV
-	if runtime.GOOS == "windows" {
-		errno = syscall.Errno(17) // ERROR_NOT_SAME_DEVICE
-	}
-	return &os.LinkError{Op: "rename", Old: src, New: dst, Err: errno}
+	return &os.LinkError{Op: "rename", Old: src, New: dst, Err: syscall.EXDEV}
 }
 
 // acrossFilesystems makes Move's rename fail as it does between
@@ -187,7 +182,7 @@ func TestPartlyReadFolderFailsTheCopyAndKeepsTheSource(t *testing.T) {
 }
 
 func TestUnreadableFolderFailsTheMoveAndKeepsTheSource(t *testing.T) {
-	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+	if os.Geteuid() == 0 {
 		t.Skip("needs Unix permissions that apply to the user")
 	}
 	acrossFilesystems(t)
@@ -314,7 +309,7 @@ func TestConcurrentTrashingKeepsEveryItem(t *testing.T) {
 }
 
 // ignoresCase reports whether the filesystem holding dir takes names that
-// differ only in case for the same, as macOS and Windows do by default
+// differ only in case for the same, as macOS does by default
 func ignoresCase(t *testing.T, dir string) bool {
 	t.Helper()
 	probe := filepath.Join(dir, "CaseProbe")

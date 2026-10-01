@@ -391,7 +391,7 @@ Renaming a folder, or moving it with `x` and `v`, takes the tabs, bookmarks and 
 | `Ctrl+x` | Cancel the operation running in the background |
 | `y` | Duplicate beside the original, as `name copy.ext`, then `name copy 2.ext`; duplicating `name copy.ext` makes `name copy 2.ext` too |
 | `V` | Paste the clipboard as symbolic links to its files. Never replaces anything |
-| `m` | Change permissions (not recursively): a prompt shows the current mode, such as `644`; type 3 or 4 octal digits. Several items all get the mode typed, and the prompt starts empty when theirs differ. Symlinks are left as they are, as is what they point to. Not available on Windows |
+| `m` | Change permissions (not recursively): a prompt shows the current mode, such as `644`; type 3 or 4 octal digits. Several items all get the mode typed, and the prompt starts empty when theirs differ. Symlinks are left as they are, as is what they point to |
 | `R` | Bulk rename the selection in `$VISUAL` / `$EDITOR`. Without a selection, the same as `r` |
 | `a` | Compress into a new `.zip`, asking for its name |
 | `X` | Extract `.zip`, `.tar`, `.tar.gz` and `.tgz` archives, each into a new folder named after it |
@@ -495,8 +495,7 @@ While sushi uses the mouse, terminals select text only with a key held: `Shift` 
 | System | Trash |
 | ------ | ----- |
 | macOS | `~/.Trash`, the Trash in the Dock |
-| Linux and BSD | The freedesktop.org trash in `$XDG_DATA_HOME/Trash`, or `~/.local/share/Trash`, so desktop file managers can show and restore what sushi trashed |
-| Windows | Sushi's own trash in `%AppData%\sushi\Trash`. The Recycle Bin doesn't show it: restore with `Ctrl+z`, or by moving files out of its `files` folder |
+| Linux | The freedesktop.org trash in `$XDG_DATA_HOME/Trash`, or `~/.local/share/Trash`, so desktop file managers can show and restore what sushi trashed |
 
 Nothing in the trash is ever replaced or merged into: a name that is taken gets a number, as in `notes 2.txt`, even when another program trashes something of the same name at the same moment. Files on another drive are copied into the trash and then deleted, which takes longer; only what was copied is deleted, so files added meanwhile stay where they were. The Finder's Put Back doesn't know where files trashed by sushi came from; use `Ctrl+z` instead.
 
@@ -611,7 +610,6 @@ sushi/
 - [x] Sort menu
 - [x] Change the shell's directory on quit
 - [x] Customizable keybindings
-- [ ] Test on Windows, and use the Recycle Bin there rather than sushi's own trash
 - [ ] Signed and notarized macOS builds, so other Macs open them without a warning
 - [ ] Follow EXIF orientation in image previews, and preview TIFF and animated GIFs
 - [ ] Per-volume trashes (`.Trashes` on macOS, `.Trash-$uid` on Linux), so trashing on another drive doesn't copy

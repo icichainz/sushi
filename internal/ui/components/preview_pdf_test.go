@@ -3,7 +3,6 @@ package components
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -13,9 +12,6 @@ import (
 // running the given shell scripts; an empty script means not installed
 func fakeTools(t *testing.T, toText, info string) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the stand-ins are shell scripts")
-	}
 	bin := t.TempDir()
 	oldToText, oldInfo, oldTimeout := pdfToText, pdfInfo, pdfTimeout
 	t.Cleanup(func() { pdfToText, pdfInfo, pdfTimeout = oldToText, oldInfo, oldTimeout })

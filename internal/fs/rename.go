@@ -12,8 +12,8 @@ var errNoExclusiveRename = errors.New("renaming without replacing is not support
 // renameNoReplace renames from to to like os.Rename, but never replaces
 // anything: if something is at to, it fails with an error matching
 // os.ErrExist. The check and the rename are one step where the system
-// allows it (renameat2 on Linux, renamex_np on macOS, MoveFileEx on
-// Windows); elsewhere, and on filesystems that can't, see renameAfterCheck.
+// allows it (renamex_np on macOS, renameat2 on Linux); on filesystems
+// that can't, see renameAfterCheck.
 func renameNoReplace(from, to string) error {
 	err := renameExclusive(from, to)
 	switch {

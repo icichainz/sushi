@@ -35,14 +35,8 @@ func TestTrashLocationPerSystem(t *testing.T) {
 	}
 	// Relative values are to be ignored, says the specification
 	t.Setenv("XDG_DATA_HOME", "relative/data")
-	if tr, _ := trashFor("freebsd"); !strings.HasPrefix(tr.Files, home) {
+	if tr, _ := trashFor("linux"); !strings.HasPrefix(tr.Files, home) {
 		t.Errorf("relative XDG_DATA_HOME used: %+v", tr)
-	}
-
-	t.Setenv("AppData", data) // What os.UserConfigDir reads on Windows
-	config, _ := os.UserConfigDir()
-	if tr, _ := trashFor("windows"); tr.Files != filepath.Join(config, "sushi", "Trash", "files") {
-		t.Errorf("Windows trash = %+v", tr)
 	}
 }
 
