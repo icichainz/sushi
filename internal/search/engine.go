@@ -3,8 +3,12 @@ package search
 import (
 	"context"
 	"errors"
+	iofs "io/fs"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/icichainz/sushi/internal/tags"
 )
 
 // Query is what a search looks for
@@ -12,6 +16,8 @@ type Query struct {
 	Text    string  // As typed
 	Content bool    // Look for Text inside files, rather than in names
 	Match   Matcher // Ranks names, for a name search
+	Tagged  bool    // Look for Finder tags instead: those starting with Tag, or any if it is ""
+	Tag     string
 }
 
 // Report says how a search went
@@ -40,9 +46,12 @@ func (Walker) Search(ctx context.Context, opts Options, q Query, emit func(Resul
 	}
 	var truncated bool
 	var err error
-	if q.Content {
+	switch {
+	case q.Tagged:
+		truncated, err = Tagged(ctx, opts, q.Tag, emit)
+	case q.Content:
 		truncated, err = Contents(ctx, opts, q.Text, emit)
-	} else {
+	default:
 		truncated, err = Names(ctx, opts, q.Match, emit)
 	}
 	return Report{Truncated: truncated}, err
@@ -118,4 +127,40 @@ func (a Auto) Search(ctx context.Context, opts Options, q Query, emit func(Resul
 		return report, err
 	}
 	return a.Walker.Search(ctx, opts, q, emit)
+}
+
+// TagQuery reads a query for Finder tags: "#" or "tag:", then the start of
+// a tag's name, or nothing to find everything tagged
+func TagQuery(s string) (string, bool) {
+	for _, prefix := range []string{"#", "tag:"} {
+		if len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix) {
+			return strings.TrimSpace(s[len(prefix):]), true
+		}
+	}
+	return "", false
+}
+
+// Tagged reports every entry below opts.Root with a Finder tag whose name
+// starts with prefix, ignoring case, or with any tag if prefix is empty.
+// Tags named prefix exactly rank first. It returns true if it stopped
+// early because more than opts.Limit entries matched.
+func Tagged(ctx context.Context, opts Options, prefix string, emit func(Result)) (bool, error) {
+	found := 0
+	err := walk(ctx, opts, func(path, rel string, d iofs.DirEntry) error {
+		list, err := tags.Read(path)
+		if err != nil {
+			return nil
+		}
+		score, ok := tags.Matches(list, prefix)
+		if !ok {
+			return nil
+		}
+		if opts.Limit > 0 && found == opts.Limit {
+			return errLimit
+		}
+		found++
+		emit(Result{Path: path, Rel: rel, IsDir: d.IsDir(), Score: score, Tags: list})
+		return nil
+	})
+	return finish(err)
 }

@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/icichainz/sushi/internal/tags"
 )
 
 // ScanOptions controls which entries are listed and in what order
@@ -14,6 +16,7 @@ type ScanOptions struct {
 	ShowHidden  bool   // Include dotfiles
 	SortBy      string // "name", "size", "modified" or "type"
 	SortReverse bool   // Reverse the order within directories and files
+	Tags        bool   // Read Finder tags
 }
 
 // ScanDirectory scans a directory and returns a list of files. What an
@@ -50,6 +53,10 @@ func ScanDirectory(path string, opts ScanOptions) ([]FileInfo, error) {
 				fileInfo.IsDir = target.IsDir()
 				fileInfo.Size = target.Size()
 			}
+		}
+		if opts.Tags {
+			// Cheap for untagged files; tags that can't be read are left out
+			fileInfo.Tags, _ = tags.Read(fullPath)
 		}
 		files = append(files, fileInfo)
 	}

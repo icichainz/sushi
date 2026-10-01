@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/tags"
 )
 
 // Spotlight searches macOS's Spotlight index, through mdfind. It finds
@@ -105,7 +106,21 @@ func visitSpotlight(ctx context.Context, f filter, q Query, path string, keep fu
 	if !ok {
 		return nil
 	}
-	if q.Content {
+	switch {
+	case q.Tagged:
+		// The index can be behind; the file has the last word
+		list, err := tags.Read(r.Path)
+		if err != nil {
+			return nil
+		}
+		score, ok := tags.Matches(list, q.Tag)
+		if !ok {
+			return nil
+		}
+		r.Score, r.Tags = score, list
+		return keep(r)
+
+	case q.Content:
 		if !mode.IsRegular() {
 			return nil
 		}
@@ -126,6 +141,7 @@ func visitSpotlight(ctx context.Context, f filter, q Query, path string, keep fu
 			return keep(hit)
 		})
 	}
+
 	if q.Match != nil {
 		score, ok := q.Match(r.Rel, filepath.Base(r.Path))
 		if !ok {
@@ -139,7 +155,15 @@ func visitSpotlight(ctx context.Context, f filter, q Query, path string, keep fu
 // spotlightQuery returns the mdfind query for q, or false if Spotlight
 // can't look for it
 func spotlightQuery(q Query) (string, bool) {
-	if q.Content {
+	switch {
+	case q.Tagged:
+		if q.Tag == "" {
+			return `kMDItemUserTags == "*"`, true
+		}
+		p, ok := pattern(q.Tag)
+		return `kMDItemUserTags == "` + p + `*"c`, ok
+
+	case q.Content:
 		// Spotlight indexes words, so each word is looked for on its own,
 		// and the lines with all of them as typed are found in the files
 		var parts []string

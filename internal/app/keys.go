@@ -380,6 +380,7 @@ func WriteKeys(w io.Writer, cfg *config.Config) ([]string, error) {
 	problems = append(slices.Clone(cfg.Problems), problems...)
 	keys, keyProblems := loadKeyMap(cfg.Keys)
 	problems = append(problems, keyProblems...)
+	tagKeys(&keys, cfg)
 	loaded, warnings := plugins.Load(cfg.Plugins, config.PluginDir())
 	m := Model{keys: keys, plugins: loaded}
 	problems = append(problems, warnings...)

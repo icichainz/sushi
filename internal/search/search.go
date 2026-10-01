@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/tags"
 	"github.com/icichainz/sushi/internal/utils"
 )
 
@@ -47,10 +48,11 @@ type Result struct {
 	Path  string // Absolute path
 	Rel   string // Path relative to the search root, or absolute if outside it
 	IsDir bool
-	Line  int    // Line number, from 1; 0 for name matches, and documents Spotlight found the text in
-	Text  string // The matching line, trimmed and made safe to display
-	Col   int    // Where the match starts in Text, in runes
-	Score int    // Lower is better; set by the matcher of a name search
+	Line  int        // Line number, from 1; 0 for name matches, and documents Spotlight found the text in
+	Text  string     // The matching line, trimmed and made safe to display
+	Col   int        // Where the match starts in Text, in runes
+	Score int        // Lower is better; set by the matcher of a name search
+	Tags  []tags.Tag // The entry's Finder tags, for a search by tag
 }
 
 // Matcher reports whether an entry matches a name search, and how well:

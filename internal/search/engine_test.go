@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/icichainz/sushi/internal/tags"
 )
 
 // fakeSpotlight puts a stand-in for mdfind on PATH. It records its
@@ -118,6 +120,20 @@ func rels(results []Result) []string {
 	return out
 }
 
+func TestTagQuery(t *testing.T) {
+	for in, want := range map[string]struct {
+		tag string
+		ok  bool
+	}{
+		"#Red": {"Red", true}, "#": {"", true}, "tag:Work": {"Work", true}, "TAG: two words ": {"two words", true},
+		"# red": {"red", true}, "red": {"", false}, "a#b": {"", false}, "tag": {"", false}, "": {"", false},
+	} {
+		if tag, ok := TagQuery(in); tag != want.tag || ok != want.ok {
+			t.Errorf("TagQuery(%q) = %q, %v; want %q, %v", in, tag, ok, want.tag, want.ok)
+		}
+	}
+}
+
 func TestSpotlightQueries(t *testing.T) {
 	for _, c := range []struct {
 		q    Query
@@ -132,6 +148,8 @@ func TestSpotlightQueries(t *testing.T) {
 		{Query{Text: "needle", Content: true}, `kMDItemTextContent == "*needle*"c`, true},
 		{Query{Text: "two words", Content: true}, `kMDItemTextContent == "*two*"c && kMDItemTextContent == "*words*"c`, true},
 		{Query{Text: "* ?", Content: true}, "", false},
+		{Query{Tagged: true, Tag: "Red"}, `kMDItemUserTags == "Red*"c`, true},
+		{Query{Tagged: true}, `kMDItemUserTags == "*"`, true},
 	} {
 		got, ok := spotlightQuery(c.q)
 		if ok != c.ok || ok && got != c.want {
@@ -381,5 +399,60 @@ func TestAutoEverywhereIsSpotlightsAlone(t *testing.T) {
 	_, _, err := collect(t, Auto{}, Options{Root: t.TempDir(), Everywhere: true}, Query{Text: "a"})
 	if !errors.Is(err, ErrSpotlight) {
 		t.Fatalf("err = %v, want Spotlight's failure rather than a walk", err)
+	}
+}
+
+func TestSearchByTag(t *testing.T) {
+	if !tags.Supported() {
+		t.Skip("no Finder tags here")
+	}
+	root := tree(t, map[string]string{
+		"report.pdf":      "",
+		"redo.txt":        "",
+		"plain.txt":       "",
+		"sub/budget.xlsx": "",
+		".hidden/x.txt":   "",
+		"sub/":            "",
+	})
+	tag := func(rel string, list ...tags.Tag) {
+		if err := tags.Write(filepath.Join(root, rel), list); err != nil {
+			t.Skipf("can't tag files here: %v", err)
+		}
+	}
+	tag("report.pdf", tags.Tag{Name: "Red", Color: tags.Red})
+	tag("redo.txt", tags.Tag{Name: "Redo"})
+	tag("sub/budget.xlsx", tags.Tag{Name: "Work"}, tags.Tag{Name: "red", Color: tags.Red})
+	tag("sub", tags.Tag{Name: "Blue", Color: tags.Blue})
+	tag(".hidden/x.txt", tags.Tag{Name: "Red", Color: tags.Red})
+
+	got, _, err := collect(t, Walker{}, Options{Root: root}, Query{Tagged: true, Tag: "red"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"redo.txt", "report.pdf", "sub/budget.xlsx"}; !slices.Equal(rels(got), want) {
+		t.Fatalf("#red found %q, want %q", rels(got), want)
+	}
+	for _, r := range got {
+		exact := r.Rel != "redo.txt"
+		if exact != (r.Score == 0) || len(r.Tags) == 0 {
+			t.Errorf("%s: score %d, tags %q", r.Rel, r.Score, r.Tags)
+		}
+	}
+
+	got, _, _ = collect(t, Walker{}, Options{Root: root}, Query{Tagged: true})
+	if want := []string{"redo.txt", "report.pdf", "sub", "sub/budget.xlsx"}; !slices.Equal(rels(got), want) {
+		t.Fatalf("# found %q, want everything tagged: %q", rels(got), want)
+	}
+
+	// Spotlight's candidates are checked against the files' own tags
+	real := realRoot(t, root)
+	f := &fakeSpotlight{out: []string{filepath.Join(real, "report.pdf"), filepath.Join(real, "plain.txt")}}
+	f.install(t)
+	got, _, _ = collect(t, Spotlight{}, Options{Root: root}, Query{Tagged: true, Tag: "Red"})
+	if want := []string{"report.pdf"}; !slices.Equal(rels(got), want) {
+		t.Fatalf("Spotlight's #Red = %q, want %q", rels(got), want)
+	}
+	if args := f.calledWith(t); args[len(args)-1] != `kMDItemUserTags == "Red*"c` {
+		t.Fatalf("mdfind ran with %q", args)
 	}
 }

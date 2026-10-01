@@ -100,6 +100,7 @@ type Model struct {
 	sortCursor  int // Row of the sort menu
 
 	find         finder      // Recursive search palette (f, F)
+	tagger       tagPicker   // Finder tag picker (L)
 	jump         previewJump // Preview line to show once a search result's file loads
 	watch        *dirWatcher // Reloads tabs when their directories change; nil when off
 	keepShellDir bool        // Quit with Q: don't tell the shell to change directory
@@ -126,6 +127,7 @@ func (m *Model) scanOptions() fs.ScanOptions {
 		ShowHidden:  m.showHidden,
 		SortBy:      m.sortBy,
 		SortReverse: m.sortReverse,
+		Tags:        m.tagsOn(),
 	}
 }
 
@@ -164,6 +166,7 @@ const (
 	ModePlugins
 	ModeSort
 	ModeFind
+	ModeTags
 )
 
 // KeyMap defines all key bindings. Each field is an action that keys: in
@@ -200,6 +203,7 @@ type KeyMap struct {
 	BulkRename  key.Binding
 	Archive     key.Binding
 	Extract     key.Binding
+	Tag         key.Binding
 	Search      key.Binding
 	Bookmark    key.Binding
 	AddBookmark key.Binding
@@ -221,6 +225,7 @@ type KeyMap struct {
 	Reverse     key.Binding
 	Find        key.Binding
 	Grep        key.Binding
+	FindTag     key.Binding
 	QuitNoCd    key.Binding
 }
 
@@ -352,6 +357,11 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("X"),
 			key.WithHelp("X", "extract archive"),
 		),
+		// Finder tags; see tags.go
+		Tag: key.NewBinding(
+			key.WithKeys("L"),
+			key.WithHelp("L", "Finder tags"),
+		),
 		Search: key.NewBinding(
 			key.WithKeys("/"),
 			key.WithHelp("/", "search"),
@@ -436,6 +446,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("F"),
 			key.WithHelp("F", "find in files"),
 		),
+		FindTag: key.NewBinding(
+			key.WithKeys("#"),
+			key.WithHelp("#", "find by tag"),
+		),
 		QuitNoCd: key.NewBinding(
 			key.WithKeys("Q"),
 			key.WithHelp("Q", "quit without cd"),
@@ -466,6 +480,7 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	problems = append(slices.Clone(cfg.Problems), problems...)
 	keys, keyProblems := loadKeyMap(cfg.Keys)
 	problems = append(problems, keyProblems...)
+	tagKeys(&keys, cfg)
 
 	m := Model{
 		theme:       theme,

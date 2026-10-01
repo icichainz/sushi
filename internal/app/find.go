@@ -177,7 +177,9 @@ func (m *Model) startFind() tea.Cmd {
 	run := &findRun{results: make(chan search.Result, 256), cancel: cancel}
 	opts := search.Options{Root: f.root, ShowHidden: m.showHidden, Skip: search.DefaultSkip, Limit: findLimit, Everywhere: f.everywhere}
 	q := search.Query{Text: query, Content: f.content}
-	if !f.content {
+	if tag, ok := m.tagQuery(); ok {
+		q.Tagged, q.Tag = true, tag
+	} else if !f.content {
 		q.Match = nameMatcher(query)
 	}
 	engine := findEngine
@@ -387,6 +389,9 @@ func (m Model) findBox() []string {
 	if f.content {
 		title, key = "Find in files", shownKey(m.keys.Grep)
 	}
+	if _, ok := m.tagQuery(); ok {
+		title = "Find files by tag"
+	}
 	title += " " + m.findScope()
 	if key == "" {
 		key = ">"
@@ -434,6 +439,8 @@ func (m Model) findEmpty() string {
 		return "Type to search inside files everywhere Spotlight looks"
 	case f.input.Value() == "" && f.content:
 		return "Type to search inside the files below this folder"
+	case f.input.Value() == "" && m.tagsOn():
+		return "Type to find files and folders " + m.findScope() + ", or #tag for tags"
 	case f.input.Value() == "":
 		return "Type to find files and folders " + m.findScope()
 	case f.run != nil || f.waiting:
@@ -521,8 +528,11 @@ func (m Model) findRow(r search.Result, chosen bool, width int) string {
 		}
 		row = iconStyle.Render(lead)
 
+		// The tags' dots after the name, as in the list
+		dots, dotsW := m.tagDots(r.Tags, width-utils.Width(lead)-1, chosen)
+
 		// Cut from the left, so the name stays in view
-		room := width - utils.Width(lead) - 1
+		room := width - utils.Width(lead) - 1 - dotsW
 		drop, ellipsis := 0, ""
 		if utils.Width(string(rel)) > room {
 			ellipsis = g.more
@@ -540,12 +550,13 @@ func (m Model) findRow(r search.Result, chosen bool, width int) string {
 			}
 			return 1
 		}
-		// A document Spotlight found the text in didn't match the name
+		// A search by tag, or a document Spotlight found the text in, didn't
+		// match the name
 		var hits map[int]bool
-		if !m.find.content {
+		if _, byTag := m.tagQuery(); !byTag && !m.find.content {
 			hits = namePositions(m.find.input.Value(), string(rel))
 		}
-		row += muted.Render(ellipsis) + paint(rel[drop:], drop, class, []lipgloss.Style{muted, text}, hits)
+		row += muted.Render(ellipsis) + paint(rel[drop:], drop, class, []lipgloss.Style{muted, text}, hits) + dots
 	} else {
 		// The path gets up to two fifths of the row, the text the rest
 		path := utils.TruncateLeft(string(rel), max(width*2/5, 8))
