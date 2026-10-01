@@ -22,23 +22,31 @@ import (
 // findLimit is the most results a search shows
 var findLimit = 1000
 
+// findEngine runs the palette's searches: Spotlight, with a walk of the
+// folder where Spotlight can't help. Tests walk, so as not to depend on
+// what Spotlight has indexed.
+var findEngine search.Engine = search.Auto{}
+
 // findDelay is how long typing must pause before a search starts, so a
 // word typed quickly starts one search rather than one per letter
 const findDelay = 150 * time.Millisecond
 
 // finder is the search palette: f finds files and folders by name below
-// the current directory, F finds lines inside the files there
+// the current directory, F finds lines inside the files there, and ctrl+e
+// widens either to everywhere Spotlight looks
 type finder struct {
-	content   bool   // Searching inside files rather than names
-	root      string // Directory searched
-	input     components.TextInput
-	results   []search.Result
-	cursor    int
-	seq       int      // Counts edits, so only the pause after the last one starts a search
-	run       *findRun // Search in progress, or nil
-	waiting   bool     // Typed since the last search started
-	truncated bool     // The last search found more than findLimit
-	err       error
+	content    bool   // Searching inside files rather than names
+	everywhere bool   // Searching everywhere rather than below root
+	root       string // Directory searched
+	input      components.TextInput
+	results    []search.Result
+	cursor     int
+	seq        int      // Counts edits, so only the pause after the last one starts a search
+	run        *findRun // Search in progress, or nil
+	waiting    bool     // Typed since the last search started
+	truncated  bool     // The last search found more than findLimit
+	spotlight  bool     // Spotlight found the last search's results
+	err        error
 }
 
 // findRun is a search running in the background
@@ -46,8 +54,8 @@ type findRun struct {
 	results chan search.Result
 	cancel  context.CancelFunc
 	// Set before results is closed, and read only after
-	truncated bool
-	err       error
+	report search.Report
+	err    error
 }
 
 // findDelayMsg starts a search once typing has paused
@@ -55,11 +63,11 @@ type findDelayMsg struct{ seq int }
 
 // findResultsMsg brings results of a search as they are found
 type findResultsMsg struct {
-	run       *findRun
-	results   []search.Result
-	done      bool
-	truncated bool
-	err       error
+	run     *findRun
+	results []search.Result
+	done    bool
+	report  search.Report
+	err     error
 }
 
 // previewJump is a line of a file to show once the file's preview loads
@@ -114,6 +122,11 @@ func (m Model) handleFindMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.find.content = !m.find.content
 		cmd := m.startFind()
 		return m, cmd
+	case tea.KeyCtrlE:
+		// The same query, below this folder or everywhere
+		m.find.everywhere = !m.find.everywhere
+		cmd := m.startFind()
+		return m, cmd
 	default:
 		before := m.find.input.Value()
 		m.find.input.Update(msg)
@@ -154,7 +167,7 @@ func (m *Model) startFind() tea.Cmd {
 	m.stopFind()
 	f := &m.find
 	f.waiting = false
-	f.results, f.cursor, f.truncated, f.err = nil, 0, false, nil
+	f.results, f.cursor, f.truncated, f.spotlight, f.err = nil, 0, false, false, nil
 	query := f.input.Value()
 	if query == "" {
 		return nil
@@ -162,8 +175,14 @@ func (m *Model) startFind() tea.Cmd {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	run := &findRun{results: make(chan search.Result, 256), cancel: cancel}
-	opts := search.Options{Root: f.root, ShowHidden: m.showHidden, Skip: search.DefaultSkip, Limit: findLimit}
-	content := f.content
+	opts := search.Options{Root: f.root, ShowHidden: m.showHidden, Skip: search.DefaultSkip, Limit: findLimit, Everywhere: f.everywhere}
+	q := search.Query{Text: query, Content: f.content}
+	if tag, ok := m.tagQuery(); ok {
+		q.Tagged, q.Tag = true, tag
+	} else if !f.content {
+		q.Match = nameMatcher(query)
+	}
+	engine := findEngine
 	go func() {
 		defer close(run.results)
 		emit := func(r search.Result) {
@@ -172,11 +191,7 @@ func (m *Model) startFind() tea.Cmd {
 			case <-ctx.Done():
 			}
 		}
-		if content {
-			run.truncated, run.err = search.Contents(ctx, opts, query, emit)
-		} else {
-			run.truncated, run.err = search.Names(ctx, opts, nameMatcher(query), emit)
-		}
+		run.report, run.err = engine.Search(ctx, opts, q, emit)
 	}()
 	f.run = run
 	return waitFind(run)
@@ -200,7 +215,7 @@ func waitFind(run *findRun) tea.Cmd {
 				}
 			}
 			if !ok {
-				msg.done, msg.truncated, msg.err = true, run.truncated, run.err
+				msg.done, msg.report, msg.err = true, run.report, run.err
 				return msg
 			}
 			msg.results = append(msg.results, r)
@@ -222,7 +237,7 @@ func (m *Model) handleFindResults(msg findResultsMsg) tea.Cmd {
 	}
 	msg.run.cancel() // Releases the context
 	f.run = nil
-	f.truncated = msg.truncated
+	f.truncated, f.spotlight = msg.report.Truncated, msg.report.Spotlight && len(f.results) > 0
 	if msg.err != nil && !errors.Is(msg.err, context.Canceled) {
 		f.err = msg.err
 	}
@@ -374,6 +389,10 @@ func (m Model) findBox() []string {
 	if f.content {
 		title, key = "Find in files", shownKey(m.keys.Grep)
 	}
+	if _, ok := m.tagQuery(); ok {
+		title = "Find files by tag"
+	}
+	title += " " + m.findScope()
 	if key == "" {
 		key = ">"
 	}
@@ -404,14 +423,26 @@ func (m Model) findBox() []string {
 	return m.dialog(title, t.Accent, body, width)
 }
 
+// findScope says where the palette searches
+func (m Model) findScope() string {
+	if m.find.everywhere {
+		return "everywhere"
+	}
+	return "below this folder"
+}
+
 // findEmpty says why there are no results to list
 func (m Model) findEmpty() string {
 	f := m.find
 	switch {
+	case f.input.Value() == "" && f.content && f.everywhere:
+		return "Type to search inside files everywhere Spotlight looks"
 	case f.input.Value() == "" && f.content:
 		return "Type to search inside the files below this folder"
+	case f.input.Value() == "" && m.tagsOn():
+		return "Type to find files and folders " + m.findScope() + ", or #tag for tags"
 	case f.input.Value() == "":
-		return "Type to find files and folders below this folder"
+		return "Type to find files and folders " + m.findScope()
 	case f.run != nil || f.waiting:
 		return "Searching" + currentGlyphs().more
 	case f.err != nil:
@@ -440,6 +471,12 @@ func (m Model) findFooter(width int) string {
 	}
 
 	where := "in " + strings.Join(pathSegments(f.root), string(filepath.Separator))
+	if f.everywhere {
+		where = "everywhere"
+	}
+	if f.spotlight {
+		where += " " + currentGlyphs().dot + " Spotlight"
+	}
 	room := width - 2
 	left = utils.Truncate(left, room)
 	where = utils.TruncateLeft(where, max(room-utils.Width(left)-3, 0))
@@ -454,7 +491,11 @@ func (m Model) findHints() []hint {
 	if m.find.content {
 		other = "find by name"
 	}
-	return []hint{{"enter", "go"}, {g.up + "/" + g.down, "move"}, {"tab", other}, {"esc", "close"}}
+	scope := "search everywhere"
+	if m.find.everywhere {
+		scope = "search this folder"
+	}
+	return []hint{{"enter", "go"}, {g.up + "/" + g.down, "move"}, {"tab", other}, {"esc", "close"}, {"ctrl+e", scope}}
 }
 
 // findRow draws one result, highlighted if chosen: a path for a name
@@ -471,7 +512,12 @@ func (m Model) findRow(r search.Result, chosen bool, width int) string {
 		text, muted, faint, accent = sel.Bold(r.IsDir), sel, sel, sel
 	}
 
-	rel := []rune(utils.Printable(filepath.ToSlash(r.Rel)))
+	shown := r.Rel
+	if filepath.IsAbs(shown) {
+		// Outside the folder, found searching everywhere
+		shown = strings.Join(splitPath(shown), string(filepath.Separator))
+	}
+	rel := []rune(utils.Printable(filepath.ToSlash(shown)))
 	var row string
 	if r.Line == 0 {
 		icon := ui.GetFileIcon(fs.FileInfo{Name: filepath.Base(r.Path), IsDir: r.IsDir})
@@ -482,8 +528,11 @@ func (m Model) findRow(r search.Result, chosen bool, width int) string {
 		}
 		row = iconStyle.Render(lead)
 
+		// The tags' dots after the name, as in the list
+		dots, dotsW := m.tagDots(r.Tags, width-utils.Width(lead)-1, chosen)
+
 		// Cut from the left, so the name stays in view
-		room := width - utils.Width(lead) - 1
+		room := width - utils.Width(lead) - 1 - dotsW
 		drop, ellipsis := 0, ""
 		if utils.Width(string(rel)) > room {
 			ellipsis = g.more
@@ -501,8 +550,13 @@ func (m Model) findRow(r search.Result, chosen bool, width int) string {
 			}
 			return 1
 		}
-		hits := namePositions(m.find.input.Value(), string(rel))
-		row += muted.Render(ellipsis) + paint(rel[drop:], drop, class, []lipgloss.Style{muted, text}, hits)
+		// A search by tag, or a document Spotlight found the text in, didn't
+		// match the name
+		var hits map[int]bool
+		if _, byTag := m.tagQuery(); !byTag && !m.find.content {
+			hits = namePositions(m.find.input.Value(), string(rel))
+		}
+		row += muted.Render(ellipsis) + paint(rel[drop:], drop, class, []lipgloss.Style{muted, text}, hits) + dots
 	} else {
 		// The path gets up to two fifths of the row, the text the rest
 		path := utils.TruncateLeft(string(rel), max(width*2/5, 8))

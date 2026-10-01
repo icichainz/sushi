@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/tags"
 )
 
 // undoLimit is how many operations are remembered for undo
@@ -23,6 +24,7 @@ const (
 	stepRemove                  // Remove path if unchanged: undoes copy and create
 	stepChmod                   // Put path's mode back
 	stepRenames                 // Undo a bulk rename, all at once
+	stepTags                    // Put path's Finder tags back; see tags.go
 )
 
 // undoStep reverses one part of an operation
@@ -37,6 +39,8 @@ type undoStep struct {
 	original fs.Stamp        // stepRemove of a copy: what source was like then
 	mode     os.FileMode     // stepChmod
 	renames  []fs.RenamePair // stepRenames
+	oldTags  []tags.Tag      // stepTags: the tags before
+	newTags  []tags.Tag      // stepTags: the tags as the operation left them
 }
 
 // undoEntry is an operation that can be undone
@@ -224,6 +228,9 @@ func (s undoStep) undo(t *fs.Task, useTrash bool) ([]fs.RenamePair, error) {
 			return nil, err
 		}
 		return s.renames, nil
+
+	case stepTags:
+		return nil, undoTags(s)
 	}
 	return nil, nil
 }

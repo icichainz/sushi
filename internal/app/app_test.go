@@ -804,9 +804,9 @@ func TestKeyPanel(t *testing.T) {
 			labels = append(labels, k.key)
 		}
 	}
-	want := []string{"j k", "h l", "backspace", "g G", "ctrl+u d", "enter", "e o", "r", "n N", "d D",
+	want := []string{"j k", "h l", "backspace", "g G", "ctrl+u d", "enter", "e o", "r L", "n N", "d D",
 		"ctrl+z", "ctrl+x", "y V", "m R", "a X", "space", "*", "u", "c x v", "O ctrl+o", "/", "p i", "J K", ".", "?",
-		"f", "F", "s S", "ctrl+r", "Q", "t T", "tab", "shift+tab", "ctrl+w", "b B", "1-9", "P", "!", "q"}
+		"f #", "F", "s S", "ctrl+r", "Q", "t T", "tab", "shift+tab", "ctrl+w", "b B", "1-9", "P", "!", "q"}
 	if !slices.Equal(labels, want) {
 		t.Errorf("panel keys = %q\nwant %q", labels, want)
 	}
@@ -1472,13 +1472,13 @@ func TestPluginGetsSelection(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Plugins = []plugins.Plugin{{
-		Name: "list", Key: "L", Mode: plugins.ModeBackground,
+		Name: "list", Key: "W", Mode: plugins.ModeBackground,
 		Command: `printf '%s\n' "$@" > ` + out + `; echo "select c" > "$SUSHI_CMD_FILE"`,
 	}}
 	m := newTestModel(t, dir, cfg)
 	m, _ = press(t, m, " ") // a
 	m, _ = press(t, m, " ") // b
-	m, cmd := press(t, m, "L")
+	m, cmd := press(t, m, "W")
 	m = drain(t, m, cmd)
 
 	b, _ := os.ReadFile(out)

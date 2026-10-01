@@ -98,6 +98,8 @@ func (m Model) View() string {
 		lines = m.withDialog(lines, m.findBox())
 	case ModeOpenWith:
 		lines = m.withDialog(lines, m.openWithBox())
+	case ModeTags:
+		lines = m.withDialog(lines, m.tagBox())
 	case ModeHelp:
 		lines = m.withHelp(lines)
 	}
@@ -517,10 +519,13 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, matched map[int]b
 	b.WriteString(m.renderBadge(badge, c, isCursor))
 	b.WriteString(iconStyle.Render(utils.Fit(ui.GetFileIcon(file), c.iconW) + "  "))
 
+	// Finder tags' dots go right after the name, within its column
+	dots, dotsW := m.tagDots(file.Tags, c.nameW, isCursor)
+
 	// Underline the letters the search matched. Printable replaces rune
 	// for rune, so the matched positions still hold.
 	full := utils.Printable(file.Name)
-	name := utils.Truncate(full, c.nameW)
+	name := utils.Truncate(full, c.nameW-dotsW)
 	shown := []rune(name)
 	kept := len(shown)
 	if name != full {
@@ -539,7 +544,8 @@ func (m Model) renderFileLine(file fs.FileInfo, isCursor bool, matched map[int]b
 		b.WriteString(style.Render(string(shown[i:j])))
 		i = j
 	}
-	b.WriteString(nameStyle.Underline(false).Render(strings.Repeat(" ", max(c.nameW-utils.Width(name), 0))))
+	b.WriteString(dots)
+	b.WriteString(nameStyle.Underline(false).Render(strings.Repeat(" ", max(c.nameW-utils.Width(name)-dotsW, 0))))
 
 	meta := ""
 	if c.size {
@@ -672,6 +678,8 @@ func (m Model) modeBadge() (string, lipgloss.Color) {
 		return "FIND", t.Accent
 	case ModeOpenWith:
 		return "OPEN WITH", t.Accent
+	case ModeTags:
+		return "TAGS", t.Accent
 	case ModeHelp:
 		return "KEYS", t.Accent
 	}
@@ -841,6 +849,8 @@ func (m Model) renderBottomRow() string {
 		return m.renderHints(m.findHints())
 	case ModeOpenWith:
 		return m.renderHints(m.openWithHints())
+	case ModeTags:
+		return m.renderHints(m.tagHints())
 	case ModeHelp:
 		if m.maxHelpScroll() > 0 {
 			return m.renderHints([]hint{{"esc", "close"}, {keysLabel("/", k.Down, k.Up), "scroll"}, {"any other key", "does what it says"}})
@@ -1071,7 +1081,7 @@ func (k KeyMap) helpGroups() []helpGroup {
 	groups := []helpGroup{
 		{"Move", []hint{keyHint("down, up", k.Down, k.Up), keyHint("parent, open", k.Left, k.Right), keyHint("parent", k.Back),
 			keyHint("first, last", k.Home, k.End), keyHint("page up, down", k.PageUp, k.PageDown)}},
-		{"Files", []hint{keyHint("open", k.Enter), keyHint("edit, default app", k.Edit, k.Open), keyHint("rename", k.Rename),
+		{"Files", []hint{keyHint("open", k.Enter), keyHint("edit, default app", k.Edit, k.Open), keyHint("rename, tags", k.Rename, k.Tag),
 			keyHint("new file, folder", k.NewFile, k.NewDir), keyHint("trash, delete", k.Delete, k.HardDelete)}},
 		{"Tools", []hint{keyHint("undo", k.Undo), keyHint("cancel operation", k.Cancel), keyHint("duplicate, paste link", k.Duplicate, k.PasteLink),
 			keyHint("chmod, bulk rename", k.Chmod, k.BulkRename), keyHint("zip, extract", k.Archive, k.Extract)}},
@@ -1079,7 +1089,7 @@ func (k KeyMap) helpGroups() []helpGroup {
 			keyHint("copy, cut, paste", k.Copy, k.Cut, k.Paste), keyHint("open with, reveal", k.OpenWith, k.Reveal)}},
 		{"View", []hint{keyHint("search", k.Search), keyHint("preview, quick look", k.Preview, k.QuickLook), keyHint("scroll preview", k.PreviewDown, k.PreviewUp),
 			keyHint("hidden files", k.Hidden), keyHint("this panel", k.Help)}},
-		{"Find", []hint{keyHint("find by name", k.Find), keyHint("find in files", k.Grep), keyHint("sort by, reverse", k.Sort, k.Reverse),
+		{"Find", []hint{keyHint("find by name, tag", k.Find, k.FindTag), keyHint("find in files", k.Grep), keyHint("sort by, reverse", k.Sort, k.Reverse),
 			keyHint("refresh", k.Refresh), keyHint("quit without cd", k.QuitNoCd)}},
 		{"Tabs", []hint{keyHint("new here, home", k.NewTab, k.NewTabHome), keyHint("next", k.NextTab), keyHint("previous", k.PrevTab),
 			keyHint("close", k.CloseTab)}},

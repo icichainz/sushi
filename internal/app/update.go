@@ -319,6 +319,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == ModeOpenWith {
 		return m.handleOpenWithMode(msg)
 	}
+	if m.mode == ModeTags {
+		return m.handleTagMode(msg)
+	}
 
 	// Plugin shortcuts; bindPluginKeys keeps them clear of built-in keys
 	if i, ok := m.pluginKeys[msg.String()]; ok {
@@ -356,6 +359,12 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Grep):
 		return m.openFind(true)
+
+	case key.Matches(msg, m.keys.FindTag):
+		return m.openFindTag()
+
+	case key.Matches(msg, m.keys.Tag):
+		return m.openTags()
 
 	case key.Matches(msg, m.keys.Help):
 		m.mode = ModeHelp

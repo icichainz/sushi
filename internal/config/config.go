@@ -21,6 +21,7 @@ type Config struct {
 	PreviewEnabled bool   `yaml:"preview_enabled"` // Enable preview pane by default
 	PreviewWidth   int    `yaml:"preview_width"`   // Preview pane width percentage (1-80)
 	Mouse          bool   `yaml:"mouse"`           // Clicks and the wheel; off leaves the mouse to the terminal
+	Tags           bool   `yaml:"tags"`            // Finder tags: shown in the list, set with L, found with #
 
 	// Behavior settings
 	ConfirmDelete bool   `yaml:"confirm_delete"` // Require confirmation for delete
@@ -58,6 +59,7 @@ func DefaultConfig() *Config {
 		PreviewEnabled: true,
 		PreviewWidth:   50,
 		Mouse:          true,
+		Tags:           true,
 		ConfirmDelete:  true,
 		DeleteToTrash:  true,
 		Opener:         "auto",

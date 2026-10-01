@@ -84,6 +84,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.mouseFind(msg)
 	case ModeOpenWith:
 		return m.mouseOpenWith(msg)
+	case ModeTags:
+		return m.mouseTags(msg)
 	case ModeHelp:
 		return m.mouseHelp(msg)
 	}
