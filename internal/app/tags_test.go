@@ -372,6 +372,30 @@ func TestFindByTag(t *testing.T) {
 	}
 }
 
+func TestCopiesKeepTheirTags(t *testing.T) {
+	needTags(t)
+	dir, other := t.TempDir(), t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "report.txt"), "report")
+	tagFile(t, filepath.Join(dir, "report.txt"), red, work)
+
+	// Duplicated with y
+	m := newTestModel(t, dir, nil)
+	m, cmd := press(t, m, "y")
+	m = drain(t, m, cmd)
+	if got := tagsOf(t, filepath.Join(dir, "report copy.txt")); !slices.Equal(got, []string{"Red", "Work"}) {
+		t.Fatalf("the duplicate has tags %q, statusMsg %q", got, m.statusMsg)
+	}
+	// Copied and pasted elsewhere
+	m = cursorTo(t, m, "report.txt")
+	m, _ = press(t, m, "c")
+	m = at(t, m, other)
+	m, cmd = press(t, m, "v")
+	m = drain(t, m, cmd)
+	if got := tagsOf(t, filepath.Join(other, "report.txt")); !slices.Equal(got, []string{"Red", "Work"}) {
+		t.Fatalf("the copy has tags %q, statusMsg %q", got, m.statusMsg)
+	}
+}
+
 func TestFindByNameStartingWithATagSign(t *testing.T) {
 	root := makeTree(t, map[string]string{"#autosave#.txt": "", "tag:notes.md": "", "plain.txt": "", "\\odd.txt": ""})
 
