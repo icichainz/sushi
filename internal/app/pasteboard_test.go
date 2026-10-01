@@ -196,6 +196,10 @@ func TestPasteboardOffOrFailing(t *testing.T) {
 	if m = drain(t, m, cmd); !strings.Contains(m.statusMsg, "Can't read the pasteboard") {
 		t.Fatalf("statusMsg = %q", m.statusMsg)
 	}
+	// A failed read says nothing of what was there when sushi started
+	if m.pb.started {
+		t.Fatalf("pb = %+v", m.pb)
+	}
 }
 
 func TestPasteFromThePasteboardOnlyWhereItWasAsked(t *testing.T) {

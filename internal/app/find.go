@@ -22,9 +22,10 @@ import (
 // findLimit is the most results a search shows
 var findLimit = 1000
 
-// findEngine runs the palette's searches: a walk of the folder below it,
-// with Spotlight's documents for text, and Spotlight everywhere. Tests
-// only walk, so as not to depend on what Spotlight has indexed.
+// findEngine runs the palette's searches: a walk of the folder, with
+// Spotlight alongside for what it finds faster and for documents, and
+// Spotlight alone everywhere. Tests only walk, so as not to depend on what
+// Spotlight has indexed.
 var findEngine search.Engine = search.Auto{}
 
 // findDelay is how long typing must pause before a search starts, so a

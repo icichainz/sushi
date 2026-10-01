@@ -183,7 +183,7 @@ func (msg pasteboardReadMsg) apply(m Model) (tea.Model, tea.Cmd) {
 	if m.statusID == m.pb.readStatus {
 		m.statusMsg = ""
 	}
-	if !m.pb.started {
+	if !m.pb.started && msg.err == nil {
 		// Read before the count at startup came in: the pasteboard has
 		// held this since then at least
 		m.pb.started, m.pb.startCount = true, msg.contents.Count
