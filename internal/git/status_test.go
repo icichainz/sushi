@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/icichainz/sushi/internal/git/gittest"
+	"github.com/icichainz/sushi/internal/testutil"
 )
 
 // porcelain joins records as git status -z prints them
@@ -55,6 +56,8 @@ func TestParse(t *testing.T) {
 		"? keep.txt",
 		"1 .D N... 100644 100644 000000 cdcd cdcd gone.txt",
 		"1 .T N... 100644 100644 120000 efef efef typed",
+		"? mixed/new.txt", // Untracked beside a change: modified
+		"1 .M N... 100644 100644 100644 abab abab mixed/old.txt",
 	)
 
 	s := Parse(out, "")
@@ -62,8 +65,9 @@ func TestParse(t *testing.T) {
 		t.Fatalf("branch=%q commit=%q head=%q dirty=%v", s.Branch, s.Commit, s.Head(), s.Dirty)
 	}
 	names := []string{"tracked.txt", "added file.txt", "new.txt", "old.txt", "copy.txt", "both.txt", "untracked.txt", "debug.log", "build",
-		"sub", "newdir", "logs", "merge", "module", "keep.txt", "gone.txt", "typed", "clean.txt"}
-	if got, want := badges(s, names...), "MAR.AU?!!MM.UMDDM."; got != want {
+		"sub", "newdir", "logs", "merge", "module", "keep.txt", "gone.txt", "typed", "clean.txt", "mixed"}
+	// A folder with nothing but untracked files in it is untracked
+	if got, want := badges(s, names...), "MAR.AU?!!M?.UMDDM.M"; got != want {
 		t.Errorf("badges of %q\n = %s\nwant %s", names, got, want)
 	}
 
@@ -72,7 +76,7 @@ func TestParse(t *testing.T) {
 	if got := badges(s, "inner.txt", "inner.o", "tracked.txt"); got != "M!." || !s.Dirty || s.Head() != "main" {
 		t.Errorf("in sub: %s, dirty %v", got, s.Dirty)
 	}
-	if got := badges(Parse(out, "newdir/"), "deep"); got != "M" {
+	if got := badges(Parse(out, "newdir/"), "deep"); got != "?" {
 		t.Errorf("in newdir: %s", got)
 	}
 
@@ -175,7 +179,7 @@ func TestRead(t *testing.T) {
 
 	s := read(t, repo)
 	names := []string{"tracked.txt", "added.txt", "new.txt", "keep.txt", "untracked.txt", "debug.log", "build", "sub", "newdir", "clean", "clean.txt", ".gitignore"}
-	if got, want := badges(s, names...), "MARD?!!MM..."; got != want {
+	if got, want := badges(s, names...), "MARD?!!M?..."; got != want {
 		t.Errorf("badges of %q\n = %s\nwant %s", names, got, want)
 	}
 	if s.Head() != "main" || !s.Dirty || len(s.Commit) != 40 || s.Root != repo {
@@ -218,6 +222,35 @@ func TestRead(t *testing.T) {
 	if s := read(t, repo); s.Badge("clean.txt") != 0 {
 		t.Error("a change in the worktree shows in the main one")
 	}
+
+	// Where each keeps HEAD and the index, and where the branches are
+	same := func(a, b string) bool {
+		ra, _ := filepath.EvalSymlinks(a)
+		rb, _ := filepath.EvalSymlinks(b)
+		return ra != "" && ra == rb
+	}
+	dotGit := filepath.Join(repo, ".git")
+	if s := read(t, filepath.Join(repo, "sub")); !same(s.GitDir, dotGit) || !same(s.CommonDir, dotGit) {
+		t.Errorf("main: git dir %s, common dir %s", s.GitDir, s.CommonDir)
+	}
+	if s := read(t, wt); !same(s.GitDir, filepath.Join(dotGit, "worktrees", "wt")) || !same(s.CommonDir, dotGit) {
+		t.Errorf("worktree: git dir %s, common dir %s", s.GitDir, s.CommonDir)
+	}
+}
+
+func TestReadNamesWithNewlines(t *testing.T) {
+	gittest.Isolate(t)
+	root := filepath.Join(t.TempDir(), "odd\nrepo")
+	sub := filepath.Join(root, "two\nlines")
+	write(t, filepath.Join(sub, "a.txt"), "a")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Skipf("no newlines in names here: %v", err)
+	}
+	gittest.Init(t, root)
+	s := read(t, sub)
+	if s.Root != root || s.Badge("a.txt") != Untracked || !strings.HasSuffix(s.GitDir, "odd\nrepo/.git") {
+		t.Fatalf("root=%q badge=%c git dir=%q", s.Root, s.Badge("a.txt"), s.GitDir)
+	}
 }
 
 func TestReadSubmodule(t *testing.T) {
@@ -238,14 +271,185 @@ func TestReadSubmodule(t *testing.T) {
 	if s := read(t, repo); s.Badge("lib") != 0 || s.Dirty {
 		t.Fatalf("clean submodule: badge=%c dirty=%v", s.Badge("lib"), s.Dirty)
 	}
-	// A change inside shows on the submodule in its parent, and on the
-	// file inside, where the submodule is a repository of its own
+	// A change inside shows on the file, where the submodule is a
+	// repository of its own, but not in its parent, as git status would
+	// have to go inside, where the submodule's own configuration applies
 	write(t, filepath.Join(repo, "lib", "lib.go"), "package lib // changed")
-	if s := read(t, repo); s.Badge("lib") != Modified || !s.Dirty {
-		t.Errorf("changed submodule: badge=%c dirty=%v", s.Badge("lib"), s.Dirty)
+	if s := read(t, repo); s.Badge("lib") != 0 {
+		t.Errorf("changed submodule: badge=%c", s.Badge("lib"))
 	}
 	if s := read(t, filepath.Join(repo, "lib")); s.Badge("lib.go") != Modified || s.Root != filepath.Join(repo, "lib") {
 		t.Errorf("in the submodule: badge=%c root=%s", s.Badge("lib.go"), s.Root)
+	}
+	// Committed there, the submodule's commit changes, which shows
+	gittest.Run(t, filepath.Join(repo, "lib"), "commit", "-qam", "changed")
+	if s := read(t, repo); s.Badge("lib") != Modified || !s.Dirty {
+		t.Errorf("submodule at another commit: badge=%c dirty=%v", s.Badge("lib"), s.Dirty)
+	}
+}
+
+// hookScript writes a script that records each run in the file marker,
+// and passes what it is given through, as a filter that changes nothing
+func hookScript(t *testing.T, dir, marker string) string {
+	t.Helper()
+	path := filepath.Join(dir, "hook")
+	testutil.Script(t, path, "#!/bin/sh\n"+testutil.Warm+"echo \"$*\" >> '"+marker+"'\ncat\n")
+	return path
+}
+
+// racy changes a committed file without changing its size, so git can only
+// tell by reading it, through the filters the attributes give it
+func racy(t *testing.T, path string) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b[0] ^= 1
+	write(t, path, string(b))
+	later := time.Now().Add(time.Minute)
+	os.Chtimes(path, later, later)
+}
+
+func TestReadRunsNothingTheRepositoryConfigures(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		config func(repo, hook string)
+		proven bool // Plain git status runs the hook, which proves the setup
+	}{
+		{"fsmonitor", func(repo, hook string) { gittest.Run(t, repo, "config", "core.fsmonitor", hook) }, true},
+		{"clean filter", func(repo, hook string) { gittest.Run(t, repo, "config", "filter.evil.clean", hook) }, true},
+		{"process filter", func(repo, hook string) { gittest.Run(t, repo, "config", "filter.evil.process", hook) }, false},
+		{"included", func(repo, hook string) {
+			write(t, filepath.Join(repo, "extra.cfg"), "[filter \"evil\"]\n\tclean = "+hook+"\n")
+			gittest.Run(t, repo, "config", "include.path", "../extra.cfg")
+		}, true},
+		{"worktree configuration", func(repo, hook string) {
+			gittest.Run(t, repo, "config", "extensions.worktreeConfig", "true")
+			gittest.Run(t, repo, "config", "--worktree", "core.fsmonitor", hook)
+		}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			gittest.Isolate(t)
+			root := t.TempDir()
+			marker := filepath.Join(root, "ran")
+			hook := hookScript(t, root, marker)
+			repo := filepath.Join(root, "repo")
+			write(t, filepath.Join(repo, "a.txt"), "aaaa")
+			write(t, filepath.Join(repo, "sub", "b.txt"), "b")
+			write(t, filepath.Join(repo, ".gitattributes"), "* filter=evil\n")
+			gittest.Init(t, repo)
+			gittest.Run(t, repo, "add", ".")
+			gittest.Run(t, repo, "commit", "-qm", "first")
+			c.config(repo, hook)
+			racy(t, filepath.Join(repo, "a.txt"))
+
+			ran := func() {
+				t.Helper()
+				if b, err := os.ReadFile(marker); err == nil {
+					t.Fatalf("reading the status ran the repository's command: %q", b)
+				}
+			}
+			s := read(t, repo)
+			ran()
+			if !s.Restricted || s.Head() != "main" || len(s.Commit) != 40 || s.Badge("a.txt") != 0 || s.Dirty || s.Root != repo {
+				t.Fatalf("restricted=%v head=%q commit=%q badge=%c dirty=%v root=%s", s.Restricted, s.Head(), s.Commit, s.Badge("a.txt"), s.Dirty, s.Root)
+			}
+			// Nor below the top, or with HEAD detached, as written by hand,
+			// since git checkout would run the command itself
+			if err := os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte(s.Commit+"\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if s := read(t, filepath.Join(repo, "sub")); !s.Restricted || s.Head() != "("+s.Commit[:7]+")" || s.Root != repo {
+				t.Fatalf("detached, below the top: restricted=%v head=%q root=%s", s.Restricted, s.Head(), s.Root)
+			}
+			ran()
+			if c.proven {
+				gittest.Run(t, repo, "status")
+				if _, err := os.Stat(marker); err != nil {
+					t.Fatal("git status itself doesn't run the command, so the test proves nothing")
+				}
+			}
+		})
+	}
+}
+
+func TestReadKeepsTheUsersOwnConfiguration(t *testing.T) {
+	gittest.Isolate(t)
+	root := t.TempDir()
+	marker := filepath.Join(root, "ran")
+	hook := hookScript(t, root, marker)
+	repo := filepath.Join(root, "repo")
+	write(t, filepath.Join(repo, "a.txt"), "aaaa")
+	gittest.Init(t, repo)
+	gittest.Run(t, repo, "add", ".")
+	gittest.Run(t, repo, "commit", "-qm", "first")
+	racy(t, filepath.Join(repo, "a.txt"))
+
+	// A monitor the user set up for every repository: status runs, without
+	// it
+	gittest.Run(t, repo, "config", "--global", "core.fsmonitor", hook)
+	s := read(t, repo)
+	if s.Restricted || s.Badge("a.txt") != Modified {
+		t.Fatalf("restricted=%v badge=%c", s.Restricted, s.Badge("a.txt"))
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the file system monitor ran")
+	}
+}
+
+func TestReadDoesntRunSubmodulesFilters(t *testing.T) {
+	gittest.Isolate(t)
+	root := t.TempDir()
+	marker := filepath.Join(root, "ran")
+	hook := hookScript(t, root, marker)
+	lib, repo := filepath.Join(root, "lib"), filepath.Join(root, "repo")
+	write(t, filepath.Join(lib, "lib.go"), "package lib")
+	write(t, filepath.Join(lib, ".gitattributes"), "* filter=evil\n")
+	gittest.Init(t, lib)
+	gittest.Run(t, lib, "add", ".")
+	gittest.Run(t, lib, "commit", "-qm", "lib")
+	os.Mkdir(repo, 0755)
+	gittest.Init(t, repo)
+	gittest.Run(t, repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "lib")
+	gittest.Run(t, repo, "commit", "-qm", "with lib")
+
+	// The submodule's own configuration, which the parent's doesn't show
+	gittest.Run(t, filepath.Join(repo, "lib"), "config", "filter.evil.clean", hook)
+	racy(t, filepath.Join(repo, "lib", "lib.go"))
+	if s := read(t, repo); s.Restricted {
+		t.Fatal("the parent is restricted by its submodule's configuration")
+	}
+	if s := read(t, filepath.Join(repo, "lib")); !s.Restricted {
+		t.Fatal("the submodule isn't restricted by its own configuration")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("reading the status ran the submodule's filter")
+	}
+}
+
+func TestReadIgnoresInheritedGitVariables(t *testing.T) {
+	gittest.Isolate(t)
+	root := t.TempDir()
+	repo, other := filepath.Join(root, "repo"), filepath.Join(root, "other")
+	write(t, filepath.Join(repo, "a.txt"), "a")
+	write(t, filepath.Join(other, "b.txt"), "b")
+	gittest.Init(t, repo)
+
+	// As in a hook, or a shell git started: every folder would be repo
+	t.Setenv("GIT_DIR", filepath.Join(repo, ".git"))
+	t.Setenv("GIT_WORK_TREE", repo)
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(repo, ".git", "index"))
+	t.Setenv("GIT_COMMON_DIR", filepath.Join(repo, ".git"))
+	t.Setenv("GIT_OBJECT_DIRECTORY", filepath.Join(repo, ".git", "objects"))
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.worktree")
+	t.Setenv("GIT_CONFIG_VALUE_0", repo)
+	if _, err := Read(context.Background(), other); !errors.Is(err, ErrNotRepo) {
+		t.Fatalf("Read(other) = %v, want ErrNotRepo", err)
+	}
+	if s := read(t, repo); s.Badge("a.txt") != Untracked || s.Root != repo {
+		t.Fatalf("in the repository: badge=%c root=%s", s.Badge("a.txt"), s.Root)
 	}
 }
 
@@ -254,16 +458,9 @@ func TestReadGivesUpInTime(t *testing.T) {
 	if err != nil {
 		t.Skip("uses a shell script")
 	}
-	// A git that takes far too long, as on a huge repository. It is run
-	// once first, as macOS can take seconds to start a new script.
+	// A git that takes far too long, as on a huge repository
 	bin := t.TempDir()
-	fake := filepath.Join(bin, "git")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\n[ \"$1\" = warm ] && exit 0\nexec "+sleep+" 30\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := exec.Command(fake, "warm").Run(); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Script(t, filepath.Join(bin, "git"), "#!/bin/sh\n"+testutil.Warm+"exec "+sleep+" 30\n")
 	t.Setenv("PATH", bin)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)

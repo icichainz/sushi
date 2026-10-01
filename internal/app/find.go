@@ -22,9 +22,10 @@ import (
 // findLimit is the most results a search shows
 var findLimit = 1000
 
-// findEngine runs the palette's searches: Spotlight, with a walk of the
-// folder where Spotlight can't help. Tests walk, so as not to depend on
-// what Spotlight has indexed.
+// findEngine runs the palette's searches: a walk of the folder, with
+// Spotlight alongside for what it finds faster and for documents, and
+// Spotlight alone everywhere. Tests only walk, so as not to depend on what
+// Spotlight has indexed.
 var findEngine search.Engine = search.Auto{}
 
 // findDelay is how long typing must pause before a search starts, so a
@@ -175,12 +176,14 @@ func (m *Model) startFind() tea.Cmd {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	run := &findRun{results: make(chan search.Result, 256), cancel: cancel}
-	opts := search.Options{Root: f.root, ShowHidden: m.showHidden, Skip: search.DefaultSkip, Limit: findLimit, Everywhere: f.everywhere}
+	opts := search.Options{Root: f.root, ShowHidden: m.showHidden, Skip: search.DefaultSkip, Limit: findLimit, Everywhere: f.everywhere,
+		Tags: m.tagsOn()}
 	q := search.Query{Text: query, Content: f.content}
 	if tag, ok := m.tagQuery(); ok {
 		q.Tagged, q.Tag = true, tag
 	} else if !f.content {
-		q.Match = nameMatcher(query)
+		q.Text = m.nameQuery()
+		q.Match = nameMatcher(q.Text)
 	}
 	engine := findEngine
 	go func() {
@@ -300,6 +303,19 @@ func (m *Model) showJump(msg previewLoadedMsg) tea.Cmd {
 		return m.setStatus(fmt.Sprintf("Line %d is past the first %d lines, which is as far as the preview reads", j.line, len(p.Lines)))
 	}
 	return nil
+}
+
+// nameQuery returns what a search by name looks for: the query typed,
+// less a backslash before what would otherwise look for tags, as in
+// \#autosave#, which finds the names with #autosave# in them
+func (m Model) nameQuery() string {
+	q := m.find.input.Value()
+	if rest, ok := strings.CutPrefix(q, `\`); ok {
+		if _, tag := search.TagQuery(rest); tag {
+			return rest
+		}
+	}
+	return q
 }
 
 // findQuery prepares a name query: lowercase, with slashes as separators,
@@ -445,6 +461,11 @@ func (m Model) findEmpty() string {
 		return "Type to find files and folders " + m.findScope()
 	case f.run != nil || f.waiting:
 		return "Searching" + currentGlyphs().more
+	case errors.Is(f.err, search.ErrEverywhere):
+		return search.ErrNoSpotlight.Error()
+	case errors.Is(f.err, search.ErrSpotlight):
+		// Says what Spotlight couldn't do in so many words
+		return f.err.Error()
 	case f.err != nil:
 		return fmt.Sprintf("Can't search: %v", f.err)
 	}
@@ -554,7 +575,7 @@ func (m Model) findRow(r search.Result, chosen bool, width int) string {
 		// match the name
 		var hits map[int]bool
 		if _, byTag := m.tagQuery(); !byTag && !m.find.content {
-			hits = namePositions(m.find.input.Value(), string(rel))
+			hits = namePositions(m.nameQuery(), string(rel))
 		}
 		row += muted.Render(ellipsis) + paint(rel[drop:], drop, class, []lipgloss.Style{muted, text}, hits) + dots
 	} else {

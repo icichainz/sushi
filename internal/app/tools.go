@@ -36,7 +36,7 @@ func (m Model) handleToolKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Duplicate):
 		return m.startDuplicate()
 	case key.Matches(msg, m.keys.PasteLink):
-		return m.pasteLinks()
+		return m.paste(true)
 	case key.Matches(msg, m.keys.Chmod):
 		return m.startChmod()
 	case key.Matches(msg, m.keys.BulkRename):
@@ -125,7 +125,8 @@ func (m Model) startDuplicate() (tea.Model, tea.Cmd) {
 }
 
 // pasteLinks creates symlinks in the current directory to the clipboard
-// items. It never replaces anything, and leaves the clipboard as it is.
+// items, which V, as v, may first take from the pasteboard (see paste). It
+// never replaces anything, and leaves the clipboard as it is.
 func (m Model) pasteLinks() (tea.Model, tea.Cmd) {
 	if len(m.clipboard) == 0 {
 		cmd := m.setStatus("Nothing in clipboard")

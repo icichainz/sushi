@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -256,6 +257,41 @@ func TestTagPickerWithoutChangesLeavesNoUndo(t *testing.T) {
 	}
 }
 
+func TestTagPickerMovesWithTheBoundKeys(t *testing.T) {
+	needTags(t)
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "")
+
+	// j and k move on the list, as in the Open with list
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "L")
+	m, _ = press(t, m, "j")
+	m, _ = press(t, m, "j")
+	m, _ = press(t, m, "k")
+	if m.tagger.cursor != 1 || m.tagger.input.Value() != "" {
+		t.Fatalf("cursor %d, field %q", m.tagger.cursor, m.tagger.input.Value())
+	}
+	// Other letters go to the field, and there j and k are letters too
+	m = typeText(t, m, "jk")
+	m = typeText(t, m, "ojk")
+	if !m.tagger.onField() || m.tagger.input.Value() != "ojk" {
+		t.Fatalf("cursor %d, field %q", m.tagger.cursor, m.tagger.input.Value())
+	}
+
+	// The keys they are remapped to, and not j and k
+	m = withKeys(t, dir, map[string]config.KeyList{"up": {"w"}, "down": {"z"}})
+	m, _ = press(t, m, "L")
+	m, _ = press(t, m, "z")
+	m, _ = press(t, m, "z")
+	m, _ = press(t, m, "w")
+	if m.tagger.cursor != 1 || m.tagger.input.Value() != "" {
+		t.Fatalf("remapped: cursor %d, field %q", m.tagger.cursor, m.tagger.input.Value())
+	}
+	if m, _ = press(t, m, "j"); !m.tagger.onField() || m.tagger.input.Value() != "j" {
+		t.Fatalf("remapped: j left the cursor at %d, field %q", m.tagger.cursor, m.tagger.input.Value())
+	}
+}
+
 func TestTagPickerMouse(t *testing.T) {
 	needTags(t)
 	dir := t.TempDir()
@@ -369,5 +405,90 @@ func TestFindByTag(t *testing.T) {
 	m = find(t, newTestModel(t, root, cfg), "f", "#name")
 	if got := strings.Join(resultPaths(m), " "); got != "#name.txt" {
 		t.Fatalf("with tags off, #name found %s", got)
+	}
+}
+
+func TestTaggingAReadOnlyFileSaysWhich(t *testing.T) {
+	needTags(t)
+	dir := filepath.Join(t.TempDir(), "a", "rather", "long", "folder", "name")
+	os.MkdirAll(dir, 0755)
+	writeTestFile(t, filepath.Join(dir, "locked.txt"), "")
+	os.Chmod(filepath.Join(dir, "locked.txt"), 0444)
+
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "L")
+	m, _ = press(t, m, " ") // Red
+	if m.statusMsg == "" {
+		t.Skip("read-only files take tags here")
+	}
+	if !strings.HasPrefix(m.statusMsg, "Error: can't tag locked.txt: ") || strings.Contains(m.statusMsg, "folder") {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+}
+
+func TestCopiesKeepTheirTags(t *testing.T) {
+	needTags(t)
+	dir, other := t.TempDir(), t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "report.txt"), "report")
+	tagFile(t, filepath.Join(dir, "report.txt"), red, work)
+
+	// Duplicated with y
+	m := newTestModel(t, dir, nil)
+	m, cmd := press(t, m, "y")
+	m = drain(t, m, cmd)
+	if got := tagsOf(t, filepath.Join(dir, "report copy.txt")); !slices.Equal(got, []string{"Red", "Work"}) {
+		t.Fatalf("the duplicate has tags %q, statusMsg %q", got, m.statusMsg)
+	}
+	// Copied and pasted elsewhere
+	m = cursorTo(t, m, "report.txt")
+	m, _ = press(t, m, "c")
+	m = at(t, m, other)
+	m, cmd = press(t, m, "v")
+	m = drain(t, m, cmd)
+	if got := tagsOf(t, filepath.Join(other, "report.txt")); !slices.Equal(got, []string{"Red", "Work"}) {
+		t.Fatalf("the copy has tags %q, statusMsg %q", got, m.statusMsg)
+	}
+}
+
+func TestFindByNameStartingWithATagSign(t *testing.T) {
+	root := makeTree(t, map[string]string{"#autosave#.txt": "", "tag:notes.md": "", "plain.txt": "", "\\odd.txt": ""})
+
+	// A backslash makes # and tag: part of the name
+	for query, want := range map[string]string{`\#autosave#`: "#autosave#.txt", `\tag:notes`: "tag:notes.md", `\odd`: "\\odd.txt"} {
+		m := find(t, newTestModel(t, root, nil), "f", query)
+		if got := strings.Join(resultPaths(m), " "); got != want {
+			t.Errorf("%s found %q, want %q", query, got, want)
+		}
+		if title := strings.Join(plain(m.View()), "\n"); !strings.Contains(title, "Find files below this folder") {
+			t.Errorf("%s isn't a search by name:\n%s", query, title)
+		}
+	}
+	// The name shows the match underlined from its first letter
+	m := find(t, newTestModel(t, root, nil), "f", `\#auto`)
+	if hits := namePositions(m.nameQuery(), "#autosave#.txt"); !hits[0] || !hits[4] || hits[5] {
+		t.Errorf("positions %v", hits)
+	}
+	// Without it, a search by tag
+	if m := find(t, newTestModel(t, root, nil), "f", "#autosave"); len(m.find.results) != 0 {
+		t.Errorf("#autosave found %q", resultPaths(m))
+	}
+}
+
+func TestFindByNameShowsTags(t *testing.T) {
+	needTags(t)
+	root := makeTree(t, map[string]string{"report.pdf": "", "report.txt": ""})
+	tagFile(t, filepath.Join(root, "report.pdf"), red, work)
+
+	m := find(t, newTestModel(t, root, nil), "f", "report")
+	view := strings.Join(plain(m.View()), "\n")
+	if !strings.Contains(view, "report.pdf ●○") || strings.Contains(view, "report.txt ●") {
+		t.Fatalf("palette:\n%s", view)
+	}
+	// Not with tags off
+	cfg := config.DefaultConfig()
+	cfg.Tags = false
+	m = find(t, newTestModel(t, root, cfg), "f", "report")
+	if view := strings.Join(plain(m.View()), "\n"); strings.Contains(view, "●") {
+		t.Fatalf("tags off:\n%s", view)
 	}
 }

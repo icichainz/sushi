@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/git/gittest"
+	"github.com/icichainz/sushi/internal/testutil"
 	"github.com/icichainz/sushi/internal/ui"
 	"github.com/icichainz/sushi/internal/utils"
 )
@@ -103,7 +105,7 @@ func TestGitBadges(t *testing.T) {
 
 	for name, want := range map[string]string{
 		"tracked.txt": "M", "added.txt": "A", "renamed.txt": "R", "untracked.txt": "?", "debug.log": "!", "build": "!",
-		"sub": "M", "newdir": "M", "tidy": " ", "clean.txt": " ",
+		"sub": "M", "newdir": "?", "tidy": " ", "clean.txt": " ",
 	} {
 		if got := badgeOf(t, m, name); got != want {
 			t.Errorf("%s: badge %q, want %q", name, got, want)
@@ -212,11 +214,12 @@ func TestGitBranchLabel(t *testing.T) {
 	}
 	ui.SetIconMode(ui.IconModeNerd)
 
-	// A long branch beside a long path: the path makes room for the
-	// branch, which is cut short when even that isn't enough
+	// A long branch beside a long path: the path's leading directories
+	// make room for the branch, which is cut short to leave the current
+	// directory's name whole, or left out
 	branch := "feature/" + strings.Repeat("long-branch-name-", 4)
 	gittest.Run(t, repo, "checkout", "-q", "-b", branch)
-	deep := filepath.Join(repo, strings.Repeat("very-long-directory-name-", 4))
+	deep := filepath.Join(repo, "a-long-directory-name")
 	os.Mkdir(deep, 0755)
 	writeTestFile(t, filepath.Join(deep, "a.txt"), "")
 	m = gitModel(t, deep, nil)
@@ -226,10 +229,14 @@ func TestGitBranchLabel(t *testing.T) {
 		lines := assertFills(t, label, m)
 		h := lines[1]
 		switch {
+		case !strings.Contains(h, " a-long-directory-name "):
+			t.Errorf("%s: the current directory's name isn't whole: %q", label, h)
 		case size.Width >= 120 && !strings.Contains(h, "⎇ "+branch+"*"):
 			t.Errorf("%s: the branch isn't whole: %q", label, h)
-		case size.Width == 60 && (!strings.Contains(h, "⎇ feature/") || !strings.Contains(h, "...*")):
+		case (size.Width == 60 || size.Width == 80) && (!strings.Contains(h, "⎇ feature/") || !strings.Contains(h, "...*")):
 			t.Errorf("%s: the branch isn't cut short: %q", label, h)
+		case size.Width == 30 && strings.Contains(h, "⎇"):
+			t.Errorf("%s: the branch is there: %q", label, h)
 		case size.Width < 120 && strings.Contains(h, "sort"):
 			t.Errorf("%s: the sort order shows beside a path cut short: %q", label, h)
 		}
@@ -242,6 +249,14 @@ func TestGitBranchLabel(t *testing.T) {
 			}
 			assertFills(t, label+" after "+keys, screen)
 		}
+	}
+
+	// A name too long to leave room for the branch leaves it out
+	deeper := filepath.Join(deep, strings.Repeat("very-long-directory-name-", 2))
+	os.Mkdir(deeper, 0755)
+	m = resize(gitModel(t, deeper, nil), tea.WindowSizeMsg{Width: 60, Height: 15})
+	if h := assertFills(t, "a long name", m)[1]; strings.Contains(h, "⎇") || !strings.Contains(h, "directory-name-very-long-directory-name-") {
+		t.Errorf("beside a long name: %q", h)
 	}
 }
 
@@ -256,28 +271,15 @@ func fakeGit(t *testing.T, sleep int) (calls string) {
 	}
 	bin := t.TempDir()
 	calls = filepath.Join(bin, "calls")
-	script := fmt.Sprintf("#!/bin/sh\n[ \"$1\" = warm ] && exit 0\necho \"$*\" >> %s\n", calls)
+	script := fmt.Sprintf("#!/bin/sh\n%secho \"$*\" >> %s\n", testutil.Warm, calls)
 	if sleep > 0 {
 		script += fmt.Sprintf("exec %s %d\n", sleepCmd, sleep)
 	} else {
 		script += "echo 'fatal: not a git repository (or any of the parent directories): .git' >&2\nexit 128\n"
 	}
-	warmUp(t, filepath.Join(bin, "git"), script)
+	testutil.Script(t, filepath.Join(bin, "git"), script)
 	t.Setenv("PATH", bin)
 	return calls
-}
-
-// warmUp writes a script to path and runs it once with the argument warm.
-// macOS can take seconds to run a new script the first time, which would
-// count against the time limits being tested.
-func warmUp(t *testing.T, path, script string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := exec.Command(path, "warm").Run(); err != nil {
-		t.Fatalf("running %s: %v", path, err)
-	}
 }
 
 // runs counts the runs of git status the active tab has started
@@ -339,7 +341,7 @@ func TestGitRunsOnceOutsideRepositories(t *testing.T) {
 	if runs(m) != 1 || m.gitStatus() != nil || !m.tab().git.off {
 		t.Fatalf("git ran %d times in a directory outside a repository", runs(m))
 	}
-	if b, _ := os.ReadFile(calls); string(b) != "-C "+dir+" rev-parse --is-inside-work-tree --show-prefix\n" {
+	if b, _ := os.ReadFile(calls); string(b) != "-C "+dir+" -c core.fsmonitor=false -c core.hooksPath=/dev/null rev-parse --is-inside-work-tree --absolute-git-dir --git-common-dir --show-prefix\n" {
 		t.Errorf("git ran as %q", b)
 	}
 	m = enter(t, m, "sub")
@@ -394,5 +396,119 @@ func TestGitRunsOneAtATime(t *testing.T) {
 	m.Close()
 	if msg := inFlight().(gitStatusMsg); !errors.Is(msg.err, context.Canceled) {
 		t.Fatalf("the run went on after quitting: %v", msg.err)
+	}
+}
+
+func TestGitRestrictedRepositoryShowsOnlyTheBranch(t *testing.T) {
+	repo := gitRepo(t)
+	// The repository's own configuration names a file system monitor, as
+	// one downloaded could
+	marker := filepath.Join(t.TempDir(), "ran")
+	hook := filepath.Join(t.TempDir(), "hook")
+	testutil.Script(t, hook, "#!/bin/sh\n"+testutil.Warm+"echo ran >> '"+marker+"'\n")
+	gittest.Run(t, repo, "config", "core.fsmonitor", hook)
+
+	m := gitModel(t, repo, nil)
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("browsing the repository ran its file system monitor")
+	}
+	if m.statusMsg != gitRestricted {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+	// The branch, without a star, as nothing is known of the changes, and
+	// no column of badges
+	if h := header(m); !strings.Contains(h, "⎇ main · sort") {
+		t.Errorf("breadcrumb = %q", h)
+	}
+	if col := nameColumn(t, m, "tracked.txt"); col != 3+listColumns(80, m.tab().Files).iconW+2 {
+		t.Errorf("the name is at %d: there is a badge column", col)
+	}
+
+	// Said once
+	m.statusMsg = ""
+	m = enter(t, m, "sub")
+	m, cmd := press(t, m, "h")
+	if m = drain(t, m, cmd); m.statusMsg == gitRestricted || !m.gitStatus().Restricted {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("browsing the repository ran its file system monitor")
+	}
+}
+
+// loop feeds m the messages of cmd and of the commands they lead to, the
+// watcher's included, as Bubble Tea does, until done holds after one,
+// failing the test after 10 seconds
+func loop(t *testing.T, m Model, cmd tea.Cmd, done func(Model, tea.Msg) bool) Model {
+	t.Helper()
+	out := make(chan tea.Msg)
+	stop := make(chan struct{})
+	defer close(stop)
+	var start func(tea.Cmd)
+	start = func(c tea.Cmd) {
+		if c == nil {
+			return
+		}
+		go func() {
+			msg := c()
+			if batch, ok := msg.(tea.BatchMsg); ok {
+				for _, c := range batch {
+					start(c)
+				}
+				return
+			}
+			select {
+			case out <- msg:
+			case <-stop:
+			}
+		}()
+	}
+	start(cmd)
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case msg := <-out:
+			if msg == nil {
+				continue
+			}
+			updated, next := m.Update(msg)
+			m = updated.(Model)
+			start(next)
+			if done(m, msg) {
+				return m
+			}
+		case <-deadline:
+			t.Fatal("timed out")
+			return m
+		}
+	}
+}
+
+func TestGitBadgesFollowCommitsElsewhere(t *testing.T) {
+	repo := gitRepo(t)
+	m := gitModel(t, repo, nil)
+	if got := badgeOf(t, m, "tracked.txt") + badgeOf(t, m, "added.txt"); got != "MA" {
+		t.Fatalf("before: %q", got)
+	}
+	gitDir := m.gitStatus().GitDir
+	msgs := startWatching(t, m, 50*time.Millisecond)
+	eventually(t, "the watch on "+gitDir, func() bool { return slices.Contains(m.watch.watching(), gitDir) })
+
+	// Committed in another terminal, which changes nothing in the folder:
+	// the badges follow, without reloading the list
+	gittest.Run(t, repo, "commit", "-qam", "elsewhere")
+	loads := 0
+	changed := next(t, msgs)
+	m = loop(t, m, func() tea.Msg { return changed }, func(m Model, msg tea.Msg) bool {
+		if _, ok := msg.(dirLoadedMsg); ok {
+			loads++
+		}
+		return badgeOf(t, m, "tracked.txt")+badgeOf(t, m, "added.txt") == "  "
+	})
+	if loads != 0 {
+		t.Errorf("the list was loaded %d times", loads)
+	}
+	if h := header(m); !strings.Contains(h, "⎇ main*") {
+		t.Errorf("breadcrumb = %q", h) // Untracked files are left
 	}
 }

@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/icichainz/sushi/internal/config"
+	"golang.org/x/sys/unix"
 )
 
 func TestOpenWithListsTheAppsAndOpens(t *testing.T) {
@@ -77,6 +78,45 @@ func TestOpenWithListsTheAppsAndOpens(t *testing.T) {
 	m = drain(t, m, cmd)
 	if m, _ = press(t, m, "esc"); m.mode != ModeNormal || len(f.lookups) != 2 || len(f.opened) != 2 {
 		t.Fatalf("mode %v, %d lookups, %d opened", m.mode, len(f.lookups), len(f.opened))
+	}
+}
+
+func TestOpenWithLooksUpAgainWhenTheExtensionIsntEnough(t *testing.T) {
+	f := useFakeMac(t)
+	f.apps = `{"default":"/System/Applications/TextEdit.app","apps":[]}`
+	dir := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "own.txt"} {
+		writeTestFile(t, filepath.Join(dir, name), "")
+	}
+	// Get Info's "Open with" for this file only
+	if err := unix.Setxattr(filepath.Join(dir, "own.txt"), openWithAttr, []byte("bplist00"), 0); err != nil {
+		t.Skipf("can't set attributes here: %v", err)
+	}
+	m := newTestModel(t, dir, nil)
+	open := func(name string) {
+		t.Helper()
+		m = cursorTo(t, m, name)
+		var cmd tea.Cmd
+		m, cmd = press(t, m, "O")
+		m = drain(t, m, cmd)
+		m, _ = press(t, m, "esc")
+	}
+
+	open("a.txt")
+	open("b.txt") // Cached for .txt
+	open("own.txt")
+	open("own.txt") // Never cached
+	open("a.txt")   // Its own app didn't replace the one for .txt
+	if len(f.lookups) != 3 || !strings.Contains(f.lookups[1], "own.txt") || !strings.Contains(f.lookups[2], "own.txt") {
+		t.Fatalf("%d lookups", len(f.lookups))
+	}
+
+	// ctrl+r forgets them all
+	m, cmd := ctrl(t, m, tea.KeyCtrlR)
+	m = drain(t, m, cmd)
+	open("b.txt")
+	if len(f.lookups) != 4 {
+		t.Fatalf("after ctrl+r, %d lookups", len(f.lookups))
 	}
 }
 

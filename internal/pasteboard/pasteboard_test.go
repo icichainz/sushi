@@ -116,6 +116,21 @@ func TestReadParsesFiles(t *testing.T) {
 	}
 }
 
+func TestCountReadsOnlyTheCount(t *testing.T) {
+	f := &fake{reply: `{"count":12}` + "\n"}
+	if n, err := New(f.run, "").Count(context.Background()); err != nil || n != 12 {
+		t.Fatalf("Count = %d, %v", n, err)
+	}
+	if script := f.scripts[0]; !strings.Contains(script, "$.NSPasteboard.generalPasteboard.changeCount") || strings.Contains(script, "readObjects") {
+		t.Fatalf("script:\n%s", script)
+	}
+	for _, f := range []*fake{{err: errors.New("osascript: exit status 1")}, {reply: `{}`}, {reply: "nope"}} {
+		if _, err := New(f.run, "").Count(context.Background()); err == nil {
+			t.Errorf("reply %q, error %v: no error", f.reply, f.err)
+		}
+	}
+}
+
 // TestRealPasteboard puts a file on a pasteboard with osascript and reads
 // it back. It runs only with SUSHI_PASTEBOARD_TEST=1, as it talks to the
 // pasteboard server of the logged-in user, and skips where osascript is

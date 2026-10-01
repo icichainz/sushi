@@ -5,10 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/icichainz/sushi/internal/testutil"
 )
 
 func init() {
@@ -33,6 +39,7 @@ type fakeMac struct {
 	apps     string   // What the app lookup answers, as JSON
 	lookups  []string // Scripts that looked apps up
 	reads    int      // Reads of the pasteboard
+	counts   int      // Reads of its change count alone
 	opened   [][]string
 	revealed [][]string
 	fail     error // Every osascript call fails with it, if set
@@ -85,6 +92,9 @@ func (f *fakeMac) osascript(_ context.Context, script string) ([]byte, error) {
 	case strings.Contains(script, "activateFileViewerSelectingURLs"):
 		f.revealed = append(f.revealed, scriptPaths(script))
 		return []byte("{}"), nil
+	case strings.Contains(script, "changeCount"):
+		f.counts++
+		return fmt.Appendf(nil, `{"count":%d}`, f.count), nil
 	}
 	return nil, errors.New("unexpected script")
 }
@@ -118,4 +128,29 @@ func (f *fakeMac) pasteboard() (int, []string) {
 func at(t *testing.T, m Model, dir string) Model {
 	t.Helper()
 	return drain(t, m, m.loadDir(m.tab(), dir))
+}
+
+func TestOpenGivesUp(t *testing.T) {
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("uses a shell script")
+	}
+	// An open(1) that hangs, and leaves something holding its output
+	bin := t.TempDir()
+	calls := filepath.Join(bin, "calls")
+	testutil.Script(t, filepath.Join(bin, "open"), "#!/bin/sh\n"+testutil.Warm+"echo \"$@\" > "+calls+"\n"+sleep+" 30 &\nwait\n")
+	t.Setenv("PATH", bin)
+	defer func(d time.Duration) { openTimeout = d }(openTimeout)
+	openTimeout = 200 * time.Millisecond
+
+	start := time.Now()
+	if _, err := openCommand("-R", "/tmp/x"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the deadline", err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("gave up after %v", took)
+	}
+	if b, _ := os.ReadFile(calls); string(b) != "-R /tmp/x\n" {
+		t.Fatalf("open ran with %q", b)
+	}
 }

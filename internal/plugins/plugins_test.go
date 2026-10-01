@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/icichainz/sushi/internal/testutil"
 )
 
 func writeScript(t *testing.T, path, content string, mode os.FileMode) {
@@ -106,7 +108,7 @@ func TestCommandPassesSelectionAndEnvironment(t *testing.T) {
 	}
 
 	script := filepath.Join(dir, "script")
-	writeScript(t, script, "#!/bin/sh\nprintf '%s|' \"$@\"\nprintf '%s' \"$SUSHI_SELECTION\"\n", 0755)
+	testutil.Script(t, script, "#!/bin/sh\n"+testutil.Warm+"printf '%s|' \"$@\"\nprintf '%s' \"$SUSHI_SELECTION\"\n")
 	out, err = Plugin{Name: "s", Script: script}.Cmd(ctx).Output()
 	if err != nil {
 		t.Fatal(err)

@@ -564,7 +564,9 @@ func TestBusyRefusesChangesButNotMoving(t *testing.T) {
 	m := newTestModel(t, dir, nil)
 	m, _ = press(t, m, "d")
 	running := m.job.id
-	for _, k := range []string{"d", "D", "r", "n", "N", "v", "V", "R", "y", "m", "a", "X"} {
+	// L too: tags written to a file being trashed would go with it, or be
+	// lost
+	for _, k := range []string{"d", "D", "r", "n", "N", "v", "V", "R", "y", "m", "a", "X", "L"} {
 		m.statusMsg = ""
 		m, _ = press(t, m, k)
 		if m.mode != ModeNormal || m.job.id != running || !strings.Contains(m.statusMsg, "Still moving to trash") {
@@ -746,14 +748,16 @@ func TestModeFormat(t *testing.T) {
 }
 
 // fakeEditor makes the editor a script that runs body with the file as $1,
-// and runs it synchronously as tea.ExecProcess can't without a terminal
+// and runs it synchronously as tea.ExecProcess can't without a terminal.
+// The shell reads the script, so the new file is never run itself, which
+// macOS would first take a while to check.
 func fakeEditor(t *testing.T, body string) {
 	t.Helper()
 	script := filepath.Join(t.TempDir(), "editor")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\n"+body+"\n"), 0755); err != nil {
+	if err := os.WriteFile(script, []byte(body+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("VISUAL", script)
+	t.Setenv("VISUAL", "/bin/sh "+script)
 	t.Setenv("TMPDIR", t.TempDir())
 	execProcess = func(c *exec.Cmd, fn tea.ExecCallback) tea.Cmd {
 		return func() tea.Msg { return fn(c.Run()) }

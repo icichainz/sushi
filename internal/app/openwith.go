@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/opener"
 	"github.com/icichainz/sushi/internal/utils"
+	"golang.org/x/sys/unix"
 )
 
 // openWithState is the Open with list: the apps that can open the file
@@ -23,7 +24,7 @@ type openWithState struct {
 	cursor  int
 	seq     int // The latest lookup, so one for an older list is dropped
 
-	// The apps found for each extension, for the rest of the session
+	// The apps found for each extension, until ctrl+r
 	cache map[string][]opener.App
 }
 
@@ -77,14 +78,25 @@ func lookupTarget(paths []string) string {
 }
 
 // appsKey is what the apps for path are cached under: its extension, which
-// Launch Services mostly goes by. Folders and files without one aren't
-// cached, as what opens them depends on more than their name.
+// Launch Services mostly goes by. Folders, files without one, and files
+// given an app of their own in Finder's Get Info aren't cached, as what
+// opens them depends on more than their name.
 func appsKey(path string) string {
 	ext := strings.ToLower(filepath.Ext(path))
-	if info, err := os.Stat(path); ext == "" || err != nil || info.IsDir() {
+	if info, err := os.Stat(path); ext == "" || err != nil || info.IsDir() || ownApp(path) {
 		return ""
 	}
 	return ext
+}
+
+// openWithAttr is where Get Info's "Open with" keeps the app chosen for
+// one file
+const openWithAttr = "com.apple.LaunchServices.OpenWith"
+
+// ownApp reports whether the file at path has an app of its own to open it
+func ownApp(path string) bool {
+	_, err := unix.Getxattr(path, openWithAttr, nil)
+	return err == nil
 }
 
 func (msg appsFoundMsg) apply(m Model) (tea.Model, tea.Cmd) {

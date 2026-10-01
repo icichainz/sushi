@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,7 +18,10 @@ import (
 // In a Git repository the file list has a column of badges, one for each
 // entry's status, and the breadcrumb names the branch. git status runs in
 // the background after every load of a directory, so after the watcher's
-// reloads and ctrl+r too, but never twice at once for a tab.
+// reloads and ctrl+r too, and when the watcher sees the repository change
+// (a commit, a checkout, git add), but never twice at once for a tab. In a
+// repository whose own configuration names commands git status would run,
+// there is only the branch; see git.Read.
 
 // gitTimeout is how long git may take to describe a directory. One too
 // large to read in time is given up on until the tab moves elsewhere,
@@ -36,13 +40,18 @@ type gitState struct {
 	off     bool               // Not a repository, or git failed or was too slow: not again until the tab moves, or ctrl+r
 	cancel  context.CancelFunc // Stops the run in flight
 	status  *git.Status        // What the latest run found; nil outside a repository
+	watch   []string           // The repository's directories to watch, from the latest run
 }
+
+// gitRestricted says why a repository has no badges, once a session
+const gitRestricted = "Git badges off for this repository: it configures filters/fsmonitor; see README"
 
 // gitStatusMsg brings what git said about a tab's directory
 type gitStatusMsg struct {
 	tabID, seq int
 	dir        string
 	status     *git.Status
+	watch      []string
 	err        error
 }
 
@@ -81,10 +90,11 @@ func (m *Model) gitAfterLoad(tab *Tab) tea.Cmd {
 			g.cancel()
 		}
 		var kept *git.Status
+		var watch []string
 		if g.status != nil && within(tab.CurrentPath, g.status.Root) {
-			kept = g.status.WithoutBadges()
+			kept, watch = g.status.WithoutBadges(), g.watch
 		}
-		*g = gitState{dir: tab.CurrentPath, seq: g.seq, status: kept}
+		*g = gitState{dir: tab.CurrentPath, seq: g.seq, status: kept, watch: watch}
 	}
 	return m.runGit(tab)
 }
@@ -113,8 +123,25 @@ func (m *Model) runGit(tab *Tab) tea.Cmd {
 	return func() tea.Msg {
 		defer cancel()
 		msg.status, msg.err = git.Read(ctx, msg.dir)
+		msg.watch = gitWatch(msg.status)
 		return msg
 	}
+}
+
+// gitWatch returns the directories of s's repository that change when git
+// commands run elsewhere: the one with HEAD and the index of this work
+// tree, and the branches
+func gitWatch(s *git.Status) []string {
+	if s == nil || s.GitDir == "" {
+		return nil
+	}
+	dirs := []string{s.GitDir}
+	// Missing while every branch is packed, which is rare
+	heads := filepath.Join(s.CommonDir, "refs", "heads")
+	if info, err := os.Stat(heads); err == nil && info.IsDir() && s.CommonDir != "" {
+		dirs = append(dirs, heads)
+	}
+	return dirs
 }
 
 func (msg gitStatusMsg) apply(m Model) (tea.Model, tea.Cmd) {
@@ -125,16 +152,38 @@ func (msg gitStatusMsg) apply(m Model) (tea.Model, tea.Cmd) {
 	}
 	g := &tab.git
 	g.running, g.cancel = false, nil
-	g.status = msg.status
+	g.status, g.watch = msg.status, msg.watch
 	if msg.err != nil {
 		// Not a repository, no git, or too slow: quietly, and once
 		g.off = true
 		return m, nil
 	}
-	if g.again {
-		return m, m.runGit(tab)
+	var cmds []tea.Cmd
+	if s := msg.status; s.Restricted && tab.ID == m.tab().ID && !m.gitWarned[s.CommonDir] {
+		if m.gitWarned == nil {
+			m.gitWarned = make(map[string]bool)
+		}
+		m.gitWarned[s.CommonDir] = true
+		cmds = append(cmds, m.setStatus(gitRestricted))
 	}
-	return m, nil
+	if g.again {
+		cmds = append(cmds, m.runGit(tab))
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// gitChanged reports whether the tab's repository is among the
+// directories that changed, so its status may have
+func (t *Tab) gitChanged(changed map[string]bool) bool {
+	if t.git.dir != t.CurrentPath {
+		return false
+	}
+	for _, dir := range t.git.watch {
+		if changed[dir] {
+			return true
+		}
+	}
+	return false
 }
 
 // retryGit lets git run again in every tab, as ctrl+r asks: after git
@@ -165,8 +214,9 @@ func (m Model) gitStatus() *git.Status {
 }
 
 // withGitColumn makes room in c for the badge column, in a repository
+// that has badges
 func (m Model) withGitColumn(c columns) columns {
-	if m.gitStatus() != nil {
+	if s := m.gitStatus(); s != nil && !s.Restricted {
 		c.gitW = gitBadgeW
 		c.nameW = max(c.nameW-gitBadgeW, 4)
 	}

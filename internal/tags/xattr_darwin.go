@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"golang.org/x/sys/unix"
 )
@@ -38,11 +39,11 @@ func Read(path string) ([]Tag, error) {
 	if hasTags {
 		data, err := getAttr(path, Attr)
 		if err != nil && !errors.Is(err, unix.ENOATTR) { // Gone just now: no tags
-			return nil, fmt.Errorf("can't read the tags of %s: %w", path, err)
+			return nil, fmt.Errorf("can't read the tags of %s: %w", filepath.Base(path), err)
 		}
 		if err == nil {
 			if list, err = Decode(data); err != nil {
-				return nil, fmt.Errorf("can't read the tags of %s: %w", path, err)
+				return nil, fmt.Errorf("can't read the tags of %s: %w", filepath.Base(path), err)
 			}
 		}
 	}
@@ -59,22 +60,29 @@ func Read(path string) ([]Tag, error) {
 }
 
 // Write sets the Finder tags of path, which isn't followed if it is a
-// symlink; with none, the attribute is removed, as Finder does
+// symlink. The tags it had that list keeps are written back as they were
+// (see Update), and the attribute isn't written at all if list is what it
+// holds already; with no tags, it is removed, as Finder does.
 func Write(path string, list []Tag) error {
+	// What is there now; one that can't be read is replaced
+	old, _ := getAttr(path, Attr)
+	value, change := Update(old, list)
 	var err error
-	if len(list) == 0 {
+	switch {
+	case !change:
+	case value == nil:
 		err = unix.Lremovexattr(path, Attr)
 		if errors.Is(err, unix.ENOATTR) {
 			err = nil
 		}
-	} else {
-		err = unix.Lsetxattr(path, Attr, Encode(list), 0)
+	default:
+		err = unix.Lsetxattr(path, Attr, value, 0)
 	}
 	if err == nil {
 		err = syncLabel(path, list)
 	}
 	if err != nil {
-		return fmt.Errorf("can't tag %s: %w", path, err)
+		return fmt.Errorf("can't tag %s: %w", filepath.Base(path), err)
 	}
 	return nil
 }
@@ -137,14 +145,14 @@ func attrs(path string) (tags, info bool, err error) {
 			// More names than fit: ask how much room they need
 			size, err := unix.Llistxattr(path, nil)
 			if err != nil {
-				return false, false, fmt.Errorf("can't read the tags of %s: %w", path, err)
+				return false, false, fmt.Errorf("can't read the tags of %s: %w", filepath.Base(path), err)
 			}
 			buf = make([]byte, size+64)
 			continue
 		case errors.Is(err, unix.ENOTSUP):
 			return false, false, nil // A volume without extended attributes
 		case err != nil:
-			return false, false, fmt.Errorf("can't read the tags of %s: %w", path, err)
+			return false, false, fmt.Errorf("can't read the tags of %s: %w", filepath.Base(path), err)
 		}
 		for _, name := range bytes.Split(buf[:n], []byte{0}) {
 			switch string(name) {

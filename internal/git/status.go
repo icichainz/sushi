@@ -2,7 +2,8 @@
 // of its entries are changed, untracked or ignored, and the branch checked
 // out, for the badges of the file list. It runs the git command, so it
 // knows about repositories exactly as git does: worktrees, submodules,
-// ignore rules and all.
+// ignore rules and all; but never so that git runs a program a
+// repository's own configuration names (see Read).
 package git
 
 import (
@@ -52,10 +53,17 @@ const maxOutput = 64 << 20
 
 // Status is what git status says about one directory of a work tree
 type Status struct {
-	Root   string // The top of the work tree, reached from the directory by name
-	Branch string // The branch checked out, even before its first commit; "" if HEAD is detached
-	Commit string // The commit checked out; "" before the first
-	Dirty  bool   // Something in the work tree is changed or untracked
+	Root      string // The top of the work tree, reached from the directory by name
+	GitDir    string // The repository's directory for this work tree, where HEAD and the index are
+	CommonDir string // The directory the work trees of the repository share, where the branches are
+	Branch    string // The branch checked out, even before its first commit; "" if HEAD is detached
+	Commit    string // The commit checked out; "" before the first
+	Dirty     bool   // Something in the work tree is changed or untracked
+
+	// Restricted means the repository's own configuration names commands
+	// that git status would run, so it wasn't run: there are no badges,
+	// and Dirty isn't known
+	Restricted bool
 
 	inherited byte            // Applies to every entry: the directory is in an ignored one
 	badges    map[string]byte // By name (NFC); a directory sums up what is inside it
@@ -83,49 +91,212 @@ func (s *Status) Badge(name string) byte {
 	return stronger(s.badges[norm.NFC.String(name)], s.inherited)
 }
 
-// WithoutBadges returns the branch and root of s without the badges, for a
-// directory nearby in the same work tree while its own status is read
+// WithoutBadges returns what s says about the work tree without the
+// badges, for a directory nearby in the same work tree while its own
+// status is read
 func (s *Status) WithoutBadges() *Status {
-	return &Status{Root: s.Root, Branch: s.Branch, Commit: s.Commit, Dirty: s.Dirty}
+	return &Status{Root: s.Root, GitDir: s.GitDir, CommonDir: s.CommonDir, Branch: s.Branch, Commit: s.Commit,
+		Dirty: s.Dirty, Restricted: s.Restricted}
 }
 
 // Read asks git about dir. It returns ErrNotRepo outside a work tree, and
 // gives up when ctx is done, as for a repository too large to read in
 // time.
+//
+// A repository can name commands for git to run, in its own configuration,
+// which comes with it when it is downloaded or unpacked: a file system
+// monitor, and filters that git status runs on files to compare them.
+// Browsing it must not run them. So git status never uses a file system
+// monitor or hooks, doesn't look inside the work trees of submodules,
+// which have configurations of their own, and isn't run at all in a
+// repository whose own configuration sets any of riskyConfig: then the
+// status has only the branch and the commit, read without running
+// anything, and is Restricted.
 func Read(ctx context.Context, dir string) (*Status, error) {
-	out, err := run(ctx, dir, "rev-parse", "--is-inside-work-tree", "--show-prefix")
+	loc, err := locate(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
-	// The prefix is dir's path below the top of the work tree, ending in
-	// a slash, as git names paths: from the top, whatever dir is called
-	inside, prefix, _ := strings.Cut(string(out), "\n")
-	if inside != "true" {
-		return nil, ErrNotRepo
-	}
-	prefix = strings.TrimSuffix(prefix, "\n")
-
-	out, err = run(ctx, dir, "status", "--porcelain=v2", "--branch", "--untracked-files=all", "--ignored=matching", "-z")
+	risky, err := configures(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
-	s := Parse(out, prefix)
-	s.Root = dir
-	for range strings.Count(prefix, "/") {
+	var s *Status
+	if risky {
+		s, err = head(ctx, dir)
+	} else {
+		var out []byte
+		// A submodule shows as changed when its commit is; changes in its
+		// work tree would take git status there
+		out, err = run(ctx, dir, "status", "--porcelain=v2", "--branch", "--untracked-files=all", "--ignored=matching",
+			"--ignore-submodules=dirty", "-z")
+		if err == nil {
+			s = Parse(out, loc.prefix)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.Root, s.GitDir, s.CommonDir = dir, loc.gitDir, loc.commonDir
+	for range strings.Count(loc.prefix, "/") {
 		s.Root = filepath.Dir(s.Root)
 	}
 	return s, nil
+}
+
+// location is where a directory is in its repository
+type location struct {
+	prefix    string // Its path below the top of the work tree, ending in a slash, as git names paths; "" at the top
+	gitDir    string
+	commonDir string
+}
+
+// locate asks git whether dir is in a work tree, and where it and the
+// repository are. A name can hold a newline, which makes two lines of it:
+// the prefix comes last, so it is the rest whatever it holds, and a path to
+// the repository with one, which puts the lines before it out, is caught
+// by checking them, and each is asked for on its own.
+func locate(ctx context.Context, dir string) (location, error) {
+	out, err := run(ctx, dir, "rev-parse", "--is-inside-work-tree", "--absolute-git-dir", "--git-common-dir", "--show-prefix")
+	if err != nil {
+		return location{}, err
+	}
+	inside, rest, _ := strings.Cut(string(out), "\n")
+	if inside != "true" {
+		return location{}, ErrNotRepo
+	}
+	if lines := strings.SplitN(rest, "\n", 3); len(lines) == 3 {
+		loc := location{gitDir: lines[0], commonDir: absolute(dir, lines[1]), prefix: strings.TrimSuffix(lines[2], "\n")}
+		if loc.valid(dir) {
+			return loc, nil
+		}
+	}
+	var loc location
+	for _, ask := range []struct {
+		arg string
+		to  *string
+	}{{"--absolute-git-dir", &loc.gitDir}, {"--git-common-dir", &loc.commonDir}, {"--show-prefix", &loc.prefix}} {
+		out, err := run(ctx, dir, "rev-parse", ask.arg)
+		if err != nil {
+			return location{}, err
+		}
+		*ask.to = strings.TrimSuffix(string(out), "\n")
+	}
+	loc.commonDir = absolute(dir, loc.commonDir)
+	return loc, nil
+}
+
+// valid reports whether what locate read for dir makes sense: the
+// repository's directories are there, and the prefix ends dir's path
+func (loc location) valid(dir string) bool {
+	if !isDir(loc.gitDir) || !isDir(loc.commonDir) {
+		return false
+	}
+	return loc.prefix == "" || strings.HasSuffix(filepath.ToSlash(dir)+"/", "/"+loc.prefix)
+}
+
+// absolute returns path, which git gives relative to dir, as an absolute
+// path
+func absolute(dir, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(dir, path)
+}
+
+// isDir reports whether path is absolute, and a directory
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir() && filepath.IsAbs(path)
+}
+
+// riskyConfig matches the settings that have git run a command of the
+// repository's choosing: a file system monitor and filters, which git
+// status runs, and for good measure the commands that reach other
+// repositories, which it doesn't
+const riskyConfig = `^(core\.fsmonitor|filter\..*\.(clean|smudge|process|required)|core\.sshcommand|credential(\..*)?\.helper)$`
+
+// configures reports whether the repository's own configuration, rather
+// than the user's, sets any of riskyConfig. Reading configuration runs
+// nothing.
+func configures(ctx context.Context, dir string) (bool, error) {
+	out, err := run(ctx, dir, "config", "--show-scope", "--includes", "--get-regexp", riskyConfig)
+	if notFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	// "local\tfilter.x.clean command", a line each; what the repository's
+	// configuration includes has its scope too
+	for _, line := range strings.Split(string(out), "\n") {
+		if scope, _, _ := strings.Cut(line, "\t"); scope == "local" || scope == "worktree" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// head reads the branch and the commit checked out in dir, from the
+// references, which runs nothing, for a Restricted status
+func head(ctx context.Context, dir string) (*Status, error) {
+	s := &Status{Restricted: true, badges: make(map[string]byte)}
+	// Neither is an error: a detached HEAD has no branch, and a branch
+	// without commits no commit
+	out, err := run(ctx, dir, "symbolic-ref", "-q", "--short", "HEAD")
+	if err != nil && !notFound(err) {
+		return nil, err
+	}
+	s.Branch = strings.TrimSuffix(string(out), "\n")
+	out, err = run(ctx, dir, "rev-parse", "-q", "--verify", "HEAD^{commit}")
+	if err != nil && !notFound(err) {
+		return nil, err
+	}
+	s.Commit = strings.TrimSuffix(string(out), "\n")
+	return s, nil
+}
+
+// notFound reports whether git failed only to find what it was asked
+// for, which it says by exiting with 1
+func notFound(err error) bool {
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ExitCode() == 1
+}
+
+// safety goes before every git command, as a last line of defence: no
+// file system monitor, which a repository could name, and no hooks, which
+// no command run here should run anyway
+var safety = []string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"}
+
+// keptVars are the variables for git that are passed on from sushi's
+// environment: where the user's own configuration is, and where looking
+// for a repository stops
+var keptVars = map[string]bool{"GIT_CONFIG_GLOBAL": true, "GIT_CONFIG_SYSTEM": true, "GIT_CONFIG_NOSYSTEM": true, "GIT_CEILING_DIRECTORIES": true}
+
+// environ returns the environment git runs in: sushi's, without the GIT_
+// variables naming a repository, work tree, index or configuration, which
+// git sets for its hooks and the commands it runs. Inherited, they would
+// make every directory look like the same repository.
+func environ() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "GIT_") && !keptVars[name] {
+			continue
+		}
+		env = append(env, kv)
+	}
+	// Otherwise status refreshes the index, writing to the repository
+	// that sushi only looks at, and taking a lock git commands run at the
+	// same time would trip over
+	return append(env, "GIT_OPTIONAL_LOCKS=0")
 }
 
 // run runs git in dir and returns what it printed
 func run(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	// Otherwise status refreshes the index, writing to the repository
-	// that sushi only looks at, and taking a lock git commands run at the
-	// same time would trip over
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+	cmd := exec.CommandContext(ctx, "git", append(append([]string{"-C", dir}, safety...), args...)...)
+	cmd.Env = environ()
 	stdout := &limitedBuffer{limit: maxOutput, full: cancel}
 	stderr := &limitedBuffer{limit: 4096}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -274,12 +445,13 @@ func (s *Status) add(code byte, path, prefix string) {
 	// Directories are listed with a slash when ignored as a whole
 	name, inside, _ := strings.Cut(rest, "/")
 	if inside != "" {
-		// Something in the directory name: it shows as modified, or in
-		// conflict, but what is ignored in it doesn't count
+		// Something in the directory name: it shows as modified, in
+		// conflict, or untracked if all that is new or changed in it is,
+		// as in a new folder; what is ignored in it doesn't count
 		switch code {
 		case Ignored:
 			return
-		case Conflict:
+		case Conflict, Untracked:
 		default:
 			code = Modified
 		}

@@ -4,6 +4,7 @@
 package tags
 
 import (
+	"slices"
 	"strings"
 )
 
@@ -90,6 +91,57 @@ func Encode(list []Tag) []byte {
 		strs[i] = t.String()
 	}
 	return encodeStrings(strs)
+}
+
+// Update returns the value of the tags attribute for list, given the value
+// it has now, old: the tags list keeps, and the strings Decode leaves out
+// (empty names), are written as they were, so text that isn't quite
+// Unicode, as other tools may have put there, comes through untouched,
+// and only what changed is written afresh. It returns false, and no value,
+// if list is what old holds already, so nothing need be written. An old
+// value that can't be read is replaced.
+func Update(old []byte, list []Tag) ([]byte, bool) {
+	var raw []rawString
+	if len(old) > 0 {
+		raw, _ = decodeRaw(old)
+	}
+	var shown []Tag
+	for _, r := range raw {
+		if t := parse(r.s); t.Name != "" {
+			shown = append(shown, t)
+		}
+	}
+	if Equal(shown, list) && (len(raw) > 0 || len(old) == 0) {
+		return nil, false
+	}
+
+	used := make([]bool, len(raw))
+	objs := make([][]byte, 0, len(list)+len(raw))
+	for _, t := range list {
+		obj := stringObject(t.String())
+		for i, r := range raw {
+			if !used[i] && r.obj != nil && parse(r.s) == t {
+				obj, used[i] = r.obj, true
+				break
+			}
+		}
+		objs = append(objs, obj)
+	}
+	// The strings that show no tag stay where they were, as near as can be
+	for i, r := range raw {
+		if parse(r.s).Name != "" {
+			continue
+		}
+		obj := r.obj
+		if obj == nil {
+			obj = stringObject(r.s)
+		}
+		objs = slices.Insert(objs, min(i, len(objs)), obj)
+	}
+	if len(objs) == 0 {
+		return nil, true // Nothing left: no attribute
+	}
+	return encodeObjects(objs), true
 }
 
 // Same reports whether two tag names are the same tag: Finder ignores case

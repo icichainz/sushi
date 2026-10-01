@@ -40,6 +40,7 @@ type Options struct {
 	Skip       []string // Names of directories not to enter; the root is always searched
 	Limit      int      // Most results to report; 0 means no limit
 	Everywhere bool     // Search every indexed volume, not just below Root; Spotlight only
+	Tags       bool     // Read the Finder tags of what a name search finds, to show them
 }
 
 // Result is a match: an entry for a name search, or a line of a file for a
@@ -52,7 +53,7 @@ type Result struct {
 	Text  string     // The matching line, trimmed and made safe to display
 	Col   int        // Where the match starts in Text, in runes
 	Score int        // Lower is better; set by the matcher of a name search
-	Tags  []tags.Tag // The entry's Finder tags, for a search by tag
+	Tags  []tags.Tag // The entry's Finder tags, for a search by tag, or by name with Options.Tags
 }
 
 // Matcher reports whether an entry matches a name search, and how well:
@@ -76,7 +77,12 @@ func Names(ctx context.Context, opts Options, match Matcher, emit func(Result)) 
 			return errLimit
 		}
 		found++
-		emit(Result{Path: path, Rel: rel, IsDir: d.IsDir(), Score: score})
+		r := Result{Path: path, Rel: rel, IsDir: d.IsDir(), Score: score}
+		if opts.Tags {
+			// Cheap for untagged files, and only for those that match
+			r.Tags, _ = tags.Read(path)
+		}
+		emit(r)
 		return nil
 	})
 	return finish(err)

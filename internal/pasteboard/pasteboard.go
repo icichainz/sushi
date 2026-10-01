@@ -89,6 +89,30 @@ func (b *Board) Read(ctx context.Context, known int) (Contents, error) {
 	return c, nil
 }
 
+// Count returns the pasteboard's change count, without reading what is on
+// it, which never makes macOS ask the user anything
+func (b *Board) Count(ctx context.Context) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out, err := b.run(ctx, jxa.Prelude+`function run() {
+	return result({count: Number(`+b.board()+`.changeCount)});
+}
+`)
+	if err != nil {
+		return 0, err
+	}
+	var got struct {
+		Count *int `json:"count"`
+	}
+	if err := jxa.Decode(out, &got); err != nil {
+		return 0, err
+	}
+	if got.Count == nil {
+		return 0, errors.New("the pasteboard didn't say its change count")
+	}
+	return *got.Count, nil
+}
+
 // board is the JavaScript expression for the pasteboard
 func (b *Board) board() string {
 	if b.name == "" {

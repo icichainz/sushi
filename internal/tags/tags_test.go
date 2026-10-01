@@ -1,6 +1,7 @@
 package tags
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"slices"
@@ -201,4 +202,74 @@ func FuzzDecode(f *testing.F) {
 			t.Fatalf("%q read back as %q (%v)", list, again, err)
 		}
 	})
+}
+
+// oddObjects are the strings of a tags attribute another tool wrote, as
+// stored: an unpaired surrogate (U+D83C), an empty string, and "c" with
+// the byte 0xE9 in an ASCII string. None reads back the same once decoded.
+var oddObjects = [][]byte{{0x61, 0xD8, 0x3C}, {0x50}, {0x52, 'c', 0xE9}}
+
+// objects returns the string objects of a tags attribute, as stored
+func objects(t *testing.T, data []byte) [][]byte {
+	t.Helper()
+	raw, err := decodeRaw(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var objs [][]byte
+	for _, r := range raw {
+		objs = append(objs, r.obj)
+	}
+	return objs
+}
+
+func TestUpdateKeepsWhatItDoesntChange(t *testing.T) {
+	old := encodeObjects(oddObjects)
+	list, err := Decode(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Tag{{Name: "�"}, {Name: "cé"}}; !Equal(list, want) {
+		t.Fatalf("Decode = %q, want %q", list, want)
+	}
+
+	// Unchanged: nothing to write
+	if value, change := Update(old, list); change || value != nil {
+		t.Fatalf("Update with the same tags = %x, %v", value, change)
+	}
+	// A tag added: the three strings stay byte for byte, the empty one in
+	// its place
+	value, change := Update(old, With(list, Tag{"Red", Red}))
+	if !change {
+		t.Fatal("no change")
+	}
+	want := append(slices.Clone(oddObjects), stringObject("Red\n6"))
+	if got := objects(t, value); !slices.EqualFunc(got, want, bytes.Equal) {
+		t.Fatalf("objects = %x, want %x", got, want)
+	}
+	// And taken off again: as it was
+	if back, change := Update(value, list); !change || !bytes.Equal(back, old) {
+		t.Fatalf("after taking it off: %x, want %x", back, old)
+	}
+	// One of them taken off: only it goes
+	value, _ = Update(old, Without(list, "cé"))
+	if got := objects(t, value); !slices.EqualFunc(got, oddObjects[:2], bytes.Equal) {
+		t.Fatalf("objects = %x", got)
+	}
+	// Every tag taken off: the empty string stays, alone
+	value, _ = Update(old, nil)
+	if got := objects(t, value); !slices.EqualFunc(got, oddObjects[1:2], bytes.Equal) {
+		t.Fatalf("objects = %x", got)
+	}
+
+	// No attribute, or one that can't be read
+	if value, change := Update(nil, nil); change || value != nil {
+		t.Fatal("no tags to write over none")
+	}
+	if value, change := Update([]byte("junk"), nil); !change || value != nil {
+		t.Fatal("junk wasn't removed")
+	}
+	if value, _ := Update([]byte("junk"), []Tag{{"Red", Red}}); !slices.EqualFunc(objects(t, value), [][]byte{stringObject("Red\n6")}, bytes.Equal) {
+		t.Fatal("junk wasn't replaced")
+	}
 }

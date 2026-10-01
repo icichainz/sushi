@@ -13,7 +13,7 @@ Sushi is made for macOS, the only system it supports: it still builds on Linux, 
 - 👀 Quick Look, as the space bar in Finder
 - 📝 Open files in your editor, their default app, or an app you pick; reveal them in Finder
 - 🔍 Fuzzy search within the current directory
-- 🔎 Find files by name, by Finder tag, or by text inside them, with Spotlight, below the current folder or everywhere
+- 🔎 Find files by name, by Finder tag, or by text inside them, below the current folder or, with Spotlight, everywhere
 - 🏷️ Finder tags: see their colors in the list, and add or remove them
 - 🌿 Git status badges and the branch, in repositories
 - ✅ Multi-file selection
@@ -420,7 +420,7 @@ Renaming a folder, or moving it with `x` and `v`, takes the tabs, bookmarks and 
 | `Ctrl+z` | Undo the last operation; press again to go further back (up to 20) |
 | `Ctrl+x` | Cancel the operation running in the background |
 | `y` | Duplicate beside the original, as `name copy.ext`, then `name copy 2.ext`; duplicating `name copy.ext` makes `name copy 2.ext` too |
-| `V` | Paste sushi's clipboard as symbolic links to its files, leaving the pasteboard alone. Never replaces anything |
+| `V` | Paste symbolic links to the files `v` would paste. Never replaces anything |
 | `m` | Change permissions (not recursively): a prompt shows the current mode, such as `644`; type 3 or 4 octal digits. Several items all get the mode typed, and the prompt starts empty when theirs differ. Symlinks are left as they are, as is what they point to |
 | `R` | Bulk rename the selection in `$VISUAL` / `$EDITOR`. Without a selection, the same as `r` |
 | `a` | Compress into a new `.zip`, asking for its name |
@@ -456,21 +456,13 @@ Hidden files are searched when they are shown (`.`). `.git`, `node_modules` and 
 
 #### Spotlight
 
-`f`, `F` and `#` ask Spotlight (`mdfind`), which answers from its index instead of reading every folder. When Spotlight found the results, the palette's footer says so after where it looked, as in `in ~/projects · Spotlight`. Sushi walks the folder itself, reading every name and file, when:
+Below a folder, `f`, `F` and `#` walk it, reading every name and file, so they find everything there, indexed by Spotlight or not: hidden folders when they are shown, folders kept out of Spotlight, files too new to be indexed yet, fuzzy matches, and the text of source code, YAML and Makefiles, which Spotlight doesn't read. Spotlight (`mdfind`) searches alongside: it answers from its index at once, where walking a large folder takes a while, so what it finds shows first, and the walk adds the rest; each result is listed once. For `F`, Spotlight adds only the documents whose text a walk can't read, such as PDFs: they are listed as files, without a line, and the palette's footer says so after where it looked, as in `in ~/projects · Spotlight`. Spotlight is stopped once the walk is done, or for `F`, 4 seconds after; if it is missing or fails, the walk's results are all there is.
 
-- Hidden files are shown (`.`), as Spotlight doesn't index hidden folders
-- Spotlight finds nothing, so "No matches" means there are none
-- Spotlight has found nothing after 4 seconds, as when it is busy indexing
-- `mdfind` is missing or fails
+`Ctrl+e` searches everywhere Spotlight looks: every volume it indexes, with results outside the folder shown by their full path. Only Spotlight can do that, and it trades some results for speed:
 
-`Ctrl+e` searches everywhere Spotlight looks: every volume it indexes, with results outside the folder shown by their full path. Only Spotlight can do that; a search everywhere that it can't do says so.
-
-Spotlight trades some results for speed:
-
-- A name search through Spotlight finds names that contain the query, ignoring case. Fuzzy matches, such as `mgo` for `main.go`, come only from a walk.
-- Once Spotlight finds a match, the folder isn't walked, so what Spotlight hasn't indexed is left out: folders kept out of Spotlight, files too new to be indexed yet, and for `F`, files whose text Spotlight doesn't read. Show hidden files (`.`) to search by walking instead.
-- `F` also finds text in documents Spotlight reads, such as PDFs, which a walk skips. They are listed as files, without a line. In text files, every line that contains the query is listed, as with a walk.
-- Spotlight takes a moment to answer, so in a small folder results may come later than a walk's.
+- A name search finds names that contain the query, ignoring case. Fuzzy matches, such as `mgo` for `main.go`, come only from a walk.
+- What Spotlight hasn't indexed is left out: hidden and excluded folders, files too new to be indexed yet, and for `F`, text Spotlight doesn't read, such as source code. In the text files it did read, every line that contains the query is listed, as with a walk.
+- Without `mdfind`, the palette says `Spotlight isn't available, so only this folder can be searched`. A search Spotlight hasn't finished after 30 seconds gives up, and says so.
 
 ### View and Bookmarks
 
@@ -547,40 +539,42 @@ In a Git repository, the file list has a narrow column after the selection marke
 
 | Badge | Meaning |
 | ----- | ------- |
-| `M` | Modified. On a folder: something inside is changed or untracked |
+| `M` | Modified. On a folder: something inside is changed |
 | `A` | Added to the index, or copied |
 | `R` | Renamed |
 | `D` | Deleted from the index but still on disk, as after `git rm --cached` |
-| `?` | Untracked |
+| `?` | Untracked. On a folder: all that is new inside is untracked, as in a new folder |
 | `!` | Ignored. The row is drawn faint, as is everything in an ignored folder |
 | `U` | In conflict. On a folder: a conflict inside |
 
 An entry with more than one status shows the strongest, from `U` down: `U`, `R`, `A`, `D`, `M`, `?`, `!`. The badges take the theme's colors `git_modified` (`M`), `git_added` (`A` and `R`), `git_untracked` (`?`) and `danger` (`D` and `U`).
 
-The breadcrumb shows the branch on the right, before the sort order: `⎇ main` (`git:main` with `--ascii`), or the commit for a detached HEAD, as in `⎇ (1a2b3c4)`, with a `*` once anything in the repository is changed or untracked. Where the row is tight, the branch takes the sort order's place, and a long name is shortened.
+The breadcrumb shows the branch on the right, before the sort order: `⎇ main` (`git:main` with `--ascii`), or the commit for a detached HEAD, as in `⎇ (1a2b3c4)`, with a `*` once anything in the repository is changed or untracked. Where the row is tight, the branch takes the sort order's place, and is shortened, or left out, so that the current folder's name stays whole.
 
-Sushi runs `git status` in the background each time a folder loads, which includes the reloads when files change and `Ctrl+r`. It only reads: with `GIT_OPTIONAL_LOCKS=0`, git doesn't refresh the index, so sushi never writes to the repository or takes a lock that git in another terminal could trip over. A folder that git takes more than 2 seconds to read, or where git fails, is given up on until you move to another folder or press `Ctrl+r`. Sushi watches the folder's files, not the repository, so a commit made in another terminal shows after the next change in the folder, or `Ctrl+r`.
+Sushi runs `git status` in the background each time a folder loads, which includes the reloads when files change and `Ctrl+r`. It also watches the repository's `HEAD`, index and branches, so a commit, checkout or `git add` in another terminal updates the badges and the branch at once, without reloading the list. It only reads: with `GIT_OPTIONAL_LOCKS=0`, git doesn't refresh the index, so sushi never writes to the repository or takes a lock that git in another terminal could trip over. A folder that git takes more than 2 seconds to read, or where git fails, is given up on until you move to another folder or press `Ctrl+r`. Sushi ignores the `GIT_` variables that point git at a repository, as `GIT_DIR` and `GIT_WORK_TREE` do in a shell started by a git hook, so every folder shows as what it is.
+
+Browsing a repository never runs a program the repository names. Its own configuration, which comes along when a folder is downloaded, AirDropped or unpacked, can name programs for git to run: a file system monitor (`core.fsmonitor`) and filters (`filter.<name>.clean`, `smudge` and `process`), which `git status` runs on files to compare them. So sushi always runs git with the file system monitor and hooks off, and doesn't look inside the work trees of submodules, which have configurations of their own: a submodule shows `M` once its checked-out commit changes, and the changes inside it show once you go in. In a repository whose own configuration (`.git/config`, the files it includes, or a work tree's `config.worktree`) sets `core.fsmonitor`, a filter, `core.sshCommand` or a credential helper, sushi doesn't run `git status` at all: the breadcrumb shows the branch, without the `*` as the changes aren't known, there are no badges, and the status bar says once `Git badges off for this repository: it configures filters/fsmonitor; see README`. Reading the configuration and the branch runs nothing. The same settings in your own `~/.gitconfig` don't count, so Git LFS installed for your account (`git lfs install`) keeps the badges; installed for one repository (`git lfs install --local`), it turns them off there.
 
 `git: false` in the config turns the badges and the branch off.
 
 ## Finder Tags
 
-Finder tags show after the name as a dot for each of their colors, then `○` for tags without a color (`*` and `o` with `--ascii`). They keep Finder's colors in every theme. Dots that don't fit are left out, rather than leave the name fewer than 4 columns. Old-style color labels show as tags of their color too, and are kept in step when tags change. As in Finder, a symbolic link has tags of its own, apart from what it points to.
+Finder tags show after the name as a dot for each of their colors, then `○` for tags without a color (`*` and `o` with `--ascii`). They keep Finder's colors in every theme. Dots that don't fit are left out, rather than leave the name fewer than 4 columns. Old-style color labels show as tags of their color too, and are kept in step when tags change. As in Finder, a symbolic link has tags of its own, apart from what it points to. Copies, duplicates and moves to another drive keep the tags. On network volumes (SMB, AFP, NFS) the list shows no dots, as reading the tags would take a round trip to the server for every file; `L` still shows and changes them.
 
 `L` opens the tag picker for the selection, or the file under the cursor. It lists Finder's seven colors, then the other tags used in the folder, each marked `[x]` if every file has it, `[-]` if only some do, and `[ ]` if none do, with a field below for a new tag:
 
 | Key | Action |
 | --- | ------ |
 | `Space` / `Enter` | Tick or untick the tag. On `[-]`, it gives the tag to the files that don't have it |
-| `↑`/`↓`, `Ctrl+p`/`Ctrl+n` | Move |
+| `↑`/`↓`, `Ctrl+p`/`Ctrl+n`, and on the list `k`/`j` (the up and down keys, as remapped) | Move |
 | `Tab` | Switch between the list and the field |
-| Typing | Type in the field, from anywhere in the list |
+| Typing | Type in the field, from anywhere in the list but for the up and down keys |
 | `Enter` in the field | Add the tag typed. With the field empty, close |
 | `Esc` | Close |
 
 The mouse works too: click a tag to tick it, the field to type in it, or outside to close. Changes are written at once, as in Finder. `Ctrl+z` afterwards undoes everything the picker changed, file by file; a file whose tags have changed again since is left as it is.
 
-`#` opens the Find palette on every tagged file and folder below this one; type the start of a tag's name to narrow it down. In a name search (`f`), a query that starts with `#` or `tag:` looks for tags: `#Red` or `tag:red` finds entries with a tag whose name starts with `Red`, ignoring case, those with a tag of exactly that name first. Results show their tags' dots. In a text search (`F`), `#` is just text.
+`#` opens the Find palette on every tagged file and folder below this one; type the start of a tag's name to narrow it down. In a name search (`f`), a query that starts with `#` or `tag:` looks for tags: `#Red` or `tag:red` finds entries with a tag whose name starts with `Red`, ignoring case, those with a tag of exactly that name first. Results show their tags' dots, as do those of a search by name. To find names that start with `#` or `tag:`, put a backslash first: `\#autosave#` finds `#autosave#.txt`. In a text search (`F`), `#` is just text.
 
 `tags: false` in the config hides the dots, leaves `L` and `#` without keys, and makes `#` in the Find palette plain text.
 
@@ -592,7 +586,7 @@ The mouse works too: click a tag to tick it, the field to type in it, or outside
 
 `c` and `x` also put the files on the macOS pasteboard, so `Cmd+V` in Finder pastes them. Finder has no cut for files, so files cut in sushi paste in Finder as a copy; pasted in sushi with `v`, they still move.
 
-`v` pastes the files Finder or another app has put on the pasteboard since sushi last put its own there, as a copy, asking before overwriting anything. Otherwise it pastes sushi's clipboard. Files pasted from the pasteboard become sushi's clipboard, so `v` pastes them again. `V` pastes only sushi's clipboard, as symbolic links. Reading the files another app put on the pasteboard can make macOS ask whether to allow it.
+`v` pastes the files Finder or another app has put on the pasteboard while sushi runs, and since sushi last put its own there, as a copy, asking before overwriting anything; the status bar says `Pasting 2 items copied in Finder`. Otherwise it pastes sushi's clipboard. What was on the pasteboard when sushi started, however long ago it was copied, is left alone. Files pasted from the pasteboard become sushi's clipboard, so `v` pastes them again. `V` takes the same files as `v`, and pastes symbolic links to them. Reading the files another app put on the pasteboard can make macOS ask whether to allow it. While sushi reads the pasteboard the status bar says `Reading the pasteboard…`; if a dialog opens meanwhile, the paste is cancelled, and the status bar says so.
 
 Sushi reaches the pasteboard through `osascript`. Where it can't, as over SSH, copying says `Can't share the clipboard with Finder`, and the files stay in sushi's clipboard for `v`. `pasteboard: false` in the config leaves the pasteboard alone.
 
@@ -600,9 +594,11 @@ In the [macOS app](#macos-app), `Cmd+C` and `Cmd+V` remain the terminal's text c
 
 ## Open With and Reveal in Finder
 
-`O` lists the apps that can open the file under the cursor, or the selection's first file, as Finder's Open With menu does: each with the folder it is in, and the default app first, marked `●` (`*` with `--ascii`). `Enter` or a double-click opens every file with the app chosen, `↑`/`↓` and `g`/`G` move, and `Esc` closes the list. The apps are looked up once for each extension, and remembered until sushi quits; for folders and files without an extension, they are looked up each time.
+`O` lists the apps that can open the file under the cursor, or the selection's first file, as Finder's Open With menu does: each with the folder it is in, and the default app first, marked `●` (`*` with `--ascii`). `Enter` or a double-click opens every file with the app chosen, `↑`/`↓` and `g`/`G` move, and `Esc` closes the list. The apps are looked up once for each extension, and remembered until `Ctrl+r`; for folders, files without an extension, and files given an app of their own in Finder's Get Info, they are looked up each time.
 
 `Ctrl+o` shows the file in Finder, selected in a window of its folder. With a selection, all of it is selected.
+
+Sushi reaches macOS for these, and for the pasteboard, through `osascript` and `open`, which get 10 seconds each: one that takes longer, as when Launch Services or the pasteboard server hangs, is stopped, and the status bar says so.
 
 ## Trash and Undo
 
@@ -629,7 +625,7 @@ Copy, move, delete, trash, duplicate, compress, extract and undo run in the back
 Copying 3/120 files 45% ████░░░░░░
 ```
 
-Where the status bar is short of room, the progress drops its bar, as in `Copying 3/120 45%`. You can keep browsing meanwhile. Keys that change files are refused until the operation finishes or you cancel it with `Ctrl+x`, with a message beside the progress (`Still copying: wait, or ctrl+x to cancel`), and so are plugins, the Run palette, opening files in other programs (`e`, `o`, `O`), Quick Look (`i`) and showing files in Finder (`Ctrl+o`). A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q`, `Q` and closing the last tab stop a running operation before quitting; press the key again to quit at once, and sushi still waits a few seconds for the operation to clean up. Files are copied, and zips written, under a hidden `.sushi-partial-` name and renamed once complete, so nothing half-written ever has its real name; if sushi is killed, what it leaves is removed when its folder is listed a day later. Copies keep their permissions and modification times.
+Where the status bar is short of room, the progress drops its bar, as in `Copying 3/120 45%`. You can keep browsing meanwhile. Keys that change files are refused until the operation finishes or you cancel it with `Ctrl+x`, with a message beside the progress (`Still copying: wait, or ctrl+x to cancel`), and so are plugins, the Run palette, opening files in other programs (`e`, `o`, `O`), Quick Look (`i`), showing files in Finder (`Ctrl+o`) and changing Finder tags (`L`). A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q`, `Q` and closing the last tab stop a running operation before quitting; press the key again to quit at once, and sushi still waits a few seconds for the operation to clean up. Files are copied, and zips written, under a hidden `.sushi-partial-` name and renamed once complete, so nothing half-written ever has its real name; if sushi is killed, what it leaves is removed when its folder is listed a day later. Copies keep their permissions, modification times, Finder tags and other extended attributes, as Finder's do; an attribute the destination can't take, as on a drive without them, is left behind.
 
 ## Requirements
 

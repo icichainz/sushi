@@ -2,10 +2,14 @@ package jxa
 
 import (
 	"context"
+	"errors"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/icichainz/sushi/internal/testutil"
 )
 
 func TestLiteral(t *testing.T) {
@@ -52,6 +56,28 @@ func TestScriptError(t *testing.T) {
 		if got := scriptError(stderr); got != want {
 			t.Errorf("scriptError(%q) = %q, want %q", stderr, got, want)
 		}
+	}
+}
+
+func TestOsascriptGivesUp(t *testing.T) {
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("uses a shell script")
+	}
+	// An osascript that hangs, and leaves something holding its output
+	bin := t.TempDir()
+	testutil.Script(t, filepath.Join(bin, "osascript"), "#!/bin/sh\n"+testutil.Warm+sleep+" 30 &\nwait\n")
+	t.Setenv("PATH", bin)
+	defer func(d time.Duration) { Timeout = d }(Timeout)
+	Timeout = 200 * time.Millisecond
+
+	start := time.Now()
+	_, err = Osascript(context.Background(), "function run() {}")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the deadline", err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("gave up after %v", took)
 	}
 }
 

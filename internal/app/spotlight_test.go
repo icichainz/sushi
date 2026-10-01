@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +51,7 @@ func TestFindScopeTogglesWithCtrlE(t *testing.T) {
 	m, cmd := ctrl(t, m, tea.KeyCtrlE)
 	m = drain(t, m, cmd)
 	view := strings.Join(plain(m.View()), "\n")
-	if !m.find.everywhere || !strings.Contains(view, "Find files everywhere") || !strings.Contains(view, "searching everywhere needs Spotlight") {
+	if !m.find.everywhere || !strings.Contains(view, "Find files everywhere") || !strings.Contains(view, "Spotlight isn't available, so only this folder can be searched") {
 		t.Fatalf("after ctrl+e:\n%s", view)
 	}
 
@@ -79,6 +81,30 @@ func TestFindScopeTogglesWithCtrlE(t *testing.T) {
 	m = drain(t, m, cmd)
 	if m.tab().CurrentPath != filepath.Dir(elsewhere) || cursorName(m) != "match.txt" {
 		t.Fatalf("after enter: in %s on %s", m.tab().CurrentPath, cursorName(m))
+	}
+}
+
+// failingEngine fails every search with err
+type failingEngine struct{ err error }
+
+func (e failingEngine) Search(context.Context, search.Options, search.Query, func(search.Result)) (search.Report, error) {
+	return search.Report{}, e.err
+}
+
+func TestFindSaysWhySpotlightCantSearch(t *testing.T) {
+	root := makeTree(t, map[string]string{"a.txt": ""})
+	for err, want := range map[error]string{
+		search.ErrNoSpotlight:                                          "Spotlight isn't available, so only this folder can be searched",
+		fmt.Errorf("%w after 30s", search.ErrGaveUp):                   "Spotlight took too long, so the search gave up after 30s",
+		fmt.Errorf("%w: exit status 1: no index", search.ErrSpotlight): "Spotlight can't search: exit status 1: no index",
+		errors.New("open /x: permission denied"):                       "Can't search: open /x: permission denied",
+	} {
+		useEngine(t, failingEngine{err})
+		m := find(t, newTestModel(t, root, nil), "f", "zz")
+		view := strings.Join(plain(m.View()), "\n")
+		if !strings.Contains(view, " "+want) || strings.Count(view, "an't search") > 1 {
+			t.Errorf("%v: palette:\n%s", err, view)
+		}
 	}
 }
 

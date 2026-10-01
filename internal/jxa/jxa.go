@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -32,13 +33,24 @@ function result(v) {
 }
 `
 
+// Timeout is the longest Osascript lets a script run, whatever its
+// context allows: the pasteboard server or Launch Services can hang. Tests
+// lower it.
+var Timeout = 10 * time.Second
+
 // Osascript runs script with osascript, giving it the script on standard
-// input, which has no length limit as arguments do
+// input, which has no length limit as arguments do. It gives up after
+// Timeout.
 func Osascript(ctx context.Context, script string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, "osascript", "-l", "JavaScript")
 	cmd.Stdin = strings.NewReader(script)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	// Something osascript started could keep its output open once it is
+	// killed
+	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() != nil {
