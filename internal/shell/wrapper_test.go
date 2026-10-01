@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/icichainz/sushi/internal/testutil"
 )
 
 // needShell returns the path of a shell, skipping the test if it's missing
@@ -55,6 +57,7 @@ func fakeSushi(t *testing.T) string {
 	t.Helper()
 	bin := t.TempDir()
 	script := `#!/bin/sh
+[ "$1" = warm ] && exit 0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--cwd-file) file="$2"; shift 2 ;;
@@ -64,9 +67,7 @@ done
 if [ -n "$TARGET" ]; then printf '%s' "$TARGET" > "$file"; fi
 exit "${CODE:-0}"
 `
-	if err := os.WriteFile(filepath.Join(bin, "sushi"), []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Script(t, filepath.Join(bin, "sushi"), script)
 	return bin
 }
 

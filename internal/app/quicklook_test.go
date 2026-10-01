@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/icichainz/sushi/internal/testutil"
 )
 
 // fakeQlmanage puts a stand-in for qlmanage alone on PATH, so the real one
@@ -20,8 +22,8 @@ func fakeQlmanage(t *testing.T) (bin string) {
 		t.Skip("uses a shell script")
 	}
 	bin = t.TempDir()
-	script := fmt.Sprintf("#!/bin/sh\n[ \"$1\" = warm ] && exit 0\nprintf '%%s\\n' \"$@\" > \"%s/$$.args\"\nexec %s 60\n", bin, sleep)
-	warmUp(t, filepath.Join(bin, "qlmanage"), script)
+	script := fmt.Sprintf("#!/bin/sh\n%sprintf '%%s\\n' \"$@\" > \"%s/$$.args\"\nexec %s 60\n", testutil.Warm, bin, sleep)
+	testutil.Script(t, filepath.Join(bin, "qlmanage"), script)
 	t.Setenv("PATH", bin)
 	return bin
 }

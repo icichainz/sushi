@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/icichainz/sushi/internal/testutil"
 )
 
 // fakeTools points the PDF preview at stand-ins for pdftotext and pdfinfo
@@ -22,9 +24,7 @@ func fakeTools(t *testing.T, toText, info string) {
 	for name, script := range map[string]string{"pdftotext": toText, "pdfinfo": info} {
 		path := filepath.Join(bin, name)
 		if script != "" {
-			if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script+"\n"), 0755); err != nil {
-				t.Fatal(err)
-			}
+			testutil.Script(t, path, "#!/bin/sh\n"+testutil.Warm+script+"\n")
 		}
 		if name == "pdftotext" {
 			pdfToText = path

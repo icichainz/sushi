@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/git/gittest"
+	"github.com/icichainz/sushi/internal/testutil"
 	"github.com/icichainz/sushi/internal/ui"
 	"github.com/icichainz/sushi/internal/utils"
 )
@@ -256,28 +257,15 @@ func fakeGit(t *testing.T, sleep int) (calls string) {
 	}
 	bin := t.TempDir()
 	calls = filepath.Join(bin, "calls")
-	script := fmt.Sprintf("#!/bin/sh\n[ \"$1\" = warm ] && exit 0\necho \"$*\" >> %s\n", calls)
+	script := fmt.Sprintf("#!/bin/sh\n%secho \"$*\" >> %s\n", testutil.Warm, calls)
 	if sleep > 0 {
 		script += fmt.Sprintf("exec %s %d\n", sleepCmd, sleep)
 	} else {
 		script += "echo 'fatal: not a git repository (or any of the parent directories): .git' >&2\nexit 128\n"
 	}
-	warmUp(t, filepath.Join(bin, "git"), script)
+	testutil.Script(t, filepath.Join(bin, "git"), script)
 	t.Setenv("PATH", bin)
 	return calls
-}
-
-// warmUp writes a script to path and runs it once with the argument warm.
-// macOS can take seconds to run a new script the first time, which would
-// count against the time limits being tested.
-func warmUp(t *testing.T, path, script string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := exec.Command(path, "warm").Run(); err != nil {
-		t.Fatalf("running %s: %v", path, err)
-	}
 }
 
 // runs counts the runs of git status the active tab has started

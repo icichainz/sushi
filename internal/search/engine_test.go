@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/icichainz/sushi/internal/tags"
+	"github.com/icichainz/sushi/internal/testutil"
 )
 
 // fakeSpotlight puts a stand-in for mdfind on PATH. It records its
@@ -40,6 +41,7 @@ func TestMain(m *testing.M) {
 // fakeScript takes what to do from the environment. Its sleep doesn't
 // hold the pipes, so killing the script closes them.
 const fakeScript = `#!/bin/sh
+[ "$1" = warm ] && exit 0
 printf '%s\n' "$@" > "$FAKE_MDFIND_DIR/args"
 [ -n "$FAKE_MDFIND_SLEEP" ] && sleep "$FAKE_MDFIND_SLEEP" >/dev/null 2>&1
 cat "$FAKE_MDFIND_DIR/out"
@@ -54,12 +56,10 @@ func (f *fakeSpotlight) install(t *testing.T) {
 	}
 	if fakeBin == "" {
 		bin, err := os.MkdirTemp("", "fake-mdfind")
-		if err == nil {
-			err = os.WriteFile(filepath.Join(bin, "mdfind"), []byte(fakeScript), 0755)
-		}
 		if err != nil {
 			t.Fatal(err)
 		}
+		testutil.Script(t, filepath.Join(bin, "mdfind"), fakeScript)
 		fakeBin = bin
 	}
 	dir := t.TempDir()

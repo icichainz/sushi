@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/icichainz/sushi/internal/git/gittest"
+	"github.com/icichainz/sushi/internal/testutil"
 )
 
 // porcelain joins records as git status -z prints them
@@ -254,16 +255,9 @@ func TestReadGivesUpInTime(t *testing.T) {
 	if err != nil {
 		t.Skip("uses a shell script")
 	}
-	// A git that takes far too long, as on a huge repository. It is run
-	// once first, as macOS can take seconds to start a new script.
+	// A git that takes far too long, as on a huge repository
 	bin := t.TempDir()
-	fake := filepath.Join(bin, "git")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\n[ \"$1\" = warm ] && exit 0\nexec "+sleep+" 30\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := exec.Command(fake, "warm").Run(); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Script(t, filepath.Join(bin, "git"), "#!/bin/sh\n"+testutil.Warm+"exec "+sleep+" 30\n")
 	t.Setenv("PATH", bin)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)

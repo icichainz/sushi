@@ -21,6 +21,7 @@ import (
 	"github.com/icichainz/sushi/internal/config"
 	"github.com/icichainz/sushi/internal/fs"
 	"github.com/icichainz/sushi/internal/plugins"
+	"github.com/icichainz/sushi/internal/testutil"
 	"github.com/icichainz/sushi/internal/ui/components"
 	"github.com/icichainz/sushi/internal/utils"
 )
@@ -1237,7 +1238,7 @@ func drain(t *testing.T, m Model, cmd tea.Cmd) Model {
 		}
 		updated, next := m.Update(msg)
 		return drain(t, updated.(Model), next)
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("command did not finish")
 		return m
 	}
@@ -1389,10 +1390,7 @@ func fakeOpener(t *testing.T) (record string) {
 	if runtime.GOOS == "darwin" {
 		name = "open"
 	}
-	script := "#!/bin/sh\nprintf '%s' \"$1\" > " + record + "\n"
-	if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.Script(t, filepath.Join(bin, name), "#!/bin/sh\n"+testutil.Warm+"printf '%s' \"$1\" > "+record+"\n")
 	t.Setenv("PATH", bin)
 	return record
 }
@@ -1537,8 +1535,8 @@ func TestScriptPluginsAreDiscovered(t *testing.T) {
 	t.Setenv("HOME", home)
 	dir := filepath.Join(home, ".config", "sushi", "plugins")
 	os.MkdirAll(dir, 0755)
-	script := "#!/bin/sh\n# sushi-key: ctrl+g\n# sushi-mode: background\n# sushi-description: Says hi\necho hi from script\n"
-	os.WriteFile(filepath.Join(dir, "greet.sh"), []byte(script), 0755)
+	script := "#!/bin/sh\n# sushi-key: ctrl+g\n# sushi-mode: background\n# sushi-description: Says hi\n" + testutil.Warm + "echo hi from script\n"
+	testutil.Script(t, filepath.Join(dir, "greet.sh"), script)
 
 	updated, _ := NewModelWithConfig(t.TempDir(), config.DefaultConfig()).Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m := updated.(Model)
