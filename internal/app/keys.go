@@ -290,6 +290,7 @@ func dialogKeys() []dialogKey {
 		{"the sort menu", []string{"up", "down", "reverse"}, sortMenu},
 		{"the Run palette", []string{"up", "down", "shell"}, map[string]string{
 			"esc": "closes it", "enter": "runs the plugin", "tab": "switches to the command", "shift+tab": "switches to the command"}},
+		{"the Open with list", []string{"up", "down", "home", "end"}, map[string]string{"esc": "closes it", "enter": "opens with the app"}},
 	}
 }
 

@@ -1,5 +1,6 @@
 // Package opener builds the commands that open files in an editor or with
-// the desktop's default application
+// the desktop's default application, and on macOS lists the other apps
+// that can open a file and shows files in Finder (see apps.go)
 package opener
 
 import (

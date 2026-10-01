@@ -12,30 +12,39 @@ import (
 )
 
 func init() {
-	// No test reaches the real pasteboard: it is off, unless a test stands
-	// in for macOS with useFakeMac
+	// No test reaches the real pasteboard, Launch Services or Finder: the
+	// pasteboard is off, and Open With and Finder say they need macOS,
+	// unless a test stands in for macOS with useFakeMac
 	onMac = false
 	osascript = func(context.Context, string) ([]byte, error) {
 		return nil, errors.New("osascript isn't run in tests")
 	}
+	runOpen = func(...string) ([]byte, error) {
+		return nil, errors.New("open isn't run in tests")
+	}
 }
 
-// fakeMac stands in for macOS: a pasteboard
+// fakeMac stands in for macOS: a pasteboard, the apps Launch Services
+// knows, and open(1) and Finder, which only record what they are asked
 type fakeMac struct {
-	mu    sync.Mutex
-	count int      // The pasteboard's change count
-	files []string // The files on it
-	reads int      // Reads of the pasteboard
-	fail  error    // Every osascript call fails with it, if set
+	mu       sync.Mutex
+	count    int      // The pasteboard's change count
+	files    []string // The files on it
+	apps     string   // What the app lookup answers, as JSON
+	lookups  []string // Scripts that looked apps up
+	reads    int      // Reads of the pasteboard
+	opened   [][]string
+	revealed [][]string
+	fail     error // Every osascript call fails with it, if set
 }
 
 // useFakeMac makes sushi think it runs on macOS, with f for its parts
 func useFakeMac(t *testing.T) *fakeMac {
 	t.Helper()
 	f := &fakeMac{count: 100}
-	oldMac, oldRun := onMac, osascript
-	onMac, osascript = true, f.osascript
-	t.Cleanup(func() { onMac, osascript = oldMac, oldRun })
+	oldMac, oldRun, oldOpen := onMac, osascript, runOpen
+	onMac, osascript, runOpen = true, f.osascript, f.open
+	t.Cleanup(func() { onMac, osascript, runOpen = oldMac, oldRun, oldOpen })
 	return f
 }
 
@@ -70,8 +79,24 @@ func (f *fakeMac) osascript(_ context.Context, script string) ([]byte, error) {
 			files = []byte("[]")
 		}
 		return fmt.Appendf(nil, `{"count":%d,"files":%s}`, f.count, files), nil
+	case strings.Contains(script, "URLsForApplicationsToOpenURL"):
+		f.lookups = append(f.lookups, script)
+		return []byte(f.apps), nil
+	case strings.Contains(script, "activateFileViewerSelectingURLs"):
+		f.revealed = append(f.revealed, scriptPaths(script))
+		return []byte("{}"), nil
 	}
 	return nil, errors.New("unexpected script")
+}
+
+func (f *fakeMac) open(args ...string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return []byte("LSOpenURLsWithRole() failed\n"), f.fail
+	}
+	f.opened = append(f.opened, args)
+	return nil, nil
 }
 
 // finderCopies puts files on the pasteboard, as Cmd+C in Finder does

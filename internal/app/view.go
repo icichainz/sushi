@@ -95,6 +95,8 @@ func (m Model) View() string {
 		lines = m.withDialog(lines, m.sortBox())
 	case ModeFind:
 		lines = m.withDialog(lines, m.findBox())
+	case ModeOpenWith:
+		lines = m.withDialog(lines, m.openWithBox())
 	case ModeHelp:
 		lines = m.withHelp(lines)
 	}
@@ -656,6 +658,8 @@ func (m Model) modeBadge() (string, lipgloss.Color) {
 		return "SORT", t.Accent
 	case ModeFind:
 		return "FIND", t.Accent
+	case ModeOpenWith:
+		return "OPEN WITH", t.Accent
 	case ModeHelp:
 		return "KEYS", t.Accent
 	}
@@ -823,6 +827,8 @@ func (m Model) renderBottomRow() string {
 		return m.renderHints([]hint{{sortLetters(), "sort by"}, {"enter", "choose"}, keyHint("reverse", k.Reverse), {"esc", "close"}})
 	case ModeFind:
 		return m.renderHints(m.findHints())
+	case ModeOpenWith:
+		return m.renderHints(m.openWithHints())
 	case ModeHelp:
 		if m.maxHelpScroll() > 0 {
 			return m.renderHints([]hint{{"esc", "close"}, {keysLabel("/", k.Down, k.Up), "scroll"}, {"any other key", "does what it says"}})
@@ -1058,7 +1064,7 @@ func (k KeyMap) helpGroups() []helpGroup {
 		{"Tools", []hint{keyHint("undo", k.Undo), keyHint("cancel operation", k.Cancel), keyHint("duplicate, paste link", k.Duplicate, k.PasteLink),
 			keyHint("chmod, bulk rename", k.Chmod, k.BulkRename), keyHint("zip, extract", k.Archive, k.Extract)}},
 		{"Select", []hint{keyHint("toggle", k.Select), keyHint("invert", k.Invert), keyHint("clear", k.Unselect),
-			keyHint("copy, cut, paste", k.Copy, k.Cut, k.Paste)}},
+			keyHint("copy, cut, paste", k.Copy, k.Cut, k.Paste), keyHint("open with, reveal", k.OpenWith, k.Reveal)}},
 		{"View", []hint{keyHint("search", k.Search), keyHint("preview", k.Preview), keyHint("scroll preview", k.PreviewDown, k.PreviewUp),
 			keyHint("hidden files", k.Hidden), keyHint("this panel", k.Help)}},
 		{"Find", []hint{keyHint("find by name", k.Find), keyHint("find in files", k.Grep), keyHint("sort by, reverse", k.Sort, k.Reverse),

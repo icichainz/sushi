@@ -104,7 +104,8 @@ type Model struct {
 	watch        *dirWatcher // Reloads tabs when their directories change; nil when off
 	keepShellDir bool        // Quit with Q: don't tell the shell to change directory
 
-	pb pbState // What sushi knows of the macOS pasteboard; see pasteboard.go
+	pb       pbState       // What sushi knows of the macOS pasteboard; see pasteboard.go
+	openWith openWithState // The Open with list; see openwith.go
 }
 
 // tab returns a pointer to the active tab
@@ -166,6 +167,7 @@ const (
 	ModePlugins
 	ModeSort
 	ModeFind
+	ModeOpenWith
 )
 
 // KeyMap defines all key bindings. Each field is an action that keys: in
@@ -184,6 +186,8 @@ type KeyMap struct {
 	Delete      key.Binding
 	Edit        key.Binding
 	Open        key.Binding
+	OpenWith    key.Binding
+	Reveal      key.Binding
 	Rename      key.Binding
 	NewFile     key.Binding
 	NewDir      key.Binding
@@ -280,6 +284,15 @@ func DefaultKeyMap() KeyMap {
 		Open: key.NewBinding(
 			key.WithKeys("o"),
 			key.WithHelp("o", "open with default app"),
+		),
+		// macOS; see openwith.go
+		OpenWith: key.NewBinding(
+			key.WithKeys("O"),
+			key.WithHelp("O", "open with app"),
+		),
+		Reveal: key.NewBinding(
+			key.WithKeys("ctrl+o"),
+			key.WithHelp("ctrl+o", "reveal in Finder"),
 		),
 		Rename: key.NewBinding(
 			key.WithKeys("r"),
