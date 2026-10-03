@@ -35,8 +35,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		// A taller pane scrolls less far; every tab's pane is as tall
-		for i := range m.tabs {
-			tab := &m.tabs[i]
+		for _, tab := range m.panes() {
 			tab.PreviewScroll = min(tab.PreviewScroll, tab.Preview.MaxScroll(m.previewRows()))
 		}
 		return m, nil
@@ -72,7 +71,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			focus = tab.CurrentPath
 		}
 
-		oldCursor := tab.Cursor
+		oldCursor, from := tab.Cursor, tab.CurrentPath
 		tab.setFiles(msg.files)
 		tab.ParentFiles = msg.parent
 		tab.CurrentPath = msg.path
@@ -100,7 +99,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateSearchResults()
 			m.cursorToMatch()
 		}
-		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt, m.gitAfterLoad(tab))
+		// For [, ] and z; see history.go
+		visit := m.noteVisit(tab, from)
+		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt, m.gitAfterLoad(tab), visit)
 		return m, cmd
 
 	case previewLoadedMsg:
@@ -195,7 +196,9 @@ var maxPreviewLines = 20000
 // shown. A text preview reads its usual lines, or enough to show the line
 // of a search result being opened, and on a reload as many as it had.
 func (m *Model) previewCmd(tab *Tab) tea.Cmd {
-	if !tab.PreviewEnabled || len(tab.Files) == 0 {
+	// The inactive pane of a dual-pane tab shows no preview; it loads one
+	// once active (see dual.go)
+	if !tab.PreviewEnabled || len(tab.Files) == 0 || m.isInactivePane(tab) {
 		return nil
 	}
 	file := tab.Files[tab.Cursor]
@@ -321,6 +324,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.mode == ModeTags {
 		return m.handleTagMode(msg)
+	}
+	if m.mode == ModeJump {
+		return m.handleJumpMode(msg)
 	}
 
 	// Plugin shortcuts; bindPluginKeys keeps them clear of built-in keys
@@ -504,6 +510,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case m.keys.isToolKey(msg):
 		return m.handleToolKey(msg)
+
+	case m.keys.isPaneKey(msg):
+		// Dual pane and folder history; see dual.go
+		return m.handlePaneKey(msg)
 
 	case key.Matches(msg, m.keys.Search):
 		m.mode = ModeSearch
@@ -868,7 +878,7 @@ func (m Model) handleConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "n", "N", "esc", "q":
 		m.mode = ModeNormal
-		m.pending, m.pasteDir = nil, ""
+		m.pending, m.pasteDir, m.sending = nil, "", nil
 		cmd := m.setStatus("Cancelled")
 		return m, cmd
 	}

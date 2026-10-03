@@ -87,7 +87,12 @@ func press(t *testing.T, m Model, k string) (Model, tea.Cmd) {
 func detach(m Model) Model {
 	m.tabs = slices.Clone(m.tabs)
 	for i := range m.tabs {
-		tab := &m.tabs[i]
+		if s := m.tabs[i].split; s != nil {
+			copied := *s
+			m.tabs[i].split = &copied
+		}
+	}
+	for _, tab := range m.panes() {
 		tab.Files = slices.Clone(tab.Files)
 		tab.ParentFiles = slices.Clone(tab.ParentFiles)
 		tab.Selected = maps.Clone(tab.Selected)
@@ -825,7 +830,8 @@ func TestKeyPanel(t *testing.T) {
 	}
 	want := []string{"j k", "h l", "backspace", "g G", "ctrl+u d", "enter", "e o", "r L", "n N", "d D",
 		"ctrl+z", "ctrl+x", "y V", "m R", "a X", "space", "*", "u", "c x v", "O ctrl+o", "/", "p i", "J K", ".", "?",
-		"f #", "F", "s S", "ctrl+r", "Q", "t T", "tab", "shift+tab", "ctrl+w", "b B", "1-9", "P", "!", "q"}
+		"f #", "F", "s S", "ctrl+r", "Q", "t T", "tab", "shift+tab", "ctrl+w", "b B", "1-9", "P", "!", "q",
+		"w W", "ctrl+h l", "> <", "=", "[ ] z"}
 	if !slices.Equal(labels, want) {
 		t.Errorf("panel keys = %q\nwant %q", labels, want)
 	}
@@ -1501,13 +1507,13 @@ func TestPluginGetsSelection(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Plugins = []plugins.Plugin{{
-		Name: "list", Key: "W", Mode: plugins.ModeBackground,
+		Name: "list", Key: "A", Mode: plugins.ModeBackground,
 		Command: `printf '%s\n' "$@" > ` + out + `; echo "select c" > "$SUSHI_CMD_FILE"`,
 	}}
 	m := newTestModel(t, dir, cfg)
 	m, _ = press(t, m, " ") // a
 	m, _ = press(t, m, " ") // b
-	m, cmd := press(t, m, "W")
+	m, cmd := press(t, m, "A")
 	m = drain(t, m, cmd)
 
 	b, _ := os.ReadFile(out)

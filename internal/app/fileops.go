@@ -170,7 +170,7 @@ func (m Model) startPaste() (tea.Model, tea.Cmd) {
 	}
 
 	dir := m.tab().CurrentPath
-	conflicts, err := m.checkPaste(dir)
+	conflicts, err := m.checkPaste(m.clipboard, dir)
 	if err != nil {
 		// Refuse up front rather than offering to overwrite a source with itself
 		cmd := m.setStatus(fmt.Sprintf("Can't paste: %v", err))
@@ -179,6 +179,7 @@ func (m Model) startPaste() (tea.Model, tea.Cmd) {
 	if len(conflicts) > 0 {
 		m.pending = conflicts
 		m.pasteDir = dir
+		m.sending = nil
 		m.confirmAction = "paste"
 		m.mode = ModeConfirm
 		return m, nil
@@ -191,16 +192,25 @@ func (m Model) startPaste() (tea.Model, tea.Cmd) {
 // it is still that paste. The dialog stays open while the tab moves on: a
 // load lands, or the watcher finds the folder deleted and goes up, and
 // other names can be taken meanwhile. Pasting into whatever is shown now,
-// or over names nobody was asked about, could overwrite anything.
+// or over names nobody was asked about, could overwrite anything. A
+// transfer to the other pane (see dual.go) goes to the folder that pane
+// shows, and takes what was chosen rather than the clipboard.
 func (m *Model) confirmPaste() tea.Cmd {
-	dir, asked := m.pasteDir, m.pending
-	m.pasteDir, m.pending = "", nil
+	dir, asked, sending := m.pasteDir, m.pending, m.sending
+	m.pasteDir, m.pending, m.sending = "", nil, nil
+	srcs, mode, shown := m.clipboard, m.clipboardMode, m.tab().CurrentPath
+	if sending != nil {
+		srcs, mode, shown = sending.srcs, sending.mode, ""
+		if pane := m.tabByID(sending.paneID); pane != nil {
+			shown = pane.CurrentPath
+		}
+	}
 	why := ""
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		why = filepath.Base(dir) + " is gone"
-	} else if m.tab().CurrentPath != dir {
+	} else if shown != dir {
 		why = "The folder shown changed"
-	} else if conflicts, err := m.checkPaste(dir); err != nil {
+	} else if conflicts, err := m.checkPaste(srcs, dir); err != nil {
 		return m.setStatus(fmt.Sprintf("Can't paste: %v", err))
 	} else if !slices.Equal(conflicts, asked) {
 		why = "What the paste would overwrite changed"
@@ -208,7 +218,10 @@ func (m *Model) confirmPaste() tea.Cmd {
 	if why != "" {
 		return m.setStatus(why + ", so nothing was pasted")
 	}
-	return m.executePaste(dir)
+	if sending != nil {
+		clear(m.tab().Selected)
+	}
+	return m.executeTransfer(srcs, mode, dir)
 }
 
 // nameKey folds a file name the way filesystems that ignore case and
@@ -219,14 +232,15 @@ func nameKey(name string) string {
 	return norm.NFC.String(cases.Fold().String(norm.NFC.String(name)))
 }
 
-// checkPaste validates pasting the clipboard into dir and returns the names
-// that already exist there. Two items whose names differ only in case or
-// normalisation are refused, whatever the filesystem: where they are the
-// same name, the second would replace the first.
-func (m Model) checkPaste(dir string) ([]string, error) {
+// checkPaste validates pasting srcs, the clipboard or a transfer to the
+// other pane, into dir and returns the names that already exist there. Two
+// items whose names differ only in case or normalisation are refused,
+// whatever the filesystem: where they are the same name, the second would
+// replace the first.
+func (m Model) checkPaste(srcs []string, dir string) ([]string, error) {
 	var conflicts []string
-	seen := make(map[string]string, len(m.clipboard))
-	for _, src := range m.clipboard {
+	seen := make(map[string]string, len(srcs))
+	for _, src := range srcs {
 		name := filepath.Base(src)
 		if other, ok := seen[nameKey(name)]; ok {
 			if filepath.Base(other) != name {
@@ -266,8 +280,13 @@ func (m *Model) executeDelete() tea.Cmd {
 
 // executePaste copies or moves the clipboard into dir, in the background
 func (m *Model) executePaste(dir string) tea.Cmd {
-	srcs := append([]string(nil), m.clipboard...)
-	mode := m.clipboardMode
+	return m.executeTransfer(m.clipboard, m.clipboardMode, dir)
+}
+
+// executeTransfer copies srcs into dir, or moves them with mode "cut", in
+// the background
+func (m *Model) executeTransfer(srcs []string, mode, dir string) tea.Cmd {
+	srcs = slices.Clone(srcs)
 	m.pending = nil
 
 	doing, verb, label := "Copying", "Copied", "copy "

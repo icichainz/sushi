@@ -290,8 +290,7 @@ func (m *Model) showTags(changed map[string][]tags.Tag) {
 	if len(changed) == 0 {
 		return
 	}
-	for i := range m.tabs {
-		tab := &m.tabs[i]
+	for _, tab := range m.panes() {
 		tab.Files = withTags(tab.Files, changed)
 		tab.ParentFiles = withTags(tab.ParentFiles, changed)
 	}

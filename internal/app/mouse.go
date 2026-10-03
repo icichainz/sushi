@@ -86,6 +86,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.mouseOpenWith(msg)
 	case ModeTags:
 		return m.mouseTags(msg)
+	case ModeJump:
+		return m.mouseJump(msg)
 	case ModeHelp:
 		return m.mouseHelp(msg)
 	}
@@ -97,6 +99,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // mouseBrowse handles the mouse over the panes and the tab bar
 func (m Model) mouseBrowse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	s := m.spotAt(msg.X, msg.Y)
+	if s.area == areaOther {
+		return m.mouseOther(msg)
+	}
 	tab := m.tab()
 
 	if delta := wheelDelta(msg, wheelStep); delta != 0 {
