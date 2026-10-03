@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/notify"
 	"github.com/icichainz/sushi/internal/ui"
 )
 
@@ -24,7 +25,8 @@ var progressInterval = 100 * time.Millisecond
 // operations can't trip over each other's files.
 type job struct {
 	id        int
-	doing     string // What it is doing, as in "Copying"
+	doing     string    // What it is doing, as in "Copying"
+	began     time.Time // When it was asked for, to notify of a long one
 	cancel    context.CancelFunc
 	updates   chan tea.Msg  // Progress messages, then the jobDoneMsg
 	started   chan struct{} // Closed once the work has begun
@@ -60,7 +62,7 @@ type jobDoneMsg struct {
 func (m *Model) startJob(doing string, work func(t *fs.Task) jobDoneMsg) tea.Cmd {
 	m.jobSeq++
 	ctx, cancel := context.WithCancel(context.Background())
-	j := &job{id: m.jobSeq, doing: doing, cancel: cancel, updates: make(chan tea.Msg, 1),
+	j := &job{id: m.jobSeq, doing: doing, began: time.Now(), cancel: cancel, updates: make(chan tea.Msg, 1),
 		started: make(chan struct{}), finished: make(chan struct{})}
 	m.job = j
 
@@ -162,13 +164,12 @@ func (msg jobProgressMsg) apply(m Model) (tea.Model, tea.Cmd) {
 }
 
 func (msg jobDoneMsg) apply(m Model) (tea.Model, tea.Cmd) {
-	quit := false
-	if m.job != nil && m.job.id == msg.id {
-		quit = m.job.quit
+	if j := m.job; j != nil && j.id == msg.id {
 		m.job = nil
-	}
-	if quit {
-		return m, tea.Quit
+		if j.quit {
+			return m, tea.Quit
+		}
+		m.notifyDone(j, msg.op)
 	}
 
 	m.pushUndo(msg.undo)
@@ -186,6 +187,47 @@ func (msg jobDoneMsg) apply(m Model) (tea.Model, tea.Cmd) {
 		m.tab().focusPath = msg.focus
 	}
 	return m.Update(msg.op)
+}
+
+// sendNotification tells the terminal, or the Sushi app, that something
+// has finished. Tests replace it, so they never write to the terminal
+// running them.
+var sendNotification = notify.Send
+
+// jobTitles names each kind of job in the title of its notification, as
+// in "Copy finished", by what it was doing
+var jobTitles = map[string]string{
+	"Copying":         "Copy",
+	"Moving":          "Move",
+	"Moving to trash": "Move to Trash",
+	"Deleting":        "Delete",
+	"Duplicating":     "Duplication",
+	"Compressing":     "Compression",
+	"Extracting":      "Extraction",
+	"Undoing":         "Undo",
+}
+
+// notifyDone notifies the terminal that j has finished or failed, if it
+// took long enough that the user may have looked away. The title says
+// what finished, and the text what the status bar says. A job the user
+// cancelled isn't notified: they were there to see it stop. It is sent
+// here, in the goroutine that runs Update, as the renderer writes frames
+// from another and each is a single write.
+func (m *Model) notifyDone(j *job, op fileOperationMsg) {
+	after := time.Duration(m.config.NotifyAfter)
+	if after <= 0 || time.Since(j.began) < after || j.cancelled {
+		return
+	}
+	what := jobTitles[j.doing]
+	if what == "" {
+		what = j.doing
+	}
+	title, body := what+" finished", op.message
+	if op.err != nil {
+		title, body = what+" failed", op.err.Error()
+	}
+	// A terminal that can't be written to can't show the failure either
+	_ = sendNotification(title, body)
 }
 
 // whileBusy handles keys while a job runs: ctrl+x cancels it, every way of

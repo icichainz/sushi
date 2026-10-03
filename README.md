@@ -18,7 +18,7 @@ Sushi is made for macOS, the only system it supports: it still builds on Linux, 
 - 🌿 Git status badges and the branch, in repositories
 - ✅ Multi-file selection
 - 📋 Copy, cut, paste, delete, rename and create, with safeguards against overwriting a file with itself; copy and paste files between sushi and Finder
-- 🗑️ Trash and undo (`Ctrl+z`), with progress and cancel (`Ctrl+x`) for long operations
+- 🗑️ Trash and undo (`Ctrl+z`), with progress and cancel (`Ctrl+x`) for long operations, and a notification when they finish
 - 🧰 Duplicate, symlink paste, permissions, bulk rename in your editor, zip and extract
 - 🔄 Lists refresh by themselves when files change on disk
 - ↕️ Change the sort order on the fly
@@ -59,14 +59,22 @@ make macos    # builds all three into dist/
 | File | What it is |
 | ---- | ---------- |
 | `dist/Sushi.app` | The app. Double-click to run it. |
-| `dist/Sushi-0.3.0.pkg` | Installer: puts Sushi in Applications and the `sushi` command in `/usr/local/bin` |
-| `dist/Sushi-0.3.0.dmg` | Disk image: drag Sushi to Applications |
+| `dist/Sushi-0.4.0.pkg` | Installer: puts Sushi in Applications and the `sushi` command in `/usr/local/bin` |
+| `dist/Sushi-0.4.0.dmg` | Disk image: drag Sushi to Applications |
 
 `make app`, `make pkg` and `make dmg` build them one at a time, and `VERSION=1.2.3 make macos` sets the version.
 
-The app opens in your home folder and runs sushi through your login shell, so plugins and `$EDITOR` work as they do in a terminal. `Cmd` `+` and `Cmd` `-` change the text size. Quitting sushi with `q` closes the app.
+The app runs sushi through your login shell (zsh, bash, fish, sh, ksh or dash; with another, such as tcsh, it uses zsh), so plugins and `$EDITOR` work as they do in a terminal. Each window runs its own sushi and is named after the folder it shows. `Cmd+N` opens a new window at your home folder, `Cmd+W` closes one, and quitting sushi with `q` closes its window; the app quits with its last window. `Cmd` `+` (or `Cmd` `=`) and `Cmd` `-` change the text size in every window.
 
-`Cmd+C` and `Cmd+V` copy and paste text in the app, as in a terminal. To copy files, use `c`, `x` and `v`, which share them with Finder (see [Finder Pasteboard](#finder-pasteboard)).
+Closing a window, or quitting the app with `Cmd+Q`, stops its sushi as a terminal closing would, along with an editor or plugin it was running; an operation still running is cancelled and cleaned up after, as when you quit sushi with `q`. `Cmd+Q` waits for that, up to about ten seconds. If sushi can't start, or stops with an error, its window stays open on what it printed, ending with `[sushi exited: N]`, until you close it.
+
+**Opening folders from Finder.** Drop a folder on Sushi's icon in the Dock, or choose Open With > Sushi, and it opens in a new window. From a terminal, `open -a Sushi ~/projects` does the same. A file opens the folder it is in, with the cursor on the file; several files from one folder open it once, with the cursor on the first. An app, or another package Finder shows as a file, opens the folder it is in.
+
+Finder also offers **Open in Sushi** for folders: right-click a folder and look under Services (or Quick Actions). If it isn't listed, turn it on in System Settings > Keyboard > Keyboard Shortcuts > Services, under Files and Folders; after installing, it may only appear after logging out and back in.
+
+**Notifications.** When a copy, move, delete or other job that took more than a few seconds (`notify_after` in the config) finishes while you're in another app or another Sushi window, Sushi shows a notification; click it to go back to that window. The first time, macOS asks whether Sushi may send notifications; change that later in System Settings > Notifications > Sushi. With notifications turned off, the Dock icon bounces instead.
+
+`Cmd+C` and `Cmd+V` copy and paste text in the app, as in a terminal. To copy files, use `c`, `x` and `v`, which share them with Finder (see [Finder Pasteboard](#finder-pasteboard)). Programs running in the window can put text on the clipboard (OSC 52) but can't read it.
 
 The mouse works in the app as in a terminal (see Mouse below), which means dragging selects files rather than text. Hold `Shift` while dragging to select text, or set `mouse: false` in the config.
 
@@ -81,12 +89,17 @@ sushi
 # Open specific directory
 sushi /path/to/directory
 
+# Open a file's folder, with the cursor on the file
+sushi ~/Downloads/report.pdf
+
 # Use ASCII icons (no Nerd Font required)
 sushi --ascii
 
 # Combine options
 sushi --ascii ~/projects
 ```
+
+Given a file, sushi opens the folder it is in with the cursor on it, and with hidden files shown if it is a dotfile. Given a path that doesn't exist, it opens the nearest folder above it that does, and says so in the status bar.
 
 ### Command Line Options
 
@@ -101,7 +114,7 @@ sushi --ascii ~/projects
 | `--list-keys` | Print every action and its keys as a `keys:` section for the config file, then the keys that can't be changed and the plugins' keys. Problems with the config go to stderr, and the exit status is 1 if there are any (see [Remapping Keys](#remapping-keys)) |
 | `--cwd-file FILE` | When you quit with `q`, write the directory shown to `FILE`, for the `sushicd` shell function (`Q` quits without writing) |
 | `--print-shell-wrapper [SHELL]` | Print the `sushicd` shell function for `zsh`, `bash` or `fish` (by default, the shell in `$SHELL`) |
-| `--version` | Print the version, as in `sushi 0.3.0` (`sushi dev` when built without the Makefile) |
+| `--version` | Print the version, as in `sushi 0.4.0` (`sushi dev` when built without the Makefile) |
 | `--help`, `-h` | Show help message |
 
 ### Changing Directory on Quit
@@ -196,6 +209,11 @@ pasteboard: true
 # In Git repositories, a column of status badges and the branch in the
 # breadcrumb
 git: true
+
+# A background operation (copy, move, trash, compress...) that runs longer
+# than this tells the terminal, or the Sushi app, when it finishes; see
+# Notifications below. A duration such as 5s or 2m; 0 turns this off.
+notify_after: 5s
 
 # Color theme: "default", "light", "dark" (Dracula-inspired) or "classic"
 # (the colors sushi used before its redesign)
@@ -625,7 +643,21 @@ Copy, move, delete, trash, duplicate, compress, extract and undo run in the back
 Copying 3/120 files 45% ████░░░░░░
 ```
 
-Where the status bar is short of room, the progress drops its bar, as in `Copying 3/120 45%`. You can keep browsing meanwhile. Keys that change files are refused until the operation finishes or you cancel it with `Ctrl+x`, with a message beside the progress (`Still copying: wait, or ctrl+x to cancel`), and so are plugins, the Run palette, opening files in other programs (`e`, `o`, `O`), Quick Look (`i`), showing files in Finder (`Ctrl+o`) and changing Finder tags (`L`). A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q`, `Q` and closing the last tab stop a running operation before quitting; press the key again to quit at once, and sushi still waits a few seconds for the operation to clean up. Files are copied, and zips written, under a hidden `.sushi-partial-` name and renamed once complete, so nothing half-written ever has its real name; if sushi is killed, what it leaves is removed when its folder is listed a day later. Copies keep their permissions, modification times, Finder tags and other extended attributes, as Finder's do; an attribute the destination can't take, as on a drive without them, is left behind.
+Where the status bar is short of room, the progress drops its bar, as in `Copying 3/120 45%`. You can keep browsing meanwhile. Keys that change files are refused until the operation finishes or you cancel it with `Ctrl+x`, with a message beside the progress (`Still copying: wait, or ctrl+x to cancel`), and so are plugins, the Run palette, opening files in other programs (`e`, `o`, `O`), Quick Look (`i`), showing files in Finder (`Ctrl+o`) and changing Finder tags (`L`). A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q`, `Q` and closing the last tab stop a running operation before quitting; press the key again to quit at once, and sushi still waits a few seconds for the operation to clean up. So does closing the terminal sushi runs in, or losing the ssh connection: sushi takes the hangup (SIGHUP) as it takes `q`. Files are copied, and zips written, under a hidden `.sushi-partial-` name and renamed once complete, so nothing half-written ever has its real name; if sushi is killed, what it leaves is removed when its folder is listed a day later. Copies keep their permissions, modification times, Finder tags and other extended attributes, as Finder's do; an attribute the destination can't take, as on a drive without them, is left behind.
+
+### Notifications
+
+An operation that runs longer than `notify_after` (5 seconds unless the config sets it; `0` turns this off) tells the terminal when it finishes or fails, so you hear of it while you work in another window; one you cancel with `Ctrl+x` doesn't, as you were there to see it stop. The notification's title says what finished, as in `Copy finished` or `Move failed`, and its text what the status bar says, as in `Copied: 120 items`. What you get depends on where sushi runs:
+
+| Where sushi runs | What a long operation does when it finishes |
+| ---------------- | ------------------------------------------- |
+| Sushi.app | A macOS notification, when the Sushi window isn't the active one |
+| iTerm2, WezTerm | A desktop notification (OSC 9) |
+| kitty | A desktop notification (OSC 99), when its window isn't focused |
+| Terminal.app | The bell, which Terminal can turn into a badge or a bounce of its Dock icon: Settings, Profiles, Advanced, Bell |
+| tmux, screen, ssh and other terminals | The bell, which tmux passes on to the terminal it runs in |
+
+Sushi tells them apart by `TERM_PROGRAM` (the Sushi app sets it to `Sushi`), and by `KITTY_WINDOW_ID` and `WEZTERM_PANE` where `TERM_PROGRAM` isn't set. Inside tmux or screen it always rings the bell, as they drop notifications unless set up to pass them through. macOS may ask the first time whether the terminal can post notifications, and iTerm2 has its own setting for them under Settings, Profiles, Terminal.
 
 ## Requirements
 
@@ -688,6 +720,7 @@ sushi/
 │   ├── fs/          # File system scanning and operations, trash and archives
 │   ├── git/         # Reading git status for the badges and the branch
 │   ├── jxa/         # Running JavaScript for Automation with osascript
+│   ├── notify/      # Telling the terminal, or the Sushi app, that an operation finished
 │   ├── opener/      # Editor and default-app commands, Open With and Reveal in Finder
 │   ├── pasteboard/  # Files on the macOS pasteboard
 │   ├── plugins/     # Plugin loading and running
@@ -737,10 +770,8 @@ sushi/
 - [x] Finder tags: show, change and find them
 - [x] Search with Spotlight, below a folder or everywhere
 - [ ] Signed and notarized macOS builds, so other Macs open them without a warning
-- [ ] Open a folder in sushi from Finder, rather than the app always starting in the home folder
-- [ ] Notifications when a long operation finishes while sushi is in the background
+- [x] Open a folder in sushi from Finder, multiple windows, and notifications when a long operation finishes
 - [ ] Follow EXIF orientation in image previews, and preview TIFF and animated GIFs
-- [ ] Search past Spotlight's limits: fuzzy name matches and folders it hasn't indexed, even when it finds something
 - [ ] Per-volume trashes (`.Trashes` on macOS, `.Trash-$uid` on Linux), so trashing on another drive doesn't copy
 - [ ] Extract more formats, such as `.tar.bz2`, `.tar.xz` and `.7z`
 

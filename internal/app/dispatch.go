@@ -1,6 +1,13 @@
 package app
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/icichainz/sushi/internal/notify"
+)
+
+// setHostDirectory tells the terminal which directory is shown, so the
+// Sushi app can title its window after it. Tests replace it.
+var setHostDirectory = notify.SetDirectory
 
 // Update handles all state updates. Messages from work running in the
 // background (file watching, recursive search) are handled here and
@@ -29,5 +36,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.watchTabs()
+	switch msg.(type) {
+	case externalDoneMsg, pluginDoneMsg, bulkRenameMsg:
+		// An editor or plugin that had the terminal may have set the
+		// window's title or directory: tell it again
+		m.hostDir = ""
+	}
+	// Tell the terminal when the shown directory changes, by any route:
+	// navigation, a tab switch, a tab closing, a find jump
+	if dir := m.tab().CurrentPath; dir != m.hostDir {
+		m.hostDir = dir
+		_ = setHostDirectory(dir)
+	}
 	return m, cmd
 }

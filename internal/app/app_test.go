@@ -34,6 +34,10 @@ func TestMain(m *testing.M) {
 	}
 	// Background operations send no progress, so they finish in one message
 	progressInterval = time.Hour
+	// Nothing rings the bell of the terminal running the tests; tests of
+	// notifications put a recorder here
+	sendNotification = func(title, body string) error { return nil }
+	setHostDirectory = func(string) error { return nil }
 	os.Exit(m.Run())
 }
 
@@ -1053,8 +1057,21 @@ func TestConfigProblemsShownAtStartup(t *testing.T) {
 		t.Fatalf("statusMsg = %q", m.statusMsg)
 	}
 
-	// A folder that can't be read comes first, as --list-keys can't say it
+	// A start path that doesn't exist comes first, as --list-keys can't
+	// say it
 	m = newTestModel(t, filepath.Join(t.TempDir(), "missing"), cfg)
+	if !strings.HasPrefix(m.statusMsg, "Can't find ") || !strings.HasSuffix(m.statusMsg, "(+1 more, see sushi --list-keys)") {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+
+	// And so does a folder that can't be read
+	locked := filepath.Join(t.TempDir(), "locked")
+	os.Mkdir(locked, 0)
+	t.Cleanup(func() { os.Chmod(locked, 0755) })
+	if _, err := os.ReadDir(locked); err == nil {
+		t.Skip("the folder can be read without permission here, as by root")
+	}
+	m = newTestModel(t, locked, cfg)
 	if !strings.HasPrefix(m.statusMsg, "Error: ") || !strings.HasSuffix(m.statusMsg, "(+1 more, see sushi --list-keys)") {
 		t.Fatalf("statusMsg = %q", m.statusMsg)
 	}
@@ -1636,5 +1653,42 @@ func TestWaitCommandWaitsForEnter(t *testing.T) {
 	}
 	if got := out.String(); !strings.Contains(got, "hello") || !strings.Contains(got, "Press Enter") || !strings.Contains(got, "exit status 2") {
 		t.Fatalf("output = %q", got)
+	}
+}
+
+func TestHostIsToldTheDirectoryShown(t *testing.T) {
+	root := t.TempDir()
+	os.Mkdir(filepath.Join(root, "sub"), 0755)
+	var told []string
+	setHostDirectory = func(dir string) error { told = append(told, dir); return nil }
+	defer func() { setHostDirectory = func(string) error { return nil } }()
+
+	m := newTestModel(t, root, nil)
+	m, cmd := press(t, m, "l")
+	m = drain(t, m, cmd)
+	m, _ = press(t, m, "j") // No directory change: nothing new is told
+	if len(told) < 2 || told[len(told)-1] != filepath.Join(root, "sub") {
+		t.Fatalf("told %v, want the root then sub", told)
+	}
+	n := len(told)
+	m, _ = press(t, m, "k")
+	if len(told) != n {
+		t.Fatal("moving the cursor should not re-announce the directory")
+	}
+
+	// An editor or plugin had the terminal, and may have changed what it
+	// shows: the directory is told again, once
+	for _, msg := range []tea.Msg{
+		externalDoneMsg{label: "Editor"},
+		pluginDoneMsg{dir: root},
+		bulkRenameMsg{file: filepath.Join(t.TempDir(), "gone.txt"), err: fmt.Errorf("editor failed")},
+	} {
+		told = nil
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+		m, _ = press(t, m, "j")
+		if len(told) != 1 || told[0] != filepath.Join(root, "sub") {
+			t.Fatalf("after %T, told %v", msg, told)
+		}
 	}
 }

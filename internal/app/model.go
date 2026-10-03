@@ -1,9 +1,13 @@
 package app
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -13,6 +17,7 @@ import (
 	"github.com/icichainz/sushi/internal/plugins"
 	"github.com/icichainz/sushi/internal/ui"
 	"github.com/icichainz/sushi/internal/ui/components"
+	"golang.org/x/text/unicode/norm"
 )
 
 // Tab represents a single browsing session
@@ -61,6 +66,9 @@ type Model struct {
 	mode       Mode
 	prompt     prompt // Text input for ModeInput
 	helpScroll int    // First visible row of the key panel
+
+	// The directory last reported to the terminal; see dispatch.go
+	hostDir string
 
 	// Status message
 	statusMsg string
@@ -486,7 +494,9 @@ func NewModel(path string) Model {
 	return NewModelWithConfig(path, nil)
 }
 
-// NewModelWithConfig creates a new model with the given starting path and config
+// NewModelWithConfig creates a new model with the given starting path and
+// config. The path is a folder, or a file to put the cursor on in its
+// folder; see startPlace.
 func NewModelWithConfig(path string, cfg *config.Config) Model {
 	// Use provided config or load from file
 	if cfg == nil {
@@ -497,6 +507,7 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	if abs, err := filepath.Abs(path); err == nil {
 		path = abs
 	}
+	path, focus, notFound := startPlace(path)
 
 	// Problems are shown in the status bar rather than stopping startup.
 	// They are found in the same order as sushi --list-keys finds them.
@@ -519,6 +530,11 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	if cfg.Watch {
 		m.watch = newDirWatcher()
 	}
+	// A dotfile asked for by name is shown, rather than the cursor put
+	// somewhere else; "." hides dotfiles again
+	if focus != "" && strings.HasPrefix(filepath.Base(focus), ".") {
+		m.showHidden = true
+	}
 
 	// Create initial tab with config settings
 	initialTab := m.newTab(path)
@@ -530,10 +546,23 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 		initialTab.setFiles(files)
 	}
 	initialTab.ParentFiles = scanParent(path, m.scanOptions())
+	if notFound != "" {
+		problems = append([]string{notFound}, problems...)
+	}
+	// The name may be given composed differently from how the folder lists
+	// it (é as one character or as e and an accent), which macOS takes for
+	// the same file, as Finder may pass it
+	focus = norm.NFC.String(focus)
+	for i, f := range initialTab.Files {
+		if norm.NFC.String(f.Path) == focus {
+			initialTab.Cursor = i
+			break
+		}
+	}
 
 	// Load initial preview
 	if len(initialTab.Files) > 0 && initialTab.PreviewEnabled {
-		initialTab.Preview = m.loadPreviewNow(initialTab.Files[0])
+		initialTab.Preview = m.loadPreviewNow(initialTab.Files[initialTab.Cursor])
 	}
 
 	m.tabs = []Tab{initialTab}
@@ -547,6 +576,42 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 		m.initCmd = m.setStatusFor(startupMessage(problems), 10*time.Second)
 	}
 	return m
+}
+
+// startPlace works out where sushi starts for the absolute path it was
+// given. A folder opens as it is; a file opens its folder with the cursor
+// on it, as Finder's Open With passes files. A path that doesn't exist
+// opens the nearest folder above it that does, with a note saying so. One
+// that can't be looked at for another reason, such as permissions, opens
+// as it is, for the scan to say why.
+func startPlace(path string) (dir, focus, note string) {
+	for p := path; ; {
+		if p != path {
+			note = "Can't find " + path
+		}
+		info, err := os.Stat(p)
+		if err != nil {
+			// A link to nothing is still listed in its folder
+			if link, lerr := os.Lstat(p); lerr == nil {
+				info, err = link, nil
+			}
+		}
+		switch {
+		case err == nil && info.IsDir():
+			return p, "", note
+		case err == nil:
+			return filepath.Dir(p), p, note
+		case errors.Is(err, os.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+			// Missing, or under a file, as in notes.txt/x: try the folder above
+			parent := filepath.Dir(p)
+			if parent == p {
+				return path, "", ""
+			}
+			p = parent
+		default:
+			return path, "", ""
+		}
+	}
 }
 
 // startupMessage shows the first of the problems found at startup, and
