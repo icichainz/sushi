@@ -46,9 +46,9 @@ func TestVersionFlag(t *testing.T) {
 		if ldflags != "" {
 			continue
 		}
-		// --help lists it, and the notifications
+		// --help lists it, the notifications, and that a file can be given
 		help, _ := sushi(bin, "--help").CombinedOutput()
-		for _, want := range []string{"-version", "notify_after"} {
+		for _, want := range []string{"-version", "notify_after", "[directory or file]"} {
 			if !strings.Contains(string(help), want) {
 				t.Errorf("--help doesn't mention %s:\n%s", want, help)
 			}

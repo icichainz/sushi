@@ -1056,8 +1056,21 @@ func TestConfigProblemsShownAtStartup(t *testing.T) {
 		t.Fatalf("statusMsg = %q", m.statusMsg)
 	}
 
-	// A folder that can't be read comes first, as --list-keys can't say it
+	// A start path that doesn't exist comes first, as --list-keys can't
+	// say it
 	m = newTestModel(t, filepath.Join(t.TempDir(), "missing"), cfg)
+	if !strings.HasPrefix(m.statusMsg, "Can't find ") || !strings.HasSuffix(m.statusMsg, "(+1 more, see sushi --list-keys)") {
+		t.Fatalf("statusMsg = %q", m.statusMsg)
+	}
+
+	// And so does a folder that can't be read
+	locked := filepath.Join(t.TempDir(), "locked")
+	os.Mkdir(locked, 0)
+	t.Cleanup(func() { os.Chmod(locked, 0755) })
+	if _, err := os.ReadDir(locked); err == nil {
+		t.Skip("the folder can be read without permission here, as by root")
+	}
+	m = newTestModel(t, locked, cfg)
 	if !strings.HasPrefix(m.statusMsg, "Error: ") || !strings.HasSuffix(m.statusMsg, "(+1 more, see sushi --list-keys)") {
 		t.Fatalf("statusMsg = %q", m.statusMsg)
 	}

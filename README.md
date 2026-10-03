@@ -81,12 +81,17 @@ sushi
 # Open specific directory
 sushi /path/to/directory
 
+# Open a file's folder, with the cursor on the file
+sushi ~/Downloads/report.pdf
+
 # Use ASCII icons (no Nerd Font required)
 sushi --ascii
 
 # Combine options
 sushi --ascii ~/projects
 ```
+
+Given a file, sushi opens the folder it is in with the cursor on it, and with hidden files shown if it is a dotfile. Given a path that doesn't exist, it opens the nearest folder above it that does, and says so in the status bar.
 
 ### Command Line Options
 

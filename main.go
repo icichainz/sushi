@@ -54,7 +54,7 @@ func main() {
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Sushi - A fast and elegant terminal file explorer\n\n")
-		fmt.Fprintf(os.Stderr, "Usage: sushi [options] [directory]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: sushi [options] [directory or file]\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nIcon Modes:\n")
@@ -82,6 +82,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  sushi              # Open current directory (Nerd Font icons)\n")
 		fmt.Fprintf(os.Stderr, "  sushi ~/projects   # Open specific directory\n")
+		fmt.Fprintf(os.Stderr, "  sushi ~/notes/todo.md  # Open its folder, with the cursor on it\n")
 		fmt.Fprintf(os.Stderr, "  sushi --install-font  # Install Nerd Font for icons\n")
 		fmt.Fprintf(os.Stderr, "  sushi --ascii      # Use ASCII icons\n")
 		fmt.Fprintf(os.Stderr, "  sushi --init-config   # Create configuration file\n")
@@ -238,7 +239,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Use remaining argument as path if provided
+	// Use remaining argument as path if provided. A file opens its folder
+	// with the cursor on it, and a path that doesn't exist the nearest
+	// folder above it that does; see app.NewModelWithConfig.
 	if flag.NArg() > 0 {
 		startPath = flag.Arg(0)
 	}
