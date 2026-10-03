@@ -64,7 +64,13 @@ make macos    # builds all three into dist/
 
 `make app`, `make pkg` and `make dmg` build them one at a time, and `VERSION=1.2.3 make macos` sets the version.
 
-The app opens in your home folder and runs sushi through your login shell, so plugins and `$EDITOR` work as they do in a terminal. `Cmd` `+` and `Cmd` `-` change the text size. Quitting sushi with `q` closes the app.
+The app runs sushi through your login shell, so plugins and `$EDITOR` work as they do in a terminal. Each window runs its own sushi and is named after the folder it shows. `Cmd+N` opens a new window at your home folder, `Cmd+W` closes one, and quitting sushi with `q` closes its window; the app quits with its last window. `Cmd` `+` and `Cmd` `-` change the text size in every window.
+
+**Opening folders from Finder.** Drop a folder on Sushi's icon in the Dock, or choose Open With > Sushi, and it opens in a new window. From a terminal, `open -a Sushi ~/projects` does the same. A file opens the folder it is in, with the cursor on the file.
+
+Finder also offers **Open in Sushi** for folders: right-click a folder and look under Services (or Quick Actions). If it isn't listed, turn it on in System Settings > Keyboard > Keyboard Shortcuts > Services, under Files and Folders; after installing, it may only appear after logging out and back in.
+
+**Notifications.** When a copy, move, delete or other job that took more than a few seconds (`notify_after` in the config) finishes while you're in another app or another Sushi window, Sushi shows a notification; click it to go back to that window. The first time, macOS asks whether Sushi may send notifications; change that later in System Settings > Notifications > Sushi. With notifications turned off, the Dock icon bounces instead.
 
 `Cmd+C` and `Cmd+V` copy and paste text in the app, as in a terminal. To copy files, use `c`, `x` and `v`, which share them with Finder (see [Finder Pasteboard](#finder-pasteboard)).
 
@@ -762,10 +768,8 @@ sushi/
 - [x] Finder tags: show, change and find them
 - [x] Search with Spotlight, below a folder or everywhere
 - [ ] Signed and notarized macOS builds, so other Macs open them without a warning
-- [ ] Open a folder in sushi from Finder, rather than the app always starting in the home folder
-- [ ] Notifications when a long operation finishes while sushi is in the background
+- [x] Open a folder in sushi from Finder, multiple windows, and notifications when a long operation finishes
 - [ ] Follow EXIF orientation in image previews, and preview TIFF and animated GIFs
-- [ ] Search past Spotlight's limits: fuzzy name matches and folders it hasn't indexed, even when it finds something
 - [ ] Per-volume trashes (`.Trashes` on macOS, `.Trash-$uid` on Linux), so trashing on another drive doesn't copy
 - [ ] Extract more formats, such as `.tar.bz2`, `.tar.xz` and `.7z`
 
