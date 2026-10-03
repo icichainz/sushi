@@ -178,19 +178,19 @@ func Send(title, body string) error {
 	return nil
 }
 
-// DirectorySequence is the OSC 7 sequence that tells a terminal which
-// directory is being shown. The Sushi app titles its window with it, and
-// iTerm2 and WezTerm show the folder too. Terminals that get a bell for
-// notifications are left alone: tmux and screen would swallow it.
+// DirectorySequence is the OSC 7 sequence that tells the Sushi app which
+// directory is being shown, to title its window after it. Other terminals
+// are left alone: they take OSC 7 for the shell's directory, and would
+// open new tabs in the last folder sushi showed.
 func DirectorySequence(h Host, hostname, dir string) string {
-	if h == Bell || dir == "" {
+	if h != SushiApp || dir == "" {
 		return ""
 	}
 	u := url.URL{Scheme: "file", Host: hostname, Path: dir}
 	return "\x1b]7;" + u.String() + "\x07"
 }
 
-// SetDirectory tells the terminal which directory sushi is showing
+// SetDirectory tells the Sushi app which directory sushi is showing
 func SetDirectory(dir string) error {
 	hostname, _ := os.Hostname()
 	seq := DirectorySequence(Kind(), hostname, dir)

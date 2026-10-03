@@ -168,10 +168,14 @@ func TestDirectorySequence(t *testing.T) {
 	if want := "\x1b]7;file://mac.local/Users/me/My%20Docs/%C3%A9\x07"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
-	if DirectorySequence(Bell, "mac.local", "/tmp") != "" {
-		t.Fatal("a bell-only terminal should get no directory sequence")
+	// Other terminals would take it for the shell's directory, and open new
+	// tabs there
+	for _, h := range []Host{Bell, ITerm, Kitty} {
+		if got := DirectorySequence(h, "mac.local", "/tmp"); got != "" {
+			t.Errorf("%v got a directory sequence: %q", h, got)
+		}
 	}
-	if DirectorySequence(ITerm, "h", "") != "" {
+	if DirectorySequence(SushiApp, "h", "") != "" {
 		t.Fatal("an empty directory should send nothing")
 	}
 }

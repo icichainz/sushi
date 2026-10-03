@@ -36,6 +36,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.watchTabs()
+	switch msg.(type) {
+	case externalDoneMsg, pluginDoneMsg, bulkRenameMsg:
+		// An editor or plugin that had the terminal may have set the
+		// window's title or directory: tell it again
+		m.hostDir = ""
+	}
 	// Tell the terminal when the shown directory changes, by any route:
 	// navigation, a tab switch, a tab closing, a find jump
 	if dir := m.tab().CurrentPath; dir != m.hostDir {
