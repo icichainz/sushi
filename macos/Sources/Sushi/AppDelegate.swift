@@ -1,83 +1,53 @@
 import AppKit
 import CoreText
-import SwiftTerm
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, LocalProcessTerminalViewDelegate {
-    private var window: NSWindow!
-    private var terminal: LocalProcessTerminalView!
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// The open windows, in the order they were opened
+    private(set) var windows: [TerminalWindowController] = []
 
     private let defaultFontSize: CGFloat = 13
     private let fontSizeKey = "fontSize"
 
-    // The nori background and rice text of sushi's default theme
-    private let background = NSColor(srgbRed: 0x14 / 255, green: 0x15 / 255, blue: 0x1a / 255, alpha: 1)
-    private let foreground = NSColor(srgbRed: 0xeb / 255, green: 0xe7 / 255, blue: 0xdc / 255, alpha: 1)
-    private let caret = NSColor(srgbRed: 0xff / 255, green: 0x94 / 255, blue: 0x78 / 255, alpha: 1)
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        buildMenu()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        buildMenu()
-
-        window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1120, height: 700),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false)
-        window.title = "Sushi"
-        window.backgroundColor = background
-        window.minSize = NSSize(width: 480, height: 300)
-        window.delegate = self
-        window.center()
-        // Reopen where the window was left
-        window.setFrameAutosaveName("SushiMainWindow")
-
-        terminal = LocalProcessTerminalView(frame: window.contentView!.bounds)
-        terminal.autoresizingMask = [.width, .height]
-        terminal.processDelegate = self
-        terminal.nativeBackgroundColor = background
-        terminal.nativeForegroundColor = foreground
-        terminal.caretColor = caret
-        terminal.font = terminalFont(size: savedFontSize())
-        window.contentView!.addSubview(terminal)
-
-        guard let sushi = Bundle.main.path(forResource: "sushi", ofType: nil) else {
-            fail("The sushi program is missing from the app. Reinstall Sushi.")
-            return
-        }
-        startSushi(at: sushi)
-
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(terminal)
+        openWindow(at: NSHomeDirectory())
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// Runs sushi through the user's login shell, so it sees the same PATH,
-    /// EDITOR and other settings as in a terminal. Apps opened from Finder
-    /// otherwise get a bare environment, and plugins and editors go missing.
-    private func startSushi(at sushi: String) {
-        let home = NSHomeDirectory()
-        var environment = ProcessInfo.processInfo.environment
-        environment["TERM"] = "xterm-256color"
-        environment["COLORTERM"] = "truecolor"
-        environment["TERM_PROGRAM"] = "Sushi"
-        if environment["LANG"] == nil {
-            environment["LANG"] = "en_US.UTF-8"
+    @discardableResult
+    private func openWindow(at directory: String) -> TerminalWindowController? {
+        guard let sushi = Bundle.main.path(forResource: "sushi", ofType: nil) else {
+            fail("The sushi program is missing from the app. Reinstall Sushi.")
+            return nil
         }
-
-        let shell = environment["SHELL"] ?? "/bin/zsh"
-        // exec replaces the shell, so quitting sushi ends the process. The
-        // paths are quoted into the command, since fish has no "$0"/"$1".
-        let command = "exec \(quoted(sushi)) \(quoted(home))"
-        terminal.startProcess(
-            executable: shell,
-            args: ["-l", "-i", "-c", command],
-            environment: environment.map { "\($0.key)=\($0.value)" },
-            execName: nil,
-            currentDirectory: home)
+        let controller = TerminalWindowController(
+            sushi: sushi, number: freeNumber(), font: terminalFont(size: fontSize), after: windows.last?.window)
+        controller.onClose = { [weak self] closed in
+            // Released once AppKit is done closing its window
+            DispatchQueue.main.async {
+                self?.windows.removeAll { $0 === closed }
+            }
+        }
+        windows.append(controller)
+        controller.open(directory)
+        return controller
     }
 
-    /// Single-quotes a string for zsh, bash and fish
-    private func quoted(_ s: String) -> String {
-        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    /// The lowest number no open window has, so that a new window takes the
+    /// place of a closed one
+    private func freeNumber() -> Int {
+        var number = 1
+        while windows.contains(where: { $0.number == number }) {
+            number += 1
+        }
+        return number
+    }
+
+    @objc func newWindow(_ sender: Any?) {
+        openWindow(at: NSHomeDirectory())
     }
 
     // MARK: Font
@@ -93,19 +63,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
-    private func savedFontSize() -> CGFloat {
+    private var fontSize: CGFloat {
         let saved = UserDefaults.standard.double(forKey: fontSizeKey)
         return saved >= 8 && saved <= 40 ? CGFloat(saved) : defaultFontSize
     }
 
+    /// Sets the text size of every window, and of those opened later
     private func setFontSize(_ size: CGFloat) {
         let size = min(max(size, 8), 40)
         UserDefaults.standard.set(Double(size), forKey: fontSizeKey)
-        terminal.font = terminalFont(size: size)
+        let font = terminalFont(size: size)
+        windows.forEach { $0.setFont(font) }
     }
 
-    @objc func biggerText(_ sender: Any?) { setFontSize(terminal.font.pointSize + 1) }
-    @objc func smallerText(_ sender: Any?) { setFontSize(terminal.font.pointSize - 1) }
+    @objc func biggerText(_ sender: Any?) { setFontSize(fontSize + 1) }
+    @objc func smallerText(_ sender: Any?) { setFontSize(fontSize - 1) }
     @objc func defaultText(_ sender: Any?) { setFontSize(defaultFontSize) }
 
     // MARK: Menu
@@ -124,6 +96,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         appMenu.addItem(withTitle: "Quit Sushi", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         main.addItem(submenu(appMenu, title: "Sushi"))
 
+        let file = NSMenu(title: "File")
+        file.addItem(withTitle: "New Window", action: #selector(newWindow(_:)), keyEquivalent: "n")
+        file.addItem(.separator())
+        file.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        main.addItem(submenu(file, title: "File"))
+
         let edit = NSMenu(title: "Edit")
         edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
@@ -139,10 +117,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         fullScreen.keyEquivalentModifierMask = [.command, .control]
         main.addItem(submenu(view, title: "View"))
 
+        // AppKit lists the open windows below these
         let windowMenu = NSMenu(title: "Window")
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-        windowMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
         main.addItem(submenu(windowMenu, title: "Window"))
         NSApp.windowsMenu = windowMenu
 
@@ -158,13 +138,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
 
     // MARK: Lifecycle
 
+    /// Quitting sushi in the last window, or closing it, quits the app
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // Closing the window must not leave sushi running in the background
-        terminal?.terminate()
+        // Quitting the app must not leave any sushi running in the background
+        windows.forEach { $0.stop() }
     }
 
     private func fail(_ message: String) {
@@ -173,21 +154,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Loca
         alert.messageText = "Sushi can't start"
         alert.informativeText = message
         alert.runModal()
-        NSApp.terminate(nil)
-    }
-
-    // MARK: LocalProcessTerminalViewDelegate
-
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
-
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        window.title = title.isEmpty ? "Sushi" : title
-    }
-
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-
-    /// Quitting sushi (q) quits the app
-    func processTerminated(source: TerminalView, exitCode: Int32?) {
         NSApp.terminate(nil)
     }
 }
