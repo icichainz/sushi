@@ -64,7 +64,7 @@ make macos    # builds all three into dist/
 
 `make app`, `make pkg` and `make dmg` build them one at a time, and `VERSION=1.2.3 make macos` sets the version.
 
-The app runs sushi through your login shell (zsh, bash, fish, sh, ksh or dash; with another, such as tcsh, it uses zsh), so plugins and `$EDITOR` work as they do in a terminal. Each window runs its own sushi and is named after the folder it shows. `Cmd+N` opens a new window at your home folder, `Cmd+W` closes one, and quitting sushi with `q` closes its window; the app quits with its last window. `Cmd` `+` and `Cmd` `-` change the text size in every window.
+The app runs sushi through your login shell (zsh, bash, fish, sh, ksh or dash; with another, such as tcsh, it uses zsh), so plugins and `$EDITOR` work as they do in a terminal. Each window runs its own sushi and is named after the folder it shows. `Cmd+N` opens a new window at your home folder, `Cmd+W` closes one, and quitting sushi with `q` closes its window; the app quits with its last window. `Cmd` `+` (or `Cmd` `=`) and `Cmd` `-` change the text size in every window.
 
 Closing a window, or quitting the app with `Cmd+Q`, stops its sushi as a terminal closing would, along with an editor or plugin it was running; an operation still running is cancelled and cleaned up after, as when you quit sushi with `q`. `Cmd+Q` waits for that, up to about ten seconds. If sushi can't start, or stops with an error, its window stays open on what it printed, ending with `[sushi exited: N]`, until you close it.
 
@@ -74,7 +74,7 @@ Finder also offers **Open in Sushi** for folders: right-click a folder and look 
 
 **Notifications.** When a copy, move, delete or other job that took more than a few seconds (`notify_after` in the config) finishes while you're in another app or another Sushi window, Sushi shows a notification; click it to go back to that window. The first time, macOS asks whether Sushi may send notifications; change that later in System Settings > Notifications > Sushi. With notifications turned off, the Dock icon bounces instead.
 
-`Cmd+C` and `Cmd+V` copy and paste text in the app, as in a terminal. To copy files, use `c`, `x` and `v`, which share them with Finder (see [Finder Pasteboard](#finder-pasteboard)).
+`Cmd+C` and `Cmd+V` copy and paste text in the app, as in a terminal. To copy files, use `c`, `x` and `v`, which share them with Finder (see [Finder Pasteboard](#finder-pasteboard)). Programs running in the window can put text on the clipboard (OSC 52) but can't read it.
 
 The mouse works in the app as in a terminal (see Mouse below), which means dragging selects files rather than text. Hold `Shift` while dragging to select text, or set `mouse: false` in the config.
 

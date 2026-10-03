@@ -224,6 +224,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let view = NSMenu(title: "View")
         view.addItem(withTitle: "Bigger Text", action: #selector(biggerText(_:)), keyEquivalent: "+")
+        // Cmd+= too, without Shift, as + is Shift+= on most keyboards
+        let bigger = view.addItem(withTitle: "Bigger Text", action: #selector(biggerText(_:)), keyEquivalent: "=")
+        bigger.isHidden = true
+        bigger.allowsKeyEquivalentWhenHidden = true
         view.addItem(withTitle: "Smaller Text", action: #selector(smallerText(_:)), keyEquivalent: "-")
         view.addItem(withTitle: "Default Text Size", action: #selector(defaultText(_:)), keyEquivalent: "0")
         view.addItem(.separator())

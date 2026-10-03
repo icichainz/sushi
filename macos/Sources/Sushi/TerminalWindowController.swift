@@ -237,13 +237,13 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        window.title = title.isEmpty ? "Sushi" : title
+        window.title = Self.printable(title) ?? "Sushi"
     }
 
     /// sushi reports the folder it shows (OSC 7); the window takes its
     /// name and shows the folder's icon in the title bar
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
-        guard let directory, let url = URL(string: directory), url.isFileURL else { return }
+        guard let directory, let url = URL(string: directory), url.isFileURL, !url.path.isEmpty else { return }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         var name = url.lastPathComponent
         if url.path == home {
@@ -251,8 +251,17 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         } else if url.path == "/" {
             name = "/"
         }
-        window.title = name
+        window.title = Self.printable(name) ?? "Sushi"
         window.representedURL = url
+    }
+
+    /// A title without the control and format characters a program, or a
+    /// file name, could garble the title bar and Window menu with; nil if
+    /// nothing is left
+    private static func printable(_ title: String) -> String? {
+        let kept = title.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
+        let text = String(String.UnicodeScalarView(kept)).trimmingCharacters(in: .whitespaces)
+        return text.isEmpty ? nil : text
     }
 
     /// Quitting sushi (q) closes its window. If it failed, or couldn't
@@ -288,7 +297,8 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
 /// LocalProcessTerminalView is its own TerminalViewDelegate, and leaves the
 /// bell and OSC 1337 to SwiftTerm's defaults, which a subclass can't
 /// override. The relay takes its place, as SwiftTerm's documentation
-/// suggests: it handles those two and hands everything else back.
+/// suggests: it handles those two, refuses to read the clipboard, and
+/// hands everything else back.
 private final class TerminalRelay: TerminalViewDelegate {
     private unowned let view: LocalProcessTerminalView
     private let onBell: () -> Void
@@ -313,5 +323,8 @@ private final class TerminalRelay: TerminalViewDelegate {
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) { view.rangeChanged(source: source, startY: startY, endY: endY) }
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) { view.requestOpenLink(source: source, link: link, params: params) }
     func clipboardCopy(source: TerminalView, content: Data) { view.clipboardCopy(source: source, content: content) }
-    func clipboardRead(source: TerminalView) -> Data? { view.clipboardRead(source: source) }
+
+    /// Programs in the window can set the clipboard (OSC 52), but not read
+    /// it: what was copied elsewhere, such as a password, isn't theirs
+    func clipboardRead(source: TerminalView) -> Data? { nil }
 }
