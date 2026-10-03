@@ -59,11 +59,28 @@ func TestLongOperationNotifiesWhenItFinishes(t *testing.T) {
 		t.Fatalf("a quick copy: status %q, notified %q", m.statusMsg, *sent)
 	}
 
-	// Longer: the notification says what the status bar says
+	// Longer: the title says what finished, and the text what the status
+	// bar says
 	m, cmd, _, dst := startPaste(t, nil)
 	m = drain(t, backdate(m, 6*time.Second), cmd)
-	if !fs.Exists(filepath.Join(dst, "a.txt")) || len(*sent) != 1 || (*sent)[0] != "Sushi|Copied: a.txt" {
+	if !fs.Exists(filepath.Join(dst, "a.txt")) || len(*sent) != 1 || (*sent)[0] != "Copy finished|Copied: a.txt" {
 		t.Fatalf("a long copy notified %q", *sent)
+	}
+
+	// A move says so
+	*sent = nil
+	src, dst := t.TempDir(), t.TempDir()
+	writeTestFile(t, filepath.Join(src, "b.txt"), "b")
+	m = newTestModel(t, src, nil)
+	m, _ = press(t, m, "x")
+	m.tab().CurrentPath = dst
+	m, cmd = press(t, m, "v")
+	if m.job == nil {
+		t.Fatalf("the move didn't start: %q", m.statusMsg)
+	}
+	drain(t, backdate(m, time.Minute), cmd)
+	if len(*sent) != 1 || (*sent)[0] != "Move finished|Moved: b.txt" {
+		t.Fatalf("a long move notified %q", *sent)
 	}
 
 	// The threshold is the config's
@@ -88,7 +105,7 @@ func TestLongOperationNotifiesWhenItFinishes(t *testing.T) {
 	}
 }
 
-func TestFailedAndCancelledOperationsNotify(t *testing.T) {
+func TestFailedOperationsNotifyAndCancelledOnesDont(t *testing.T) {
 	sent := recordNotifications(t)
 
 	// Failed: the source went before the copy could start
@@ -100,16 +117,16 @@ func TestFailedAndCancelledOperationsNotify(t *testing.T) {
 	if !strings.HasPrefix(m.statusMsg, "Error: a.txt: ") {
 		t.Fatalf("status %q, want the copy's error", m.statusMsg)
 	}
-	if len(*sent) != 1 || !strings.HasPrefix((*sent)[0], "Sushi|Copying failed: a.txt: ") {
+	if len(*sent) != 1 || (*sent)[0] != "Copy failed|"+strings.TrimPrefix(m.statusMsg, "Error: ") {
 		t.Fatalf("a failed copy notified %q", *sent)
 	}
 
-	// Cancelled with ctrl+x
+	// Cancelled with ctrl+x: the user was there to see it stop
 	*sent = nil
 	m, cmd, _, _ = startPaste(t, nil)
 	m, _ = ctrl(t, backdate(m, time.Minute), tea.KeyCtrlX)
 	m = drain(t, m, cmd)
-	if len(*sent) != 1 || (*sent)[0] != "Sushi|"+m.statusMsg || !strings.HasPrefix(m.statusMsg, "Cancelled: ") {
+	if len(*sent) != 0 || !strings.HasPrefix(m.statusMsg, "Cancelled: ") {
 		t.Fatalf("a cancelled copy: status %q, notified %q", m.statusMsg, *sent)
 	}
 

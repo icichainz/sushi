@@ -645,13 +645,13 @@ Where the status bar is short of room, the progress drops its bar, as in `Copyin
 
 ### Notifications
 
-An operation that runs longer than `notify_after` (5 seconds unless the config sets it; `0` turns this off) tells the terminal when it finishes, whether it succeeded, failed or was cancelled, so you hear of it while you work in another window. The notification says what the status bar says, as in `Copied: 120 items`, `Cancelled: copied 3 of 120 files` or `Moving failed: ...`. What you get depends on where sushi runs:
+An operation that runs longer than `notify_after` (5 seconds unless the config sets it; `0` turns this off) tells the terminal when it finishes or fails, so you hear of it while you work in another window; one you cancel with `Ctrl+x` doesn't, as you were there to see it stop. The notification's title says what finished, as in `Copy finished` or `Move failed`, and its text what the status bar says, as in `Copied: 120 items`. What you get depends on where sushi runs:
 
 | Where sushi runs | What a long operation does when it finishes |
 | ---------------- | ------------------------------------------- |
 | Sushi.app | A macOS notification, when the Sushi window isn't the active one |
 | iTerm2, WezTerm | A desktop notification (OSC 9) |
-| kitty | A desktop notification (OSC 99) |
+| kitty | A desktop notification (OSC 99), when its window isn't focused |
 | Terminal.app | The bell, which Terminal can turn into a badge or a bounce of its Dock icon: Settings, Profiles, Advanced, Bell |
 | tmux, screen, ssh and other terminals | The bell, which tmux passes on to the terminal it runs in |
 

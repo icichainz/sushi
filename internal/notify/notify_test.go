@@ -3,6 +3,7 @@ package notify
 import (
 	"bytes"
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -49,11 +50,11 @@ func TestKindReadsTheEnvironment(t *testing.T) {
 		t.Setenv(name, "")
 	}
 	t.Setenv("TERM_PROGRAM", "Sushi")
-	if Kind() != SushiApp || !InApp() {
+	if Kind() != SushiApp {
 		t.Fatalf("TERM_PROGRAM=Sushi: %v", Kind())
 	}
 	t.Setenv("TERM_PROGRAM", "Apple_Terminal")
-	if Kind() != Bell || InApp() {
+	if Kind() != Bell {
 		t.Fatalf("TERM_PROGRAM=Apple_Terminal: %v", Kind())
 	}
 }
@@ -104,12 +105,14 @@ func TestSequence(t *testing.T) {
 		title, body string
 		want        string
 	}{
-		{SushiApp, "Sushi", "Copied: 3 items", "\x1b]1337;SushiNotify=Sushi|Copied: 3 items\a"},
+		// Percent-encoded for the app, so that only ASCII is sent
+		{SushiApp, "Copy finished", "Copied: 3 items", "\x1b]1337;SushiNotify=Copy%20finished|Copied:%203%20items\a"},
 		{SushiApp, "Sushi", "", "\x1b]1337;SushiNotify=Sushi|\a"},
+		{SushiApp, "Copié", "100% 🍣", "\x1b]1337;SushiNotify=Copi%C3%A9|100%25%20%F0%9F%8D%A3\a"},
 		{ITerm, "Sushi", "Copied: 3 items", "\x1b]9;Sushi: Copied: 3 items\a"},
 		{ITerm, "Sushi", "", "\x1b]9;Sushi\a"},
-		{Kitty, "Sushi", "Copied: 3 items", "\x1b]99;i=sushi:d=0;Sushi\x1b\\\x1b]99;i=sushi:p=body;Copied: 3 items\x1b\\"},
-		{Kitty, "Sushi", "", "\x1b]99;i=sushi;Sushi\x1b\\"},
+		{Kitty, "Sushi", "Copied: 3 items", "\x1b]99;i=sushi:d=0:o=unfocused;Sushi\x1b\\\x1b]99;i=sushi:o=unfocused:p=body;Copied: 3 items\x1b\\"},
+		{Kitty, "Sushi", "", "\x1b]99;i=sushi:o=unfocused;Sushi\x1b\\"},
 		{Bell, "Sushi", "Copied: 3 items", "\a"},
 		// Text without a title becomes the title
 		{ITerm, "", "Copied: 3 items", "\x1b]9;Copied: 3 items\a"},
@@ -119,9 +122,9 @@ func TestSequence(t *testing.T) {
 		{ITerm, "\x1b", "\n", "\a"},
 		{Kitty, "", "", "\a"},
 		// Both are sanitized
-		{SushiApp, "Su|shi", "a\x07b;c|d", "\x1b]1337;SushiNotify=Su shi|a b,c d\a"},
+		{SushiApp, "Su|shi", "a\x07b;c|d", "\x1b]1337;SushiNotify=Su%20shi|a%20b%2Cc%20d\a"},
 		{ITerm, "Sushi", "bad\x1b\\name", "\x1b]9;Sushi: bad \\name\a"},
-		{Kitty, "Sushi", "x\x1b\\y", "\x1b]99;i=sushi:d=0;Sushi\x1b\\\x1b]99;i=sushi:p=body;x \\y\x1b\\"},
+		{Kitty, "Sushi", "x\x1b\\y", "\x1b]99;i=sushi:d=0:o=unfocused;Sushi\x1b\\\x1b]99;i=sushi:o=unfocused:p=body;x \\y\x1b\\"},
 	} {
 		if got := Sequence(tc.host, tc.title, tc.body); got != tc.want {
 			t.Errorf("Sequence(%v, %q, %q) = %q, want %q", tc.host, tc.title, tc.body, got, tc.want)
@@ -147,7 +150,7 @@ func TestSendWritesTheSequenceForTheHost(t *testing.T) {
 	if err := Send("Sushi", "Moved: notes.txt"); err != nil {
 		t.Fatal(err)
 	}
-	if got := buf.String(); got != "\x1b]1337;SushiNotify=Sushi|Moved: notes.txt\a" {
+	if got := buf.String(); got != "\x1b]1337;SushiNotify=Sushi|Moved:%20notes.txt\a" {
 		t.Fatalf("in the app: %q", got)
 	}
 
@@ -177,5 +180,31 @@ func TestDirectorySequence(t *testing.T) {
 	}
 	if DirectorySequence(SushiApp, "h", "") != "" {
 		t.Fatal("an empty directory should send nothing")
+	}
+}
+
+func TestAppNoticesAreASCIIAndDecodeBack(t *testing.T) {
+	for _, tc := range []struct{ title, body string }{
+		{"Copy finished", "Copied: 2024年夏の旅行写真.jpg"},
+		{"Move failed", "Ünïcödé Ärchïvé — 100% (2).zip: permission denied"},
+		{"a+b=c&d?e#f", "x/y\\z %41 'q' \"r\""},
+	} {
+		seq := Sequence(SushiApp, tc.title, tc.body)
+		payload, ok := strings.CutPrefix(seq, "\x1b]1337;SushiNotify=")
+		if !ok || !strings.HasSuffix(payload, "\a") {
+			t.Fatalf("not a notice: %q", seq)
+		}
+		payload = strings.TrimSuffix(payload, "\a")
+		for i := 0; i < len(payload); i++ {
+			if c := payload[i]; c < 0x20 || c > 0x7e {
+				t.Fatalf("byte %#x in %q", c, payload)
+			}
+		}
+		title, body, _ := strings.Cut(payload, "|")
+		gotTitle, err1 := url.PathUnescape(title)
+		gotBody, err2 := url.PathUnescape(body)
+		if err1 != nil || err2 != nil || gotTitle != Sanitize(tc.title) || gotBody != Sanitize(tc.body) {
+			t.Errorf("%q decodes to %q, %q (%v, %v)", payload, gotTitle, gotBody, err1, err2)
+		}
 	}
 }
