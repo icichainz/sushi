@@ -37,6 +37,7 @@ func TestMain(m *testing.M) {
 	// Nothing rings the bell of the terminal running the tests; tests of
 	// notifications put a recorder here
 	sendNotification = func(title, body string) error { return nil }
+	setHostDirectory = func(string) error { return nil }
 	os.Exit(m.Run())
 }
 
@@ -1652,5 +1653,26 @@ func TestWaitCommandWaitsForEnter(t *testing.T) {
 	}
 	if got := out.String(); !strings.Contains(got, "hello") || !strings.Contains(got, "Press Enter") || !strings.Contains(got, "exit status 2") {
 		t.Fatalf("output = %q", got)
+	}
+}
+
+func TestHostIsToldTheDirectoryShown(t *testing.T) {
+	root := t.TempDir()
+	os.Mkdir(filepath.Join(root, "sub"), 0755)
+	var told []string
+	setHostDirectory = func(dir string) error { told = append(told, dir); return nil }
+	defer func() { setHostDirectory = func(string) error { return nil } }()
+
+	m := newTestModel(t, root, nil)
+	m, cmd := press(t, m, "l")
+	m = drain(t, m, cmd)
+	m, _ = press(t, m, "j") // No directory change: nothing new is told
+	if len(told) < 2 || told[len(told)-1] != filepath.Join(root, "sub") {
+		t.Fatalf("told %v, want the root then sub", told)
+	}
+	n := len(told)
+	m, _ = press(t, m, "k")
+	if len(told) != n {
+		t.Fatal("moving the cursor should not re-announce the directory")
 	}
 }

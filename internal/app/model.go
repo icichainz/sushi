@@ -66,6 +66,9 @@ type Model struct {
 	prompt     prompt // Text input for ModeInput
 	helpScroll int    // First visible row of the key panel
 
+	// The directory last reported to the terminal; see dispatch.go
+	hostDir string
+
 	// Status message
 	statusMsg string
 	statusID  int // Identifies the current message so older timers don't clear it

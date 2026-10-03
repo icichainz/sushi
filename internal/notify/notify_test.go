@@ -162,3 +162,16 @@ func TestSendWritesTheSequenceForTheHost(t *testing.T) {
 		t.Fatalf("a failed write: %v", err)
 	}
 }
+
+func TestDirectorySequence(t *testing.T) {
+	got := DirectorySequence(SushiApp, "mac.local", "/Users/me/My Docs/é")
+	if want := "\x1b]7;file://mac.local/Users/me/My%20Docs/%C3%A9\x07"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if DirectorySequence(Bell, "mac.local", "/tmp") != "" {
+		t.Fatal("a bell-only terminal should get no directory sequence")
+	}
+	if DirectorySequence(ITerm, "h", "") != "" {
+		t.Fatal("an empty directory should send nothing")
+	}
+}

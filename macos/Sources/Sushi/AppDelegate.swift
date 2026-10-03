@@ -49,15 +49,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// sushi opens folders, so a file opens the folder it is in. So does a
-    /// package, such as an app, which Finder shows as a file.
+    /// What to start sushi on: a folder as it is, a file as it is (sushi
+    /// opens its folder with the cursor on it), and a package such as an
+    /// app, which Finder shows as a file, as the folder it is in
     private static func directory(for url: URL) -> String {
-        // A folder the app may not read yet still has a URL ending in /
-        let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
-        if (values?.isDirectory ?? url.hasDirectoryPath) && values?.isPackage != true {
-            return url.path
+        let values = try? url.resourceValues(forKeys: [.isPackageKey])
+        if values?.isPackage == true {
+            return url.deletingLastPathComponent().path
         }
-        return url.deletingLastPathComponent().path
+        return url.path
     }
 
     @discardableResult

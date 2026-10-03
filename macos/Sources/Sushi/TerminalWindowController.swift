@@ -192,7 +192,20 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         window.title = title.isEmpty ? "Sushi" : title
     }
 
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    /// sushi reports the folder it shows (OSC 7); the window takes its
+    /// name and shows the folder's icon in the title bar
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        guard let directory, let url = URL(string: directory), url.isFileURL else { return }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        var name = url.lastPathComponent
+        if url.path == home {
+            name = "~"
+        } else if url.path == "/" {
+            name = "/"
+        }
+        window.title = name
+        window.representedURL = url
+    }
 
     /// Quitting sushi (q) closes its window
     func processTerminated(source: TerminalView, exitCode: Int32?) {

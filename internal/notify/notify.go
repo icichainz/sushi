@@ -12,6 +12,7 @@ package notify
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 	"unicode"
@@ -175,4 +176,27 @@ func Send(title, body string) error {
 		return fmt.Errorf("notify: %w", err)
 	}
 	return nil
+}
+
+// DirectorySequence is the OSC 7 sequence that tells a terminal which
+// directory is being shown. The Sushi app titles its window with it, and
+// iTerm2 and WezTerm show the folder too. Terminals that get a bell for
+// notifications are left alone: tmux and screen would swallow it.
+func DirectorySequence(h Host, hostname, dir string) string {
+	if h == Bell || dir == "" {
+		return ""
+	}
+	u := url.URL{Scheme: "file", Host: hostname, Path: dir}
+	return "\x1b]7;" + u.String() + "\x07"
+}
+
+// SetDirectory tells the terminal which directory sushi is showing
+func SetDirectory(dir string) error {
+	hostname, _ := os.Hostname()
+	seq := DirectorySequence(Kind(), hostname, dir)
+	if seq == "" {
+		return nil
+	}
+	_, err := io.WriteString(out, seq)
+	return err
 }
