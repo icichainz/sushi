@@ -57,11 +57,6 @@ func Kind() Host {
 	return KindFrom(os.Getenv)
 }
 
-// InApp reports whether sushi is running inside the Sushi macOS app
-func InApp() bool {
-	return Kind() == SushiApp
-}
-
 // KindFrom is Kind with the environment read through getenv
 func KindFrom(getenv func(string) string) Host {
 	// tmux and screen swallow sequences they don't know unless passthrough
@@ -149,8 +144,11 @@ func Sequence(h Host, title, body string) string {
 	switch h {
 	case SushiApp:
 		// The app reads OSC 1337 ; SushiNotify=<title>|<body>, the
-		// separator there even when the body is empty
-		return "\x1b]1337;SushiNotify=" + title + "|" + body + "\a"
+		// separator there even when the body is empty. Both are
+		// percent-encoded, so only ASCII is sent: SwiftTerm takes a UTF-8
+		// byte in 0x80-0x9F that starts a read for a C1 control, which
+		// ends the sequence and loses the notification.
+		return "\x1b]1337;SushiNotify=" + url.PathEscape(title) + "|" + url.PathEscape(body) + "\a"
 	case ITerm:
 		// iTerm2's OSC 9 has the one string, which WezTerm shows as it is
 		text := title
@@ -160,11 +158,13 @@ func Sequence(h Host, title, body string) string {
 		return "\x1b]9;" + text + "\a"
 	case Kitty:
 		// OSC 99 sends the title and body as chunks of one notification,
-		// tied together by their id; d=0 says more is to come
+		// tied together by their id; d=0 says more is to come.
+		// o=unfocused shows it only if the user isn't looking at sushi's
+		// window, as the Sushi app does.
 		if body == "" {
-			return "\x1b]99;i=sushi;" + title + "\x1b\\"
+			return "\x1b]99;i=sushi:o=unfocused;" + title + "\x1b\\"
 		}
-		return "\x1b]99;i=sushi:d=0;" + title + "\x1b\\" + "\x1b]99;i=sushi:p=body;" + body + "\x1b\\"
+		return "\x1b]99;i=sushi:d=0:o=unfocused;" + title + "\x1b\\" + "\x1b]99;i=sushi:o=unfocused:p=body;" + body + "\x1b\\"
 	}
 	return "\a"
 }
@@ -178,19 +178,19 @@ func Send(title, body string) error {
 	return nil
 }
 
-// DirectorySequence is the OSC 7 sequence that tells a terminal which
-// directory is being shown. The Sushi app titles its window with it, and
-// iTerm2 and WezTerm show the folder too. Terminals that get a bell for
-// notifications are left alone: tmux and screen would swallow it.
+// DirectorySequence is the OSC 7 sequence that tells the Sushi app which
+// directory is being shown, to title its window after it. Other terminals
+// are left alone: they take OSC 7 for the shell's directory, and would
+// open new tabs in the last folder sushi showed.
 func DirectorySequence(h Host, hostname, dir string) string {
-	if h == Bell || dir == "" {
+	if h != SushiApp || dir == "" {
 		return ""
 	}
 	u := url.URL{Scheme: "file", Host: hostname, Path: dir}
 	return "\x1b]7;" + u.String() + "\x07"
 }
 
-// SetDirectory tells the terminal which directory sushi is showing
+// SetDirectory tells the Sushi app which directory sushi is showing
 func SetDirectory(dir string) error {
 	hostname, _ := os.Hostname()
 	seq := DirectorySequence(Kind(), hostname, dir)

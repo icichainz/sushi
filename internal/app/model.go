@@ -17,6 +17,7 @@ import (
 	"github.com/icichainz/sushi/internal/plugins"
 	"github.com/icichainz/sushi/internal/ui"
 	"github.com/icichainz/sushi/internal/ui/components"
+	"golang.org/x/text/unicode/norm"
 )
 
 // Tab represents a single browsing session
@@ -548,8 +549,12 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	if notFound != "" {
 		problems = append([]string{notFound}, problems...)
 	}
+	// The name may be given composed differently from how the folder lists
+	// it (é as one character or as e and an accent), which macOS takes for
+	// the same file, as Finder may pass it
+	focus = norm.NFC.String(focus)
 	for i, f := range initialTab.Files {
-		if f.Path == focus {
+		if norm.NFC.String(f.Path) == focus {
 			initialTab.Cursor = i
 			break
 		}

@@ -13,6 +13,7 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
     var onNotice: ((TerminalWindowController, SushiNotice) -> Void)?
 
     private let sushi: String
+    private let exits: PendingExits
     private var font: NSFont
     private var terminal: LocalProcessTerminalView?
     private var relay: TerminalRelay?
@@ -25,8 +26,9 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
     private static let foreground = NSColor(srgbRed: 0xeb / 255, green: 0xe7 / 255, blue: 0xdc / 255, alpha: 1)
     private static let caret = NSColor(srgbRed: 0xff / 255, green: 0x94 / 255, blue: 0x78 / 255, alpha: 1)
 
-    init(sushi: String, number: Int, font: NSFont, after previous: NSWindow?) {
+    init(sushi: String, number: Int, font: NSFont, after previous: NSWindow?, exits: PendingExits) {
         self.sushi = sushi
+        self.exits = exits
         self.number = number
         self.font = font
         window = NSWindow(
@@ -63,8 +65,10 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         window.setFrameAutosaveName(name)
     }
 
-    /// Shows the folder in the window, in a new sushi if one was running
-    func open(_ directory: String) {
+    /// Starts sushi on path, a folder or a file to put the cursor on, in
+    /// directory, the folder it shows; a sushi running in the window is
+    /// stopped first
+    func open(_ path: String, in directory: String) {
         stop()
         if let old = terminal {
             old.processDelegate = nil
@@ -87,79 +91,106 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
 
         bringToFront()
         window.makeFirstResponder(terminal)
-        start(terminal, in: directory)
+        start(terminal, on: path, in: directory)
     }
+
+    /// The login shells sushi is started through. Others, such as tcsh,
+    /// take other options, so their users get the system's zsh.
+    private static let shells: Set<String> = ["zsh", "bash", "fish", "sh", "ksh", "dash"]
 
     /// Runs sushi through the user's login shell, so it sees the same PATH,
     /// EDITOR and other settings as in a terminal. Apps opened from Finder
     /// otherwise get a bare environment, and plugins and editors go missing.
-    private func start(_ terminal: LocalProcessTerminalView, in directory: String) {
+    private func start(_ terminal: LocalProcessTerminalView, on path: String, in directory: String) {
         var environment = ProcessInfo.processInfo.environment
         environment["TERM"] = "xterm-256color"
         environment["COLORTERM"] = "truecolor"
         environment["TERM_PROGRAM"] = "Sushi"
+        // Left by a terminal the app was started from, they would have
+        // sushi take the window for that terminal, or for tmux
+        for name in ["TERM_PROGRAM_VERSION", "TMUX", "TMUX_PANE", "STY"] {
+            environment[name] = nil
+        }
         if environment["LANG"] == nil {
             environment["LANG"] = "en_US.UTF-8"
         }
+        // The paths go through the environment, which every shell expands
+        // the same way, rather than be quoted into the command for each
+        environment["SUSHI_BIN"] = sushi
+        environment["SUSHI_START"] = path
 
-        let shell = environment["SHELL"] ?? "/bin/zsh"
-        // exec replaces the shell, so quitting sushi ends the process. The
-        // paths are quoted into the command, since fish has no "$0"/"$1".
-        let command = "exec \(quoted(sushi)) \(quoted(directory))"
+        var shell = environment["SHELL"] ?? ""
+        if !Self.shells.contains((shell as NSString).lastPathComponent) || !FileManager.default.isExecutableFile(atPath: shell) {
+            shell = "/bin/zsh"
+        }
         // Set first, as a sushi that can't start reports its exit at once
         running = true
+        // exec replaces the shell, so quitting sushi ends the process
         terminal.startProcess(
             executable: shell,
-            args: ["-l", "-i", "-c", command],
+            args: ["-l", "-i", "-c", "exec \"$SUSHI_BIN\" \"$SUSHI_START\""],
             environment: environment.map { "\($0.key)=\($0.value)" },
             execName: nil,
             currentDirectory: directory)
     }
 
-    /// Single-quotes a string for zsh, bash and fish
-    private func quoted(_ s: String) -> String {
-        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
-
-    /// Ends sushi, when its window closes or the app quits
+    /// Ends sushi, when its window closes or the app quits. The app waits
+    /// for it to exit, through exits, before it quits.
     func stop() {
         guard running, let terminal else { return }
         running = false
-        let pid = terminal.process.shellPid
+        let process: LocalProcess = terminal.process
+        let pid = process.shellPid
+        // The terminal's foreground job, which a hangup reaches too, as
+        // something the shell runs from its startup files
+        let foreground = process.childfd >= 0 ? tcgetpgrp(process.childfd) : -1
+        // Stops reading the terminal, and sends sushi SIGTERM
         terminal.terminate()
-        Self.reap(pid)
-        Self.insist(pid)
+        Self.hangUp(pid, foreground: foreground, done: exits.begin())
     }
 
-    /// terminate() sends SIGTERM, which an interactive shell ignores while
-    /// it reads its startup files. A window closed in that moment would
-    /// leave the shell to exec a sushi nobody can see. So: SIGTERM again
-    /// once the shell has had time to start (sushi handles it, and takes
-    /// up to 10 s to stop a running job), then SIGKILL as a last resort.
-    private static func insist(_ pid: pid_t) {
-        guard pid > 0 else { return }
-        let alive = { kill(pid, 0) == 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            if alive() { kill(pid, SIGTERM) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
-                if alive() { kill(pid, SIGKILL) }
-            }
+    /// Hangs up on sushi as a terminal does when its window closes, which
+    /// SwiftTerm doesn't: terminate() leaves the terminal open until sushi
+    /// next writes to it. Its SIGTERM isn't enough either: an interactive
+    /// shell ignores it while it reads its startup files, and would then
+    /// start a sushi nobody can see, and an editor or plugin sushi runs
+    /// has the terminal until it exits. SIGHUP to the window's process
+    /// group reaches the shell, sushi, which stops a running job and
+    /// cleans up after it (for up to 10 s), and what sushi runs. Anything
+    /// still there after 15 s is killed. done runs once sushi has exited.
+    private static func hangUp(_ pid: pid_t, foreground: pid_t, done: @escaping () -> Void) {
+        // Never 0 or 1: kill(0) is the app's own group, and kill(-1) every
+        // process the user has
+        guard pid > 1 else {
+            done()
+            return
         }
-    }
+        if kill(-pid, SIGHUP) != 0 {
+            kill(pid, SIGHUP)
+        }
+        if foreground > 1 && foreground != pid {
+            kill(-foreground, SIGHUP)
+        }
 
-    /// SwiftTerm stops watching a process it terminates, which would stay a
-    /// zombie while the app runs. sushi may take a few seconds to exit, as
-    /// it cleans up after a cancelled copy.
-    private static func reap(_ pid: pid_t) {
-        guard pid > 0 else { return }
+        // SwiftTerm stops watching a process it terminates, which would
+        // stay a zombie while the app runs
+        var reaped = false
         let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
         // The handler keeps the source until the process is gone
         source.setEventHandler {
             var status: Int32 = 0
             waitpid(pid, &status, WNOHANG)
+            reaped = true
             source.cancel()
+            done()
         }
         source.activate()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+            // Until it is reaped, pid can name no other process or group
+            if !reaped && kill(-pid, SIGKILL) != 0 {
+                kill(pid, SIGKILL)
+            }
+        }
     }
 
     func bringToFront() {
@@ -206,13 +237,13 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        window.title = title.isEmpty ? "Sushi" : title
+        window.title = Self.printable(title) ?? "Sushi"
     }
 
     /// sushi reports the folder it shows (OSC 7); the window takes its
     /// name and shows the folder's icon in the title bar
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
-        guard let directory, let url = URL(string: directory), url.isFileURL else { return }
+        guard let directory, let url = URL(string: directory), url.isFileURL, !url.path.isEmpty else { return }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         var name = url.lastPathComponent
         if url.path == home {
@@ -220,21 +251,54 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         } else if url.path == "/" {
             name = "/"
         }
-        window.title = name
+        window.title = Self.printable(name) ?? "Sushi"
         window.representedURL = url
     }
 
-    /// Quitting sushi (q) closes its window
+    /// A title without the control and format characters a program, or a
+    /// file name, could garble the title bar and Window menu with; nil if
+    /// nothing is left
+    private static func printable(_ title: String) -> String? {
+        let kept = title.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
+        let text = String(String.UnicodeScalarView(kept)).trimmingCharacters(in: .whitespaces)
+        return text.isEmpty ? nil : text
+    }
+
+    /// Quitting sushi (q) closes its window. If it failed, or couldn't
+    /// start, the window stays open on what it printed, as a panic or a
+    /// shell's error, until the user closes it.
     func processTerminated(source: TerminalView, exitCode: Int32?) {
         running = false
-        window.close()
+        // SwiftTerm passes the wait status, not the exit code
+        guard let status = exitCode, let failure = Self.failure(status) else {
+            window.close()
+            return
+        }
+        // After what sushi printed last, which may still be on its way
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak source] in
+            // Shows the cursor, and leaves the mouse to select text with
+            let reset = "\u{1b}[0m\u{1b}[?25h\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1003l\u{1b}[?1006l"
+            source?.feed(text: reset + "\r\n[sushi exited: \(failure)]\r\n")
+        }
+    }
+
+    /// What a wait status says went wrong: the exit code if it isn't 0, or
+    /// the signal that ended the process; nil if it exited with 0
+    static func failure(_ status: Int32) -> String? {
+        let signal = status & 0x7f
+        if signal == 0 {
+            let code = (status >> 8) & 0xff
+            return code == 0 ? nil : "\(code)"
+        }
+        return "signal \(signal)"
     }
 }
 
 /// LocalProcessTerminalView is its own TerminalViewDelegate, and leaves the
 /// bell and OSC 1337 to SwiftTerm's defaults, which a subclass can't
 /// override. The relay takes its place, as SwiftTerm's documentation
-/// suggests: it handles those two and hands everything else back.
+/// suggests: it handles those two, refuses to read the clipboard, and
+/// hands everything else back.
 private final class TerminalRelay: TerminalViewDelegate {
     private unowned let view: LocalProcessTerminalView
     private let onBell: () -> Void
@@ -259,5 +323,8 @@ private final class TerminalRelay: TerminalViewDelegate {
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) { view.rangeChanged(source: source, startY: startY, endY: endY) }
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) { view.requestOpenLink(source: source, link: link, params: params) }
     func clipboardCopy(source: TerminalView, content: Data) { view.clipboardCopy(source: source, content: content) }
-    func clipboardRead(source: TerminalView) -> Data? { view.clipboardRead(source: source) }
+
+    /// Programs in the window can set the clipboard (OSC 52), but not read
+    /// it: what was copied elsewhere, such as a password, isn't theirs
+    func clipboardRead(source: TerminalView) -> Data? { nil }
 }

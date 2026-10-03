@@ -6,7 +6,9 @@ import UserNotifications
 ///
 ///     ESC ] 1337 ; SushiNotify=<title>|<body> BEL
 ///
-/// in UTF-8, with no |, ;, ESC or BEL in the title or the body.
+/// with the title and the body percent-encoded UTF-8, so that only ASCII
+/// is sent: SwiftTerm would take a UTF-8 byte in 0x80-0x9F that starts a
+/// read for a C1 control, and lose the notice.
 struct SushiNotice {
     let title: String
     let body: String
@@ -18,8 +20,14 @@ struct SushiNotice {
         let text = String(decoding: content, as: UTF8.self)
         guard text.hasPrefix(Self.key) else { return nil }
         let parts = text.dropFirst(Self.key.count).split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
-        title = String(parts[0])
-        body = parts.count > 1 ? String(parts[1]) : ""
+        title = Self.decoded(parts[0])
+        body = parts.count > 1 ? Self.decoded(parts[1]) : ""
+    }
+
+    /// A part as sushi had it; one that isn't valid percent-encoding, as
+    /// from an older sushi, as it is
+    private static func decoded(_ part: Substring) -> String {
+        String(part).removingPercentEncoding ?? String(part)
     }
 }
 

@@ -4,12 +4,19 @@ import CoreText
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The open windows, in the order they were opened
     private(set) var windows: [TerminalWindowController] = []
+    /// The sushis still exiting, from closed windows too, for quitting to
+    /// wait for
+    private let exits = PendingExits()
+    /// Quitting waits for them, and opens no more windows meanwhile
+    private var quitting = false
 
-    /// The home window opened at launch, which a folder arriving in the
-    /// next seconds replaces rather than opening a second window: when
-    /// Finder's service starts the app, the folder comes after the launch.
+    /// The home window opened when the app was started for something other
+    /// than a click on its icon, such as Finder's service. The folder comes
+    /// after the launch then, and takes the window over in the next seconds
+    /// rather than open a second one, unless the user has typed or clicked
+    /// in it.
     private weak var launchWindow: TerminalWindowController?
-    private var launchWindowExpiry = Date.distantPast
+    private var launchWindowWatch: Any?
 
     private let defaultFontSize: CGFloat = 13
     private let fontSizeKey = "fontSize"
@@ -24,52 +31,111 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Folders opened from Finder, or with open -a, arrive before this
-        if windows.isEmpty {
-            launchWindow = openWindow(at: NSHomeDirectory())
-            launchWindowExpiry = Date().addingTimeInterval(5)
+        if windows.isEmpty, let window = openWindow(NSHomeDirectory(), in: NSHomeDirectory()),
+           notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool == false {
+            keepReplaceable(window)
         }
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// Folders opened from Finder (Open With, a drop on the Dock icon), with
-    /// open -a Sushi, or with the service. Each opens in a window of its own.
+    /// Lets a folder arriving in the next 5 seconds take the launch window
+    /// over, until the user types or clicks in it
+    private func keepReplaceable(_ window: TerminalWindowController) {
+        launchWindow = window
+        launchWindowWatch = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
+            if let self, let launch = self.launchWindow, event.window === launch.window {
+                self.forgetLaunchWindow()
+            }
+            return event
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.forgetLaunchWindow()
+        }
+    }
+
+    private func forgetLaunchWindow() {
+        launchWindow = nil
+        if let watch = launchWindowWatch {
+            NSEvent.removeMonitor(watch)
+            launchWindowWatch = nil
+        }
+    }
+
+    /// Folders and files opened from Finder (Open With, a drop on the Dock
+    /// icon), with open -a Sushi, or with the service. Each folder opens in
+    /// a window of its own, and so do the files of each folder, together.
     func application(_ application: NSApplication, open urls: [URL]) {
-        // Files of the same folder open it once
-        var opened = Set<String>()
-        for url in urls {
-            let directory = Self.directory(for: url)
-            guard opened.insert(directory).inserted else { continue }
-            if let window = launchWindow, Date() < launchWindowExpiry {
-                launchWindow = nil
-                window.open(directory)
+        for place in Self.places(for: urls) {
+            if let window = launchWindow {
+                forgetLaunchWindow()
+                window.open(place.path, in: place.directory)
             } else {
-                openWindow(at: directory)
+                openWindow(place.path, in: place.directory)
             }
         }
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// What to start sushi on: a folder as it is, a file as it is (sushi
-    /// opens its folder with the cursor on it), and a package such as an
-    /// app, which Finder shows as a file, as the folder it is in
-    private static func directory(for url: URL) -> String {
+    /// Where sushi starts: on path, in directory, the folder it shows
+    struct Place {
+        let path: String
+        let directory: String
+    }
+
+    /// Where to start sushi for what was opened, a window for each folder
+    /// shown. A folder opens as it is. Files open the folder they are in,
+    /// once for all of them, with the cursor on the first (sushi, given a
+    /// file, puts the cursor on it). A package, such as an app, which
+    /// Finder shows as a file but sushi as a folder, opens the folder it is
+    /// in, at the top.
+    static func places(for urls: [URL]) -> [Place] {
+        var places: [Place] = []
+        for url in urls {
+            let place: Place
+            switch kind(of: url) {
+            case .folder:
+                place = Place(path: url.path, directory: url.path)
+            case .file:
+                place = Place(path: url.path, directory: url.deletingLastPathComponent().path)
+            case .package:
+                let parent = url.deletingLastPathComponent().path
+                place = Place(path: parent, directory: parent)
+            }
+            if let i = places.firstIndex(where: { $0.directory == place.directory }) {
+                // The folder is already opening: a file puts the cursor on
+                // itself, if no other file has
+                if places[i].path == places[i].directory {
+                    places[i] = place
+                }
+            } else {
+                places.append(place)
+            }
+        }
+        return places
+    }
+
+    private enum Kind { case folder, file, package }
+
+    private static func kind(of url: URL) -> Kind {
         // Resolved, so a link such as /tmp is seen as the folder it points
         // to; the link's own path is still what sushi gets
-        let values = try? url.resolvingSymlinksInPath().resourceValues(forKeys: [.isPackageKey])
+        let values = try? url.resolvingSymlinksInPath().resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
         if values?.isPackage == true {
-            return url.deletingLastPathComponent().path
+            return .package
         }
-        return url.path
+        // A folder the app may not read yet still has a URL ending in /
+        return (values?.isDirectory ?? url.hasDirectoryPath) ? .folder : .file
     }
 
     @discardableResult
-    private func openWindow(at directory: String) -> TerminalWindowController? {
+    private func openWindow(_ path: String, in directory: String) -> TerminalWindowController? {
+        guard !quitting else { return nil }
         guard let sushi = Bundle.main.path(forResource: "sushi", ofType: nil) else {
             fail("The sushi program is missing from the app. Reinstall Sushi.")
             return nil
         }
         let controller = TerminalWindowController(
-            sushi: sushi, number: freeNumber(), font: terminalFont(size: fontSize), after: windows.last?.window)
+            sushi: sushi, number: freeNumber(), font: terminalFont(size: fontSize), after: windows.last?.window, exits: exits)
         controller.onClose = { [weak self] closed in
             // Released once AppKit is done closing its window
             DispatchQueue.main.async {
@@ -80,7 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.post(notice, from: window)
         }
         windows.append(controller)
-        controller.open(directory)
+        controller.open(path, in: directory)
         return controller
     }
 
@@ -95,7 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func newWindow(_ sender: Any?) {
-        openWindow(at: NSHomeDirectory())
+        openWindow(NSHomeDirectory(), in: NSHomeDirectory())
     }
 
     // MARK: Font
@@ -158,6 +224,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let view = NSMenu(title: "View")
         view.addItem(withTitle: "Bigger Text", action: #selector(biggerText(_:)), keyEquivalent: "+")
+        // Cmd+= too, without Shift, as + is Shift+= on most keyboards
+        let bigger = view.addItem(withTitle: "Bigger Text", action: #selector(biggerText(_:)), keyEquivalent: "=")
+        bigger.isHidden = true
+        bigger.allowsKeyEquivalentWhenHidden = true
         view.addItem(withTitle: "Smaller Text", action: #selector(smallerText(_:)), keyEquivalent: "-")
         view.addItem(withTitle: "Default Text Size", action: #selector(defaultText(_:)), keyEquivalent: "0")
         view.addItem(.separator())
@@ -191,6 +261,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    /// Quitting stops sushi in every window, and waits for each to exit,
+    /// those of windows closed just before too: one in the middle of a copy
+    /// cancels it and cleans up, for up to 10 s, after which it gives up.
+    /// Otherwise a sushi still cleaning up would carry on unseen once the
+    /// app had gone. Asked again meanwhile, the app quits at once.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if quitting {
+            return .terminateNow
+        }
+        windows.forEach { $0.stop() }
+        guard exits.pending > 0 else { return .terminateNow }
+        quitting = true
+        var replied = false
+        let reply = {
+            guard !replied else { return }
+            replied = true
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        exits.wait(reply)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 11, execute: reply)
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // Quitting the app must not leave any sushi running in the background
         windows.forEach { $0.stop() }
@@ -203,5 +296,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = message
         alert.runModal()
         NSApp.terminate(nil)
+    }
+}
+
+/// Counts the sushis told to stop that haven't exited yet, whether their
+/// window is still open or not
+final class PendingExits {
+    private(set) var pending = 0
+    private var waiting: [() -> Void] = []
+
+    /// Counts one more, and returns what to call once it has exited
+    func begin() -> () -> Void {
+        pending += 1
+        var ended = false
+        return { [weak self] in
+            guard let self, !ended else { return }
+            ended = true
+            self.pending -= 1
+            if self.pending == 0 {
+                let done = self.waiting
+                self.waiting = []
+                done.forEach { $0() }
+            }
+        }
+    }
+
+    /// Calls done once none is left, at once if none is
+    func wait(_ done: @escaping () -> Void) {
+        if pending == 0 {
+            done()
+        } else {
+            waiting.append(done)
+        }
     }
 }

@@ -1675,4 +1675,20 @@ func TestHostIsToldTheDirectoryShown(t *testing.T) {
 	if len(told) != n {
 		t.Fatal("moving the cursor should not re-announce the directory")
 	}
+
+	// An editor or plugin had the terminal, and may have changed what it
+	// shows: the directory is told again, once
+	for _, msg := range []tea.Msg{
+		externalDoneMsg{label: "Editor"},
+		pluginDoneMsg{dir: root},
+		bulkRenameMsg{file: filepath.Join(t.TempDir(), "gone.txt"), err: fmt.Errorf("editor failed")},
+	} {
+		told = nil
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+		m, _ = press(t, m, "j")
+		if len(told) != 1 || told[0] != filepath.Join(root, "sub") {
+			t.Fatalf("after %T, told %v", msg, told)
+		}
+	}
 }

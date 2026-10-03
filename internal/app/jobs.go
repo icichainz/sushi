@@ -194,22 +194,40 @@ func (msg jobDoneMsg) apply(m Model) (tea.Model, tea.Cmd) {
 // running them.
 var sendNotification = notify.Send
 
-// notifyDone notifies the terminal that j has finished, however it
-// finished, if it took long enough that the user may have looked away. The
-// notification says what the status bar says. It is sent here, in the
-// goroutine that runs Update, as the renderer writes frames from another
-// and each is a single write.
+// jobTitles names each kind of job in the title of its notification, as
+// in "Copy finished", by what it was doing
+var jobTitles = map[string]string{
+	"Copying":         "Copy",
+	"Moving":          "Move",
+	"Moving to trash": "Move to Trash",
+	"Deleting":        "Delete",
+	"Duplicating":     "Duplication",
+	"Compressing":     "Compression",
+	"Extracting":      "Extraction",
+	"Undoing":         "Undo",
+}
+
+// notifyDone notifies the terminal that j has finished or failed, if it
+// took long enough that the user may have looked away. The title says
+// what finished, and the text what the status bar says. A job the user
+// cancelled isn't notified: they were there to see it stop. It is sent
+// here, in the goroutine that runs Update, as the renderer writes frames
+// from another and each is a single write.
 func (m *Model) notifyDone(j *job, op fileOperationMsg) {
 	after := time.Duration(m.config.NotifyAfter)
-	if after <= 0 || time.Since(j.began) < after {
+	if after <= 0 || time.Since(j.began) < after || j.cancelled {
 		return
 	}
-	body := op.message
+	what := jobTitles[j.doing]
+	if what == "" {
+		what = j.doing
+	}
+	title, body := what+" finished", op.message
 	if op.err != nil {
-		body = fmt.Sprintf("%s failed: %v", j.doing, op.err)
+		title, body = what+" failed", op.err.Error()
 	}
 	// A terminal that can't be written to can't show the failure either
-	_ = sendNotification("Sushi", body)
+	_ = sendNotification(title, body)
 }
 
 // whileBusy handles keys while a job runs: ctrl+x cancels it, every way of

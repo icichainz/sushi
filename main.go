@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -256,11 +258,12 @@ func main() {
 		opts = append(opts, tea.WithMouseCellMotion())
 	}
 	p := tea.NewProgram(m, opts...)
+	quitOnHangup(p)
 	final, err := p.Run()
 	if model, ok := final.(app.Model); ok {
 		model.Close()
-		// A copy or move still running when sushi quit, or was sent SIGTERM,
-		// is cancelled and given time to clean up after itself
+		// A copy or move still running when sushi quit, or was sent SIGTERM
+		// or SIGHUP, is cancelled and given time to clean up after itself
 		if serr := model.Shutdown(10 * time.Second); serr != nil {
 			fmt.Fprintf(os.Stderr, "sushi: %v\n", serr)
 		}
@@ -275,5 +278,37 @@ func main() {
 	if err != nil {
 		fmt.Printf("Error running program: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// quitOnHangup quits p when its terminal hangs up (SIGHUP), as Bubble Tea
+// quits on SIGTERM: the Sushi app hangs up on a window it closes, as does
+// a dropped ssh session. Left to SIGHUP's default, sushi would die in the
+// middle of a copy rather than stop it and clean up. Hangups go on being
+// caught once p has quit, so that cleanup isn't cut short; under nohup
+// they are left ignored. An editor or plugin that has the terminal is
+// hung up on with sushi, and sushi quits once it has exited. The returned
+// function stops catching them.
+func quitOnHangup(p interface{ Quit() }) (stop func()) {
+	if signal.Ignored(syscall.SIGHUP) {
+		return func() {}
+	}
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-hup:
+				// Waits for an editor running in the terminal to exit
+				p.Quit()
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() {
+		signal.Stop(hup)
+		close(done)
 	}
 }

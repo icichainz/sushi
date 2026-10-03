@@ -84,6 +84,26 @@ func TestStartingOnADotfileShowsHiddenFiles(t *testing.T) {
 	}
 }
 
+func TestStartingOnAFileNamedInAnotherNormalForm(t *testing.T) {
+	dir := startDir(t)
+	// Stored composed (é as one character), named decomposed (e and an
+	// accent), and the other way round, as Finder and the shell may differ
+	for _, tc := range []struct{ stored, given string }{
+		{"café.txt", "café.txt"},
+		{"résumé.txt", "résumé.txt"},
+	} {
+		writeTestFile(t, filepath.Join(dir, tc.stored), "x")
+		given := filepath.Join(dir, tc.given)
+		if _, err := os.Stat(given); err != nil {
+			t.Skipf("this filesystem tells the two forms apart: %v", err)
+		}
+		m := newTestModel(t, given, nil)
+		if m.tab().CurrentPath != dir || cursorName(m) != tc.stored || m.statusMsg != "" {
+			t.Errorf("%q for %q: %s, cursor on %q, status %q", tc.given, tc.stored, m.tab().CurrentPath, cursorName(m), m.statusMsg)
+		}
+	}
+}
+
 func TestStartingOnLinks(t *testing.T) {
 	dir := startDir(t)
 	elsewhere := t.TempDir()
