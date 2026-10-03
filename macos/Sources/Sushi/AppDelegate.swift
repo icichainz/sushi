@@ -16,8 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         buildMenu()
-        // Before the launch is done, in case the app was started for it
+        // Before the launch is done, as the app may have been started to run
+        // the service or for a click on a notification
         NSApp.servicesProvider = self
+        setUpNotifications()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -70,6 +72,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 self?.windows.removeAll { $0 === closed }
             }
+        }
+        controller.onNotice = { [weak self] window, notice in
+            self?.post(notice, from: window)
         }
         windows.append(controller)
         controller.open(directory)

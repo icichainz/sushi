@@ -3,14 +3,19 @@ import SwiftTerm
 
 /// One window and the sushi running in it
 final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTerminalViewDelegate {
+    /// Names the window in its notifications, to bring it to the front
+    let id = UUID().uuidString
     /// Numbered from 1, for the frame saved for the window
     let number: Int
     let window: NSWindow
     var onClose: ((TerminalWindowController) -> Void)?
+    /// sushi has news for a user who isn't looking at the window
+    var onNotice: ((TerminalWindowController, SushiNotice) -> Void)?
 
     private let sushi: String
     private var font: NSFont
     private var terminal: LocalProcessTerminalView?
+    private var relay: TerminalRelay?
     /// Whether sushi is running. LocalProcess still says it is while it
     /// reports the exit, when its process id may already be reused.
     private var running = false
@@ -73,6 +78,10 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         terminal.nativeForegroundColor = Self.foreground
         terminal.caretColor = Self.caret
         terminal.font = font
+        relay = TerminalRelay(
+            view: terminal,
+            bell: { [weak self] in self?.bell() },
+            iTermContent: { [weak self] in self?.received($0) })
         window.contentView!.addSubview(terminal)
         self.terminal = terminal
 
@@ -131,6 +140,25 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         terminal?.font = font
     }
 
+    // MARK: Bell and notices
+
+    /// In the background, the bell bounces the Dock icon instead of beeping
+    private func bell() {
+        if NSApp.isActive {
+            NSSound.beep()
+        } else {
+            NSApp.requestUserAttention(.informationalRequest)
+        }
+    }
+
+    /// OSC 1337 payloads; sushi sends a notice when a long job finishes
+    private func received(_ content: ArraySlice<UInt8>) {
+        guard let notice = SushiNotice(content) else { return }
+        // Not while the user is looking at the window
+        if NSApp.isActive && window.isKeyWindow { return }
+        onNotice?(self, notice)
+    }
+
     // MARK: NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
@@ -154,4 +182,35 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         running = false
         window.close()
     }
+}
+
+/// LocalProcessTerminalView is its own TerminalViewDelegate, and leaves the
+/// bell and OSC 1337 to SwiftTerm's defaults, which a subclass can't
+/// override. The relay takes its place, as SwiftTerm's documentation
+/// suggests: it handles those two and hands everything else back.
+private final class TerminalRelay: TerminalViewDelegate {
+    private unowned let view: LocalProcessTerminalView
+    private let onBell: () -> Void
+    private let onITermContent: (ArraySlice<UInt8>) -> Void
+
+    init(view: LocalProcessTerminalView, bell: @escaping () -> Void, iTermContent: @escaping (ArraySlice<UInt8>) -> Void) {
+        self.view = view
+        onBell = bell
+        onITermContent = iTermContent
+        // A weak reference: the window controller keeps the relay
+        view.terminalDelegate = self
+    }
+
+    func bell(source: TerminalView) { onBell() }
+    func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) { onITermContent(content) }
+
+    func send(source: TerminalView, data: ArraySlice<UInt8>) { view.send(source: source, data: data) }
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) { view.sizeChanged(source: source, newCols: newCols, newRows: newRows) }
+    func setTerminalTitle(source: TerminalView, title: String) { view.setTerminalTitle(source: source, title: title) }
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) { view.hostCurrentDirectoryUpdate(source: source, directory: directory) }
+    func scrolled(source: TerminalView, position: Double) { view.scrolled(source: source, position: position) }
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) { view.rangeChanged(source: source, startY: startY, endY: endY) }
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) { view.requestOpenLink(source: source, link: link, params: params) }
+    func clipboardCopy(source: TerminalView, content: Data) { view.clipboardCopy(source: source, content: content) }
+    func clipboardRead(source: TerminalView) -> Data? { view.clipboardRead(source: source) }
 }
