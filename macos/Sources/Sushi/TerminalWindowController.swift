@@ -123,9 +123,26 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
 
     /// Ends sushi, when its window closes or the app quits
     func stop() {
-        guard running else { return }
+        guard running, let terminal else { return }
         running = false
-        terminal?.terminate()
+        let pid = terminal.process.shellPid
+        terminal.terminate()
+        Self.reap(pid)
+    }
+
+    /// SwiftTerm stops watching a process it terminates, which would stay a
+    /// zombie while the app runs. sushi may take a few seconds to exit, as
+    /// it cleans up after a cancelled copy.
+    private static func reap(_ pid: pid_t) {
+        guard pid > 0 else { return }
+        let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
+        // The handler keeps the source until the process is gone
+        source.setEventHandler {
+            var status: Int32 = 0
+            waitpid(pid, &status, WNOHANG)
+            source.cancel()
+        }
+        source.activate()
     }
 
     func bringToFront() {
