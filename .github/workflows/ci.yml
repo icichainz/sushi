@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go:
+    name: Go tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Format
+        run: test -z "$(gofmt -l . | grep -v '^vendor/')"
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -count=1 ./...
+      - name: Race detector
+        run: go test -race ./internal/...
+      - name: Linux still builds
+        run: GOOS=linux go build ./...
+
+  app:
+    name: macOS app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build the app bundle
+        run: make app
+      - name: Check the bundle
+        run: |
+          codesign --verify --deep --strict dist/Sushi.app
+          dist/Sushi.app/Contents/Resources/sushi --version

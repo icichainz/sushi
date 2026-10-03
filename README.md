@@ -40,6 +40,12 @@ go build -o sushi main.go
 ./sushi
 ```
 
+### Homebrew
+
+```bash
+brew install icichainz/sushi/sushi
+```
+
 ### Quick Install
 
 ```bash
