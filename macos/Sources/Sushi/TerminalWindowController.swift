@@ -65,8 +65,10 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         window.setFrameAutosaveName(name)
     }
 
-    /// Shows the folder in the window, in a new sushi if one was running
-    func open(_ directory: String) {
+    /// Starts sushi on path, a folder or a file to put the cursor on, in
+    /// directory, the folder it shows; a sushi running in the window is
+    /// stopped first
+    func open(_ path: String, in directory: String) {
         stop()
         if let old = terminal {
             old.processDelegate = nil
@@ -89,13 +91,13 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
 
         bringToFront()
         window.makeFirstResponder(terminal)
-        start(terminal, in: directory)
+        start(terminal, on: path, in: directory)
     }
 
     /// Runs sushi through the user's login shell, so it sees the same PATH,
     /// EDITOR and other settings as in a terminal. Apps opened from Finder
     /// otherwise get a bare environment, and plugins and editors go missing.
-    private func start(_ terminal: LocalProcessTerminalView, in directory: String) {
+    private func start(_ terminal: LocalProcessTerminalView, on path: String, in directory: String) {
         var environment = ProcessInfo.processInfo.environment
         environment["TERM"] = "xterm-256color"
         environment["COLORTERM"] = "truecolor"
@@ -107,7 +109,7 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         let shell = environment["SHELL"] ?? "/bin/zsh"
         // exec replaces the shell, so quitting sushi ends the process. The
         // paths are quoted into the command, since fish has no "$0"/"$1".
-        let command = "exec \(quoted(sushi)) \(quoted(directory))"
+        let command = "exec \(quoted(sushi)) \(quoted(path))"
         // Set first, as a sushi that can't start reports its exit at once
         running = true
         terminal.startProcess(
