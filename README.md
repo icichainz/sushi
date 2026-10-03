@@ -64,9 +64,9 @@ make macos    # builds all three into dist/
 
 `make app`, `make pkg` and `make dmg` build them one at a time, and `VERSION=1.2.3 make macos` sets the version.
 
-The app runs sushi through your login shell, so plugins and `$EDITOR` work as they do in a terminal. Each window runs its own sushi and is named after the folder it shows. `Cmd+N` opens a new window at your home folder, `Cmd+W` closes one, and quitting sushi with `q` closes its window; the app quits with its last window. `Cmd` `+` and `Cmd` `-` change the text size in every window.
+The app runs sushi through your login shell (zsh, bash, fish, sh, ksh or dash; with another, such as tcsh, it uses zsh), so plugins and `$EDITOR` work as they do in a terminal. Each window runs its own sushi and is named after the folder it shows. `Cmd+N` opens a new window at your home folder, `Cmd+W` closes one, and quitting sushi with `q` closes its window; the app quits with its last window. `Cmd` `+` and `Cmd` `-` change the text size in every window.
 
-Closing a window, or quitting the app with `Cmd+Q`, stops its sushi as a terminal closing would, along with an editor or plugin it was running; an operation still running is cancelled and cleaned up after, as when you quit sushi with `q`. `Cmd+Q` waits for that, up to about ten seconds.
+Closing a window, or quitting the app with `Cmd+Q`, stops its sushi as a terminal closing would, along with an editor or plugin it was running; an operation still running is cancelled and cleaned up after, as when you quit sushi with `q`. `Cmd+Q` waits for that, up to about ten seconds. If sushi can't start, or stops with an error, its window stays open on what it printed, ending with `[sushi exited: N]`, until you close it.
 
 **Opening folders from Finder.** Drop a folder on Sushi's icon in the Dock, or choose Open With > Sushi, and it opens in a new window. From a terminal, `open -a Sushi ~/projects` does the same. A file opens the folder it is in, with the cursor on the file; several files from one folder open it once, with the cursor on the first. An app, or another package Finder shows as a file, opens the folder it is in.
 

@@ -94,6 +94,10 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         start(terminal, on: path, in: directory)
     }
 
+    /// The login shells sushi is started through. Others, such as tcsh,
+    /// take other options, so their users get the system's zsh.
+    private static let shells: Set<String> = ["zsh", "bash", "fish", "sh", "ksh", "dash"]
+
     /// Runs sushi through the user's login shell, so it sees the same PATH,
     /// EDITOR and other settings as in a terminal. Apps opened from Finder
     /// otherwise get a bare environment, and plugins and editors go missing.
@@ -102,27 +106,32 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         environment["TERM"] = "xterm-256color"
         environment["COLORTERM"] = "truecolor"
         environment["TERM_PROGRAM"] = "Sushi"
+        // Left by a terminal the app was started from, they would have
+        // sushi take the window for that terminal, or for tmux
+        for name in ["TERM_PROGRAM_VERSION", "TMUX", "TMUX_PANE", "STY"] {
+            environment[name] = nil
+        }
         if environment["LANG"] == nil {
             environment["LANG"] = "en_US.UTF-8"
         }
+        // The paths go through the environment, which every shell expands
+        // the same way, rather than be quoted into the command for each
+        environment["SUSHI_BIN"] = sushi
+        environment["SUSHI_START"] = path
 
-        let shell = environment["SHELL"] ?? "/bin/zsh"
-        // exec replaces the shell, so quitting sushi ends the process. The
-        // paths are quoted into the command, since fish has no "$0"/"$1".
-        let command = "exec \(quoted(sushi)) \(quoted(path))"
+        var shell = environment["SHELL"] ?? ""
+        if !Self.shells.contains((shell as NSString).lastPathComponent) || !FileManager.default.isExecutableFile(atPath: shell) {
+            shell = "/bin/zsh"
+        }
         // Set first, as a sushi that can't start reports its exit at once
         running = true
+        // exec replaces the shell, so quitting sushi ends the process
         terminal.startProcess(
             executable: shell,
-            args: ["-l", "-i", "-c", command],
+            args: ["-l", "-i", "-c", "exec \"$SUSHI_BIN\" \"$SUSHI_START\""],
             environment: environment.map { "\($0.key)=\($0.value)" },
             execName: nil,
             currentDirectory: directory)
-    }
-
-    /// Single-quotes a string for zsh, bash and fish
-    private func quoted(_ s: String) -> String {
-        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Ends sushi, when its window closes or the app quits. The app waits
@@ -246,10 +255,33 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         window.representedURL = url
     }
 
-    /// Quitting sushi (q) closes its window
+    /// Quitting sushi (q) closes its window. If it failed, or couldn't
+    /// start, the window stays open on what it printed, as a panic or a
+    /// shell's error, until the user closes it.
     func processTerminated(source: TerminalView, exitCode: Int32?) {
         running = false
-        window.close()
+        // SwiftTerm passes the wait status, not the exit code
+        guard let status = exitCode, let failure = Self.failure(status) else {
+            window.close()
+            return
+        }
+        // After what sushi printed last, which may still be on its way
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak source] in
+            // Shows the cursor, and leaves the mouse to select text with
+            let reset = "\u{1b}[0m\u{1b}[?25h\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1003l\u{1b}[?1006l"
+            source?.feed(text: reset + "\r\n[sushi exited: \(failure)]\r\n")
+        }
+    }
+
+    /// What a wait status says went wrong: the exit code if it isn't 0, or
+    /// the signal that ended the process; nil if it exited with 0
+    static func failure(_ status: Int32) -> String? {
+        let signal = status & 0x7f
+        if signal == 0 {
+            let code = (status >> 8) & 0xff
+            return code == 0 ? nil : "\(code)"
+        }
+        return "signal \(signal)"
     }
 }
 
