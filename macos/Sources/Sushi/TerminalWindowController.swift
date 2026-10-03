@@ -13,6 +13,7 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
     var onNotice: ((TerminalWindowController, SushiNotice) -> Void)?
 
     private let sushi: String
+    private let exits: PendingExits
     private var font: NSFont
     private var terminal: LocalProcessTerminalView?
     private var relay: TerminalRelay?
@@ -25,8 +26,9 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
     private static let foreground = NSColor(srgbRed: 0xeb / 255, green: 0xe7 / 255, blue: 0xdc / 255, alpha: 1)
     private static let caret = NSColor(srgbRed: 0xff / 255, green: 0x94 / 255, blue: 0x78 / 255, alpha: 1)
 
-    init(sushi: String, number: Int, font: NSFont, after previous: NSWindow?) {
+    init(sushi: String, number: Int, font: NSFont, after previous: NSWindow?, exits: PendingExits) {
         self.sushi = sushi
+        self.exits = exits
         self.number = number
         self.font = font
         window = NSWindow(
@@ -121,45 +123,63 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// Ends sushi, when its window closes or the app quits
+    /// Ends sushi, when its window closes or the app quits. The app waits
+    /// for it to exit, through exits, before it quits.
     func stop() {
         guard running, let terminal else { return }
         running = false
-        let pid = terminal.process.shellPid
+        let process: LocalProcess = terminal.process
+        let pid = process.shellPid
+        // The terminal's foreground job, which a hangup reaches too, as
+        // something the shell runs from its startup files
+        let foreground = process.childfd >= 0 ? tcgetpgrp(process.childfd) : -1
+        // Stops reading the terminal, and sends sushi SIGTERM
         terminal.terminate()
-        Self.reap(pid)
-        Self.insist(pid)
+        Self.hangUp(pid, foreground: foreground, done: exits.begin())
     }
 
-    /// terminate() sends SIGTERM, which an interactive shell ignores while
-    /// it reads its startup files. A window closed in that moment would
-    /// leave the shell to exec a sushi nobody can see. So: SIGTERM again
-    /// once the shell has had time to start (sushi handles it, and takes
-    /// up to 10 s to stop a running job), then SIGKILL as a last resort.
-    private static func insist(_ pid: pid_t) {
-        guard pid > 0 else { return }
-        let alive = { kill(pid, 0) == 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            if alive() { kill(pid, SIGTERM) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
-                if alive() { kill(pid, SIGKILL) }
-            }
+    /// Hangs up on sushi as a terminal does when its window closes, which
+    /// SwiftTerm doesn't: terminate() leaves the terminal open until sushi
+    /// next writes to it. Its SIGTERM isn't enough either: an interactive
+    /// shell ignores it while it reads its startup files, and would then
+    /// start a sushi nobody can see, and an editor or plugin sushi runs
+    /// has the terminal until it exits. SIGHUP to the window's process
+    /// group reaches the shell, sushi, which stops a running job and
+    /// cleans up after it (for up to 10 s), and what sushi runs. Anything
+    /// still there after 15 s is killed. done runs once sushi has exited.
+    private static func hangUp(_ pid: pid_t, foreground: pid_t, done: @escaping () -> Void) {
+        // Never 0 or 1: kill(0) is the app's own group, and kill(-1) every
+        // process the user has
+        guard pid > 1 else {
+            done()
+            return
         }
-    }
+        if kill(-pid, SIGHUP) != 0 {
+            kill(pid, SIGHUP)
+        }
+        if foreground > 1 && foreground != pid {
+            kill(-foreground, SIGHUP)
+        }
 
-    /// SwiftTerm stops watching a process it terminates, which would stay a
-    /// zombie while the app runs. sushi may take a few seconds to exit, as
-    /// it cleans up after a cancelled copy.
-    private static func reap(_ pid: pid_t) {
-        guard pid > 0 else { return }
+        // SwiftTerm stops watching a process it terminates, which would
+        // stay a zombie while the app runs
+        var reaped = false
         let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
         // The handler keeps the source until the process is gone
         source.setEventHandler {
             var status: Int32 = 0
             waitpid(pid, &status, WNOHANG)
+            reaped = true
             source.cancel()
+            done()
         }
         source.activate()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+            // Until it is reaped, pid can name no other process or group
+            if !reaped && kill(-pid, SIGKILL) != 0 {
+                kill(pid, SIGKILL)
+            }
+        }
     }
 
     func bringToFront() {

@@ -4,6 +4,11 @@ import CoreText
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The open windows, in the order they were opened
     private(set) var windows: [TerminalWindowController] = []
+    /// The sushis still exiting, from closed windows too, for quitting to
+    /// wait for
+    private let exits = PendingExits()
+    /// Quitting waits for them, and opens no more windows meanwhile
+    private var quitting = false
 
     /// The home window opened at launch, which a folder arriving in the
     /// next seconds replaces rather than opening a second window: when
@@ -64,12 +69,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @discardableResult
     private func openWindow(at directory: String) -> TerminalWindowController? {
+        guard !quitting else { return nil }
         guard let sushi = Bundle.main.path(forResource: "sushi", ofType: nil) else {
             fail("The sushi program is missing from the app. Reinstall Sushi.")
             return nil
         }
         let controller = TerminalWindowController(
-            sushi: sushi, number: freeNumber(), font: terminalFont(size: fontSize), after: windows.last?.window)
+            sushi: sushi, number: freeNumber(), font: terminalFont(size: fontSize), after: windows.last?.window, exits: exits)
         controller.onClose = { [weak self] closed in
             // Released once AppKit is done closing its window
             DispatchQueue.main.async {
@@ -191,6 +197,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    /// Quitting stops sushi in every window, and waits for each to exit,
+    /// those of windows closed just before too: one in the middle of a copy
+    /// cancels it and cleans up, for up to 10 s, after which it gives up.
+    /// Otherwise a sushi still cleaning up would carry on unseen once the
+    /// app had gone. Asked again meanwhile, the app quits at once.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if quitting {
+            return .terminateNow
+        }
+        windows.forEach { $0.stop() }
+        guard exits.pending > 0 else { return .terminateNow }
+        quitting = true
+        var replied = false
+        let reply = {
+            guard !replied else { return }
+            replied = true
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        exits.wait(reply)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 11, execute: reply)
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // Quitting the app must not leave any sushi running in the background
         windows.forEach { $0.stop() }
@@ -203,5 +232,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = message
         alert.runModal()
         NSApp.terminate(nil)
+    }
+}
+
+/// Counts the sushis told to stop that haven't exited yet, whether their
+/// window is still open or not
+final class PendingExits {
+    private(set) var pending = 0
+    private var waiting: [() -> Void] = []
+
+    /// Counts one more, and returns what to call once it has exited
+    func begin() -> () -> Void {
+        pending += 1
+        var ended = false
+        return { [weak self] in
+            guard let self, !ended else { return }
+            ended = true
+            self.pending -= 1
+            if self.pending == 0 {
+                let done = self.waiting
+                self.waiting = []
+                done.forEach { $0() }
+            }
+        }
+    }
+
+    /// Calls done once none is left, at once if none is
+    func wait(_ done: @escaping () -> Void) {
+        if pending == 0 {
+            done()
+        } else {
+            waiting.append(done)
+        }
     }
 }
