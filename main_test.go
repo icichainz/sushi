@@ -1,11 +1,17 @@
 package main
 
 import (
+	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // build compiles sushi into a temporary directory with the given linker
@@ -54,4 +60,45 @@ func TestVersionFlag(t *testing.T) {
 			}
 		}
 	}
+}
+
+// idle is a Bubble Tea model that does nothing until it is told to quit
+type idle struct{}
+
+func (idle) Init() tea.Cmd                       { return nil }
+func (idle) Update(tea.Msg) (tea.Model, tea.Cmd) { return idle{}, nil }
+func (idle) View() string                        { return "" }
+
+func TestHangupQuitsTheProgram(t *testing.T) {
+	if signal.Ignored(syscall.SIGHUP) {
+		t.Skip("SIGHUP is ignored, as under nohup")
+	}
+	p := tea.NewProgram(idle{}, tea.WithInput(nil), tea.WithOutput(io.Discard))
+	stop := quitOnHangup(p)
+	defer stop()
+	done := make(chan error, 1)
+	go func() {
+		_, err := p.Run()
+		done <- err
+	}()
+
+	// Quit as for SIGTERM, with no error: the model is cleaned up after
+	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("a hangup ended the program with %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		p.Kill()
+		t.Fatal("a hangup didn't quit the program")
+	}
+
+	// Still caught once the program has quit, as sushi cleans up then
+	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
 }
