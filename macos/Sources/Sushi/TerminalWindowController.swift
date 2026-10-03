@@ -128,6 +128,23 @@ final class TerminalWindowController: NSObject, NSWindowDelegate, LocalProcessTe
         let pid = terminal.process.shellPid
         terminal.terminate()
         Self.reap(pid)
+        Self.insist(pid)
+    }
+
+    /// terminate() sends SIGTERM, which an interactive shell ignores while
+    /// it reads its startup files. A window closed in that moment would
+    /// leave the shell to exec a sushi nobody can see. So: SIGTERM again
+    /// once the shell has had time to start (sushi handles it, and takes
+    /// up to 10 s to stop a running job), then SIGKILL as a last resort.
+    private static func insist(_ pid: pid_t) {
+        guard pid > 0 else { return }
+        let alive = { kill(pid, 0) == 0 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            if alive() { kill(pid, SIGTERM) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
+                if alive() { kill(pid, SIGKILL) }
+            }
+        }
     }
 
     /// SwiftTerm stops watching a process it terminates, which would stay a

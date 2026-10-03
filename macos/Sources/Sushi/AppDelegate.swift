@@ -53,7 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// opens its folder with the cursor on it), and a package such as an
     /// app, which Finder shows as a file, as the folder it is in
     private static func directory(for url: URL) -> String {
-        let values = try? url.resourceValues(forKeys: [.isPackageKey])
+        // Resolved, so a link such as /tmp is seen as the folder it points
+        // to; the link's own path is still what sushi gets
+        let values = try? url.resolvingSymlinksInPath().resourceValues(forKeys: [.isPackageKey])
         if values?.isPackage == true {
             return url.deletingLastPathComponent().path
         }
