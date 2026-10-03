@@ -54,7 +54,7 @@ func main() {
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Sushi - A fast and elegant terminal file explorer\n\n")
-		fmt.Fprintf(os.Stderr, "Usage: sushi [options] [directory]\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: sushi [options] [directory or file]\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nIcon Modes:\n")
@@ -69,6 +69,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  --init-config: Create default config file at ~/.config/sushi/config.yaml\n")
 		fmt.Fprintf(os.Stderr, "  Config file settings: icon_mode, preview_enabled, preview_width, etc.\n")
 		fmt.Fprintf(os.Stderr, "  --list-keys: Show every action and its keys; change them under keys: in the config file\n")
+		fmt.Fprintf(os.Stderr, "\nNotifications:\n")
+		fmt.Fprintf(os.Stderr, "  A copy, move or other operation that runs longer than notify_after in the\n")
+		fmt.Fprintf(os.Stderr, "  config file (5s unless set; 0 turns this off) tells the terminal when it ends:\n")
+		fmt.Fprintf(os.Stderr, "    Sushi app, iTerm2, WezTerm, kitty    a desktop notification\n")
+		fmt.Fprintf(os.Stderr, "    Terminal.app, tmux, screen, others   the bell\n")
 		fmt.Fprintf(os.Stderr, "\nShell Integration:\n")
 		fmt.Fprintf(os.Stderr, "  A program can't change its shell's directory, so sushicd runs sushi and cds\n")
 		fmt.Fprintf(os.Stderr, "  to the directory it was showing when you quit with q (Q quits without).\n")
@@ -77,6 +82,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  sushi              # Open current directory (Nerd Font icons)\n")
 		fmt.Fprintf(os.Stderr, "  sushi ~/projects   # Open specific directory\n")
+		fmt.Fprintf(os.Stderr, "  sushi ~/notes/todo.md  # Open its folder, with the cursor on it\n")
 		fmt.Fprintf(os.Stderr, "  sushi --install-font  # Install Nerd Font for icons\n")
 		fmt.Fprintf(os.Stderr, "  sushi --ascii      # Use ASCII icons\n")
 		fmt.Fprintf(os.Stderr, "  sushi --init-config   # Create configuration file\n")
@@ -233,7 +239,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Use remaining argument as path if provided
+	// Use remaining argument as path if provided. A file opens its folder
+	// with the cursor on it, and a path that doesn't exist the nearest
+	// folder above it that does; see app.NewModelWithConfig.
 	if flag.NArg() > 0 {
 		startPath = flag.Arg(0)
 	}

@@ -18,7 +18,7 @@ Sushi is made for macOS, the only system it supports: it still builds on Linux, 
 - 🌿 Git status badges and the branch, in repositories
 - ✅ Multi-file selection
 - 📋 Copy, cut, paste, delete, rename and create, with safeguards against overwriting a file with itself; copy and paste files between sushi and Finder
-- 🗑️ Trash and undo (`Ctrl+z`), with progress and cancel (`Ctrl+x`) for long operations
+- 🗑️ Trash and undo (`Ctrl+z`), with progress and cancel (`Ctrl+x`) for long operations, and a notification when they finish
 - 🧰 Duplicate, symlink paste, permissions, bulk rename in your editor, zip and extract
 - 🔄 Lists refresh by themselves when files change on disk
 - ↕️ Change the sort order on the fly
@@ -81,12 +81,17 @@ sushi
 # Open specific directory
 sushi /path/to/directory
 
+# Open a file's folder, with the cursor on the file
+sushi ~/Downloads/report.pdf
+
 # Use ASCII icons (no Nerd Font required)
 sushi --ascii
 
 # Combine options
 sushi --ascii ~/projects
 ```
+
+Given a file, sushi opens the folder it is in with the cursor on it, and with hidden files shown if it is a dotfile. Given a path that doesn't exist, it opens the nearest folder above it that does, and says so in the status bar.
 
 ### Command Line Options
 
@@ -196,6 +201,11 @@ pasteboard: true
 # In Git repositories, a column of status badges and the branch in the
 # breadcrumb
 git: true
+
+# A background operation (copy, move, trash, compress...) that runs longer
+# than this tells the terminal, or the Sushi app, when it finishes; see
+# Notifications below. A duration such as 5s or 2m; 0 turns this off.
+notify_after: 5s
 
 # Color theme: "default", "light", "dark" (Dracula-inspired) or "classic"
 # (the colors sushi used before its redesign)
@@ -627,6 +637,20 @@ Copying 3/120 files 45% ████░░░░░░
 
 Where the status bar is short of room, the progress drops its bar, as in `Copying 3/120 45%`. You can keep browsing meanwhile. Keys that change files are refused until the operation finishes or you cancel it with `Ctrl+x`, with a message beside the progress (`Still copying: wait, or ctrl+x to cancel`), and so are plugins, the Run palette, opening files in other programs (`e`, `o`, `O`), Quick Look (`i`), showing files in Finder (`Ctrl+o`) and changing Finder tags (`L`). A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q`, `Q` and closing the last tab stop a running operation before quitting; press the key again to quit at once, and sushi still waits a few seconds for the operation to clean up. Files are copied, and zips written, under a hidden `.sushi-partial-` name and renamed once complete, so nothing half-written ever has its real name; if sushi is killed, what it leaves is removed when its folder is listed a day later. Copies keep their permissions, modification times, Finder tags and other extended attributes, as Finder's do; an attribute the destination can't take, as on a drive without them, is left behind.
 
+### Notifications
+
+An operation that runs longer than `notify_after` (5 seconds unless the config sets it; `0` turns this off) tells the terminal when it finishes, whether it succeeded, failed or was cancelled, so you hear of it while you work in another window. The notification says what the status bar says, as in `Copied: 120 items`, `Cancelled: copied 3 of 120 files` or `Moving failed: ...`. What you get depends on where sushi runs:
+
+| Where sushi runs | What a long operation does when it finishes |
+| ---------------- | ------------------------------------------- |
+| Sushi.app | A macOS notification, when the Sushi window isn't the active one |
+| iTerm2, WezTerm | A desktop notification (OSC 9) |
+| kitty | A desktop notification (OSC 99) |
+| Terminal.app | The bell, which Terminal can turn into a badge or a bounce of its Dock icon: Settings, Profiles, Advanced, Bell |
+| tmux, screen, ssh and other terminals | The bell, which tmux passes on to the terminal it runs in |
+
+Sushi tells them apart by `TERM_PROGRAM` (the Sushi app sets it to `Sushi`), and by `KITTY_WINDOW_ID` and `WEZTERM_PANE` where `TERM_PROGRAM` isn't set. Inside tmux or screen it always rings the bell, as they drop notifications unless set up to pass them through. macOS may ask the first time whether the terminal can post notifications, and iTerm2 has its own setting for them under Settings, Profiles, Terminal.
+
 ## Requirements
 
 - **macOS 12 (Monterey) or later** - The only system sushi supports. It still builds and runs on Linux, but without Finder tags, Quick Look, Open With, Reveal in Finder, the pasteboard or Spotlight
@@ -688,6 +712,7 @@ sushi/
 │   ├── fs/          # File system scanning and operations, trash and archives
 │   ├── git/         # Reading git status for the badges and the branch
 │   ├── jxa/         # Running JavaScript for Automation with osascript
+│   ├── notify/      # Telling the terminal, or the Sushi app, that an operation finished
 │   ├── opener/      # Editor and default-app commands, Open With and Reveal in Finder
 │   ├── pasteboard/  # Files on the macOS pasteboard
 │   ├── plugins/     # Plugin loading and running
