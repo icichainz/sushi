@@ -5,16 +5,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The open windows, in the order they were opened
     private(set) var windows: [TerminalWindowController] = []
 
+    /// The home window opened at launch, which a folder arriving in the
+    /// next seconds replaces rather than opening a second window: when
+    /// Finder's service starts the app, the folder comes after the launch.
+    private weak var launchWindow: TerminalWindowController?
+    private var launchWindowExpiry = Date.distantPast
+
     private let defaultFontSize: CGFloat = 13
     private let fontSizeKey = "fontSize"
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         buildMenu()
+        // Before the launch is done, in case the app was started for it
+        NSApp.servicesProvider = self
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        openWindow(at: NSHomeDirectory())
+        // Folders opened from Finder, or with open -a, arrive before this
+        if windows.isEmpty {
+            launchWindow = openWindow(at: NSHomeDirectory())
+            launchWindowExpiry = Date().addingTimeInterval(5)
+        }
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Folders opened from Finder (Open With, a drop on the Dock icon), with
+    /// open -a Sushi, or with the service. Each opens in a window of its own.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        // Files of the same folder open it once
+        var opened = Set<String>()
+        for url in urls {
+            let directory = Self.directory(for: url)
+            guard opened.insert(directory).inserted else { continue }
+            if let window = launchWindow, Date() < launchWindowExpiry {
+                launchWindow = nil
+                window.open(directory)
+            } else {
+                openWindow(at: directory)
+            }
+        }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// sushi opens folders, so a file opens the folder it is in. So does a
+    /// package, such as an app, which Finder shows as a file.
+    private static func directory(for url: URL) -> String {
+        let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
+        if values?.isDirectory == true && values?.isPackage != true {
+            return url.path
+        }
+        return url.deletingLastPathComponent().path
     }
 
     @discardableResult
