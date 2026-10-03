@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/icichainz/sushi/internal/plugins"
 	"gopkg.in/yaml.v3"
@@ -34,6 +35,10 @@ type Config struct {
 
 	// d moves files to the trash, which ctrl+z can undo; D always deletes
 	DeleteToTrash bool `yaml:"delete_to_trash"`
+
+	// A background operation that takes longer than this notifies the
+	// terminal, or the Sushi app, when it finishes; 0 never does
+	NotifyAfter Duration `yaml:"notify_after"`
 
 	// Theme settings
 	Theme       string            `yaml:"theme"`        // "default", "dark" or "light"
@@ -62,6 +67,7 @@ func DefaultConfig() *Config {
 		Tags:           true,
 		ConfirmDelete:  true,
 		DeleteToTrash:  true,
+		NotifyAfter:    Duration(5 * time.Second),
 		Opener:         "auto",
 		SortBy:         "name",
 		SortReverse:    false,

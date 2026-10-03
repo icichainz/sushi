@@ -46,10 +46,12 @@ func TestVersionFlag(t *testing.T) {
 		if ldflags != "" {
 			continue
 		}
-		// --help lists it
+		// --help lists it, and the notifications
 		help, _ := sushi(bin, "--help").CombinedOutput()
-		if !strings.Contains(string(help), "-version") {
-			t.Errorf("--help doesn't mention --version:\n%s", help)
+		for _, want := range []string{"-version", "notify_after"} {
+			if !strings.Contains(string(help), want) {
+				t.Errorf("--help doesn't mention %s:\n%s", want, help)
+			}
 		}
 	}
 }

@@ -34,6 +34,9 @@ func TestMain(m *testing.M) {
 	}
 	// Background operations send no progress, so they finish in one message
 	progressInterval = time.Hour
+	// Nothing rings the bell of the terminal running the tests; tests of
+	// notifications put a recorder here
+	sendNotification = func(title, body string) error { return nil }
 	os.Exit(m.Run())
 }
 
