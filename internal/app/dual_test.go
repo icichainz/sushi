@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -443,5 +444,43 @@ func TestDualPaneGitBadges(t *testing.T) {
 	m = drain(t, m, cmd)
 	if m.gitStatus() != nil || m.otherView().gitStatus() == nil {
 		t.Fatalf("active %v, other %v", m.gitStatus(), m.otherView().gitStatus())
+	}
+}
+
+func TestDualPaneListsShowTheSameColumns(t *testing.T) {
+	_, left, right := twoFolders(t)
+	m := dualModel(t, left, right)
+	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 81, Height: 24}, {Width: 120, Height: 24},
+		{Width: 100, Height: 24}, {Width: 130, Height: 24}, {Width: 160, Height: 24}} {
+		for _, right := range []bool{false, true} {
+			v := resize(m, size)
+			if right {
+				v, _ = ctrl(t, v, tea.KeyCtrlL)
+			}
+			l := v.layout()
+			leftW := l.listW
+			if l.otherFirst {
+				leftW = l.otherW
+			}
+			screen := plain(v.View())
+			// The lists' headings name their folders, so the columns are
+			// told by what is in them
+			for col, re := range map[string]*regexp.Regexp{"Size": regexp.MustCompile(`\d B\b`),
+				"Modified": regexp.MustCompile(`[A-Z][a-z]{2} \d\d \d\d:\d\d`)} {
+				var on []bool
+				for _, x := range [][2]int{{0, leftW}, {leftW, l.listW + l.otherW}} {
+					found := false
+					for _, line := range screen[paneTop : paneTop+l.bodyH] {
+						if re.MatchString(utils.Cells(line, x[0], x[1])) {
+							found = true
+						}
+					}
+					on = append(on, found)
+				}
+				if on[0] != on[1] {
+					t.Errorf("%d columns, right active %v: %s shown in the left list %v, in the right %v", size.Width, right, col, on[0], on[1])
+				}
+			}
+		}
 	}
 }

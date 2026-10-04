@@ -142,10 +142,17 @@ func (m Model) mainLines() []string {
 	if l.parentW > 0 {
 		parent = m.renderParent(l.parentW, l.bodyH)
 	}
-	list := m.renderFileList(l.listW, l.bodyH, l.parentW > 0 || l.otherFirst)
+	listDivider, otherDivider := l.parentW > 0 || l.otherFirst, !l.otherFirst
+	room := 0
+	if l.otherW > 0 {
+		// The two lists show the same columns, as the wider can: the
+		// divider between them doesn't cost the other its size column
+		room = max(listInner(l.listW, listDivider), listInner(l.otherW, otherDivider))
+	}
+	list := m.renderFileListAt(l.listW, l.bodyH, listDivider, room)
 	if l.otherW > 0 {
 		// Beside the active list, as paneAt finds it; see dual.go
-		other = m.otherView().renderFileList(l.otherW, l.bodyH, !l.otherFirst)
+		other = m.otherView().renderFileListAt(l.otherW, l.bodyH, otherDivider, room)
 	}
 	if l.previewW > 0 {
 		preview = m.renderPreview(l.previewW, l.bodyH)
@@ -394,7 +401,14 @@ const (
 
 // listColumns sizes the columns; narrow lists lose the date, then the size
 func listColumns(inner int, files []fs.FileInfo) columns {
-	c := columns{inner: inner, iconW: 1, size: inner >= 40, date: inner >= 58}
+	return listColumnsAt(inner, inner, files)
+}
+
+// listColumnsAt sizes the columns of a list inner wide, with the size and
+// date a list room wide shows: the two lists of a dual pane show the same
+// columns, though the divider between them makes one a column narrower
+func listColumnsAt(inner, room int, files []fs.FileInfo) columns {
+	c := columns{inner: inner, iconW: 1, size: room >= 40, date: room >= 58}
 	for _, f := range files {
 		c.iconW = max(c.iconW, utils.Width(ui.GetFileIcon(f)))
 	}
@@ -426,22 +440,38 @@ func (m Model) visibleFiles() []int {
 
 // renderFileList renders the heading and rows of the file list
 func (m Model) renderFileList(width, height int, divider bool) []string {
+	return m.renderFileListAt(width, height, divider, 0)
+}
+
+// listInner is the width of a list's rows, inside its divider if it has one
+func listInner(width int, divider bool) int {
+	if divider {
+		return width - 1
+	}
+	return width
+}
+
+// renderFileListAt renders the file list with the columns of a list room
+// wide, as listColumnsAt has it, or its own with room 0
+func (m Model) renderFileListAt(width, height int, divider bool, room int) []string {
 	t := m.theme
 	g := currentGlyphs()
 	tab := m.tabs[m.activeTabIdx]
 
 	edge := ""
-	inner := width
+	inner := listInner(width, divider)
 	if divider {
 		edge = m.divider()
-		inner--
+	}
+	if room <= 0 {
+		room = inner
 	}
 	visible := m.visibleFiles()
 	files := make([]fs.FileInfo, len(visible))
 	for i, idx := range visible {
 		files[i] = tab.Files[idx]
 	}
-	c := m.withGitColumn(listColumns(inner, files))
+	c := m.withGitColumn(listColumnsAt(inner, room, files))
 
 	// Heading, with an arrow on the sorted column. The type has no column,
 	// nor has the size or date once the list is too narrow for it, so
