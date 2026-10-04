@@ -638,14 +638,17 @@ func (m Model) trashWidth() int {
 // trashColumns sizes the columns of a row of width cells: narrow rows
 // lose where the item came from, then when it was deleted
 type trashColumns struct {
+	leadW        int // The margin, the icon and two spaces
 	nameW, fromW int
 	date         bool
 }
 
-func trashCols(width int) trashColumns {
-	c := trashColumns{date: width >= 44}
+// trashCols sizes the columns for icons up to iconW wide, as the widest of
+// the items is: --ascii's [D] takes three cells, where most take one
+func trashCols(width, iconW int) trashColumns {
+	c := trashColumns{leadW: 1 + iconW + 2, date: width >= 44}
 	// Margin, icon and spaces, the size, the date, a margin
-	rest := width - 4 - (sizeW + 1) - 1
+	rest := width - c.leadW - (sizeW + 1) - 1
 	if c.date {
 		rest -= dateW
 	}
@@ -667,7 +670,12 @@ func (m Model) trashBox() []string {
 	width := m.trashWidth()
 	inner := max(width, 8) - 2
 	rows, roomy := m.trashRows()
-	c := trashCols(inner)
+	// Of every item, so the names don't move as the list scrolls
+	iconW := 1
+	for _, it := range v.items {
+		iconW = max(iconW, utils.Width(trashIcon(it)))
+	}
+	c := trashCols(inner, iconW)
 
 	body := []string{m.trashHeading(inner), m.trashSecondLine(inner, c)}
 	if roomy {
@@ -764,7 +772,7 @@ func (m Model) trashSecondLine(width int, c trashColumns) string {
 		}
 		return prompt + m.fg(t.Text).Render(utils.Truncate(utils.Printable(v.filter.Value()), room))
 	}
-	head := strings.Repeat(" ", 4) + utils.Fit("Name", c.nameW)
+	head := strings.Repeat(" ", c.leadW) + utils.Fit("Name", c.nameW)
 	if c.fromW > 0 {
 		head += "  " + utils.Fit("From", c.fromW)
 	}
@@ -773,6 +781,11 @@ func (m Model) trashSecondLine(width int, c trashColumns) string {
 		head += utils.FitRight("Deleted", dateW)
 	}
 	return m.fg(t.Faint).Render(utils.Fit(head, width))
+}
+
+// trashIcon is an item's icon, as the file list shows it
+func trashIcon(it trashItem) string {
+	return ui.GetFileIcon(fs.FileInfo{Name: it.Name, IsDir: it.IsDir, IsSymlink: it.IsLink})
 }
 
 // trashRow draws an item: its name, where it came from, its size and when
@@ -789,8 +802,7 @@ func (m Model) trashRow(it trashItem, chosen bool, width int, c trashColumns) st
 		nameStyle, meta, faint, iconStyle = sel.Bold(it.IsDir), sel, sel.Italic(true), sel
 	}
 
-	icon := ui.GetFileIcon(fs.FileInfo{Name: it.Name, IsDir: it.IsDir, IsSymlink: it.IsLink})
-	row := iconStyle.Render(utils.Fit(" "+icon, 4))
+	row := iconStyle.Render(utils.Fit(" "+trashIcon(it), c.leadW))
 	// The letters the filter matched are underlined, as in the file list,
 	// short of the ellipsis of a name cut short
 	full := utils.Printable(it.Name)

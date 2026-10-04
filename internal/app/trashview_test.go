@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/config"
+	"github.com/icichainz/sushi/internal/ui"
 )
 
 // openTrashView presses ctrl+t and waits for the listing and the sizes
@@ -394,5 +395,39 @@ func TestTrashBrowserFillsTheTerminal(t *testing.T) {
 func TestTrashKeyInThePanel(t *testing.T) {
 	if panel := keyPanelAt100x24(t); !strings.Contains(panel, "U ctrl+t disk usage, trash") {
 		t.Errorf("panel lacks ctrl+t: %s", panel)
+	}
+}
+
+func TestTrashBrowserFitsWideIcons(t *testing.T) {
+	ui.SetIconMode(ui.IconModeASCII)
+	t.Cleanup(func() { ui.SetIconMode(ui.IconModeNerd) })
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "dir1"), 0755)
+	writeTestFile(t, filepath.Join(dir, "foreign.txt"), "f")
+	m := trashWith(t, newTestModel(t, dir, nil), "dir1", "foreign.txt")
+	m = openTrashView(t, m)
+
+	// --ascii's icons take three cells, as [D]: the names start after a
+	// space, and line up with their heading
+	screen := plain(m.View())
+	nameAt := -1
+	for _, line := range screen {
+		if i := strings.Index(line, "Name"); i >= 0 && strings.Contains(line, "Deleted") {
+			nameAt = i
+		}
+	}
+	for _, name := range []string{"dir1", "foreign.txt"} {
+		found := false
+		for _, line := range screen {
+			if i := strings.Index(line, name); i >= 0 {
+				found = true
+				if line[i-1] != ' ' || i != nameAt {
+					t.Errorf("%s at %d, its heading at %d: %q", name, i, nameAt, line)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s isn't listed:\n%s", name, strings.Join(screen, "\n"))
+		}
 	}
 }
