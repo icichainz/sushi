@@ -184,3 +184,46 @@ func TestRealMountedVolumeIsRefused(t *testing.T) {
 		t.Fatal("deleting the folder holding the volume emptied it")
 	}
 }
+
+func TestNothingIsCopiedOutOfAFolderThatCantChange(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write to any folder")
+	}
+	// Trashing and moving to another volume copy, then remove the original:
+	// in a read-only folder that fails, after the copy
+	acrossFilesystems(t)
+	ro := filepath.Join(t.TempDir(), "ro")
+	os.MkdirAll(filepath.Join(ro, "photos"), 0755)
+	file := filepath.Join(ro, "photos", "beach.jpg")
+	writeFile(t, file, "sand")
+	writeFile(t, filepath.Join(ro, "notes.txt"), "notes")
+	if err := os.Chmod(ro, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(ro, 0755) })
+
+	refused := func(what string, err error, name string) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "cannot remove "+name+" from "+ro) {
+			t.Fatalf("%s: err = %v", what, err)
+		}
+		if readFile(t, file) != "sand" || readFile(t, filepath.Join(ro, "notes.txt")) != "notes" {
+			t.Fatalf("%s: the originals changed", what)
+		}
+	}
+	tr := testTrash(t)
+	for _, name := range []string{"photos", "notes.txt"} {
+		_, err := tr.Put(background(), filepath.Join(ro, name))
+		refused("Put "+name, err, name)
+	}
+	if got, _ := os.ReadDir(tr.Files); len(got) != 0 {
+		t.Fatalf("the trash holds %d items copied", len(got))
+	}
+	dst := filepath.Join(t.TempDir(), "photos")
+	refused("Move", background().Move(filepath.Join(ro, "photos"), dst), "photos")
+	if Exists(dst) {
+		t.Fatal("the move copied the folder")
+	}
+	// Deleting would empty the folder, then fail on it
+	refused("Delete", background().Delete(filepath.Join(ro, "photos")), "photos")
+}

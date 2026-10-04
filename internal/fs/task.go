@@ -469,6 +469,10 @@ func (t *Task) Move(src, dst string) (err error) {
 		}
 		return err
 	}
+	// The source goes once copied, so its folder must let it
+	if err := checkRemovable(src); err != nil {
+		return err
+	}
 
 	t.Count(src)
 	var list []copied
@@ -619,6 +623,10 @@ func (t *Task) Delete(path string) error {
 		return fmt.Errorf("cannot access %s: %w", path, err)
 	}
 	if err := checkNotMount(path, info); err != nil {
+		return err
+	}
+	// Else what is inside a folder would go, and the folder stay
+	if err := checkRemovable(path); err != nil {
 		return err
 	}
 	return t.deleteOn(path, info, deviceOf(path, info))

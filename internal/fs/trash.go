@@ -133,6 +133,10 @@ func (tr *Trash) Put(t *Task, path string) (TrashedItem, error) {
 	if !isCrossDevice(err) {
 		return trashed, err
 	}
+	// The original goes once copied, so its folder must let it
+	if err := checkRemovable(abs); err != nil {
+		return TrashedItem{}, err
+	}
 
 	// Another filesystem: copy, then rename the complete copy into place
 	t.Count(abs)

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/sys/unix"
 )
 
 // The root of a mounted volume (a disk, a disk image, a share) looks like
@@ -64,6 +66,18 @@ func checkNotMount(path string, info os.FileInfo) error {
 	}
 	if deviceOf(parent, up) != deviceOf(path, info) {
 		return mountedError{name: filepath.Base(path)}
+	}
+	return nil
+}
+
+// checkRemovable refuses path if the folder holding it can't be written,
+// as on a read-only volume or in a folder of another user's: removing it
+// from there fails, and found out only after copying it to another volume,
+// as trashing and moving do, the whole copy would be left behind
+func checkRemovable(path string) error {
+	dir := filepath.Dir(filepath.Clean(path))
+	if err := unix.Access(dir, unix.W_OK); err != nil {
+		return fmt.Errorf("cannot remove %s from %s: %w", filepath.Base(path), dir, err)
 	}
 	return nil
 }
