@@ -8,8 +8,11 @@ Sushi is made for macOS, the only system it supports: it still builds on Linux, 
 
 - 🚀 Fast, asynchronous navigation with Vim-style keybindings
 - 🗂️ Three panes (parent folder, files, preview) that adapt to the terminal width, with tabs
+- 🪟 Dual pane: two file lists side by side, to copy and move files from one to the other
+- 🕘 Back and forward through the folders you have been in, and a palette of your most frequent folders
 - 👁️ Scrollable preview with syntax highlighting, line numbers and file details
 - 🖼️ Image, archive and PDF previews: pictures drawn right in the terminal
+- 📦 Browse inside zip and tar archives as if they were folders, and copy files out of them
 - 👀 Quick Look, as the space bar in Finder
 - 📝 Open files in your editor, their default app, or an app you pick; reveal them in Finder
 - 🔍 Fuzzy search within the current directory
@@ -19,7 +22,9 @@ Sushi is made for macOS, the only system it supports: it still builds on Linux, 
 - ✅ Multi-file selection
 - 📋 Copy, cut, paste, delete, rename and create, with safeguards against overwriting a file with itself; copy and paste files between sushi and Finder
 - 🗑️ Trash and undo (`Ctrl+z`), with progress and cancel (`Ctrl+x`) for long operations, and a notification when they finish
-- 🧰 Duplicate, symlink paste, permissions, bulk rename in your editor, zip and extract
+- ♻️ A trash browser: put things back where they came from, delete them for good, or empty the trash
+- 📊 Disk usage: see what takes the space in a folder, largest first, and trash it from there
+- 🧰 Duplicate, symlink paste, permissions, bulk rename in your editor, rename by pattern with a live preview, zip and extract
 - 🔄 Lists refresh by themselves when files change on disk
 - ↕️ Change the sort order on the fly
 - 🖱️ Mouse support: click, double-click, right-click and scroll
@@ -192,6 +197,14 @@ confirm_delete: true
 # permanently. Set to false to make d delete permanently too.
 delete_to_trash: true
 
+# Start with two file lists side by side; "w" switches between one and two
+dual_pane: false
+
+# Remember the folders you visit in ~/.config/sushi/history.json, for "z" to
+# jump back to. Set to false to keep nothing: "z" then offers only the
+# folders of this session.
+history: true
+
 # How Enter opens files: "auto" (text files in $EDITOR, others in their
 # default app), "editor", or "system"
 opener: auto
@@ -238,7 +251,7 @@ syntax_theme: ""
 # Commands to run on the selection; see docs/plugins.md
 plugins:
   - name: git-log
-    key: ctrl+l
+    key: ctrl+k
     command: git log --oneline -20
 
 # Keys for actions, replacing their defaults; see Remapping Keys below

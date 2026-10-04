@@ -11,7 +11,7 @@ Add plugins to `~/.config/sushi/config.yaml`:
 ```yaml
 plugins:
   - name: git-log
-    key: ctrl+l
+    key: ctrl+k
     command: git log --oneline -20
     description: Recent commits
 
@@ -20,7 +20,7 @@ plugins:
     command: du -shc "$@" | tail -n 1
 
   - name: lazygit
-    key: W
+    key: Z
     mode: terminal
     command: lazygit
 ```
@@ -29,7 +29,7 @@ plugins:
 | ----- | -------- | ------- |
 | `name` | yes | Shown in the Run palette and in messages |
 | `command` | yes | Run with `sh -c`; `"$@"` is the selection |
-| `key` | no | Shortcut, e.g. `Z`, `ctrl+l`, `alt+x`, `f5` |
+| `key` | no | Shortcut, e.g. `Z`, `ctrl+k`, `alt+x`, `f5` |
 | `mode` | no | `wait` (default), `terminal` or `background` |
 | `description` | no | Shown in the Run palette |
 
