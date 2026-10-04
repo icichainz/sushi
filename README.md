@@ -70,8 +70,8 @@ make macos    # builds all three into dist/
 | File | What it is |
 | ---- | ---------- |
 | `dist/Sushi.app` | The app. Double-click to run it. |
-| `dist/Sushi-0.5.0.pkg` | Installer: puts Sushi in Applications and the `sushi` command in `/usr/local/bin` |
-| `dist/Sushi-0.5.0.dmg` | Disk image: drag Sushi to Applications |
+| `dist/Sushi-0.5.1.pkg` | Installer: puts Sushi in Applications and the `sushi` command in `/usr/local/bin` |
+| `dist/Sushi-0.5.1.dmg` | Disk image: drag Sushi to Applications |
 
 `make app`, `make pkg` and `make dmg` build them one at a time, and `VERSION=1.2.3 make macos` sets the version.
 
@@ -125,7 +125,7 @@ Given a file, sushi opens the folder it is in with the cursor on it, and with hi
 | `--list-keys` | Print every action and its keys as a `keys:` section for the config file, then the keys that can't be changed and the plugins' keys. Problems with the config go to stderr, and the exit status is 1 if there are any (see [Remapping Keys](#remapping-keys)) |
 | `--cwd-file FILE` | When you quit with `q`, write the directory shown to `FILE`, for the `sushicd` shell function (`Q` quits without writing) |
 | `--print-shell-wrapper [SHELL]` | Print the `sushicd` shell function for `zsh`, `bash` or `fish` (by default, the shell in `$SHELL`) |
-| `--version` | Print the version, as in `sushi 0.5.0` (`sushi dev` when built without the Makefile) |
+| `--version` | Print the version, as in `sushi 0.5.1` (`sushi dev` when built without the Makefile) |
 | `--help`, `-h` | Show help message |
 
 ### Changing Directory on Quit

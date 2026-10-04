@@ -94,9 +94,12 @@ func enter(t *testing.T, m Model, name string) Model {
 	return drain(t, m, cmd)
 }
 
-// header returns the breadcrumb, on a terminal wide enough for all of it
+// header returns the breadcrumb, on a terminal wide enough for all of it:
+// the whole path, however deep the temporary directory is, with room for
+// the branch and the sort order beside it
 func header(m Model) string {
-	return ansi.Strip(resize(m, tea.WindowSizeMsg{Width: 240, Height: 24}).renderHeader())
+	width := max(240, utils.Width(m.tab().CurrentPath)+80)
+	return ansi.Strip(resize(m, tea.WindowSizeMsg{Width: width, Height: 24}).renderHeader())
 }
 
 func TestGitBadges(t *testing.T) {
