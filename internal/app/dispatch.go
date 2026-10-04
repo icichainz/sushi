@@ -3,6 +3,7 @@ package app
 import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/notify"
+	"github.com/icichainz/sushi/internal/plugins"
 )
 
 // setHostDirectory tells the terminal which directory is shown, so the
@@ -42,6 +43,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// window's title or directory: tell it again
 		m.hostDir = ""
 	}
+	if handedBack(msg) && m.config != nil && m.config.Mouse {
+		// Bubble Tea gives the terminal back without turning the mouse on
+		// again, which would leave clicks and the wheel dead from then on
+		cmd = tea.Batch(cmd, tea.EnableMouseCellMotion)
+	}
 	// Tell the terminal when the shown directory changes, by any route:
 	// navigation, a tab switch, a tab closing, a find jump
 	if dir := m.tab().realDir(); dir != m.hostDir {
@@ -49,4 +55,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		_ = setHostDirectory(dir)
 	}
 	return m, cmd
+}
+
+// handedBack reports whether msg says that a program sushi handed the
+// terminal to, an editor or a plugin, has given it back
+func handedBack(msg tea.Msg) bool {
+	switch msg := msg.(type) {
+	case externalDoneMsg:
+		return msg.exec
+	case pluginDoneMsg:
+		return msg.plugin.Mode != plugins.ModeBackground
+	case bulkRenameMsg:
+		return true
+	}
+	return false
 }
