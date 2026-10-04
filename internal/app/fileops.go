@@ -12,8 +12,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/icichainz/sushi/internal/fs"
 	"github.com/icichainz/sushi/internal/utils"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/unicode/norm"
 )
 
 // targets returns the paths an operation applies to: the selection if there
@@ -229,7 +227,7 @@ func (m *Model) confirmPaste() tea.Cmd {
 // FAT): "Report.txt" and "report.txt" name one file, and so do two
 // spellings of "résumé" with each é one character or two
 func nameKey(name string) string {
-	return norm.NFC.String(cases.Fold().String(norm.NFC.String(name)))
+	return fs.NameKey(name)
 }
 
 // checkPaste validates pasting srcs, the clipboard or a transfer to the

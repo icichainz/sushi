@@ -20,8 +20,9 @@ import (
 // cursor, with a Find and a Replace field, showing each new name as it is
 // typed. Find is plain text, matched case-sensitively wherever it occurs,
 // or a regular expression between slashes, as in /(\d+)-(\w+)/, whose
-// groups the replacement takes as $1 or ${1}. With Find empty, Replace is
-// the whole new name. The replacement also takes tokens:
+// groups the replacement takes as $1 or ${1}, even with a letter, digit or
+// _ after them (see bracedGroups), and $$ for a $. With Find empty,
+// Replace is the whole new name. The replacement also takes tokens:
 //
 //	{n}     the file's number, from 1, in the order of the list
 //	{n:3}   the same, zero-padded to 3 digits
@@ -131,6 +132,9 @@ func applyPattern(files []fs.FileInfo, find, replace string) ([]string, error) {
 	names := make([]string, len(files))
 	for i, f := range files {
 		with := expandTokens(replace, i+1, f, re != nil)
+		if re != nil {
+			with = bracedGroups(with)
+		}
 		switch {
 		case find == "" && replace == "":
 			names[i] = f.Name
@@ -177,6 +181,35 @@ func expandTokens(s string, n int, f fs.FileInfo, regex bool) string {
 	})
 }
 
+// bracedGroups writes each $N of a regular expression's replacement as
+// ${N}: Go takes the longest name it can, so $2_$1 would be the group
+// named "2_", then group 1, where group 2, an underscore and group 1 are
+// meant. $$ stays, for a $ of its own, and so do ${...} and $name.
+func bracedGroups(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '$' || i+1 == len(s) {
+			b.WriteByte(s[i])
+			continue
+		}
+		switch next := s[i+1]; {
+		case next == '$':
+			b.WriteString("$$")
+			i++
+		case next >= '0' && next <= '9':
+			j := i + 1
+			for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+				j++
+			}
+			b.WriteString("${" + s[i+1:j] + "}")
+			i = j - 1
+		default:
+			b.WriteByte('$')
+		}
+	}
+	return b.String()
+}
+
 // update works out the new names and checks them as fs.PlanRenames will:
 // valid names, none given to two files, none taken by a file that isn't
 // being renamed away. Names are compared as the file system compares them,
@@ -193,10 +226,11 @@ func (p *patternRename) update() {
 		return
 	}
 
-	moving := make(map[string]bool)
+	// A name a file is renamed away from is free, however it is spelled
+	moving := make(fs.Leaving)
 	for i, f := range p.files {
 		if names[i] != f.Name {
-			moving[f.Path] = true
+			moving.Add(f.Path)
 		}
 	}
 	claimed := make(map[string]int) // Folder and folded name → row
@@ -216,7 +250,7 @@ func (p *patternRename) update() {
 				if p.rows[other].problem == "" {
 					p.rows[other].problem = row.problem
 				}
-			} else if !moving[dst] && occupied(dst, f.Path) {
+			} else if !moving.Holds(dst) && occupied(dst, f.Path) {
 				row.problem = "already exists"
 			}
 			if _, ok := claimed[key]; !ok {
@@ -380,7 +414,7 @@ func (m Model) patternBox() []string {
 	}
 	body = append(body, " "+summary)
 	if roomy {
-		help := "/regex/ with $1   {n} {n:3} {name} {ext} {date}"
+		help := "/regex/ with $1, $$ for $   {n} {n:3} {name} {ext} {date}"
 		body = append(body, " "+m.fg(t.Faint).Render(utils.Truncate(help, inner-2)))
 	}
 

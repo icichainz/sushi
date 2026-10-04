@@ -6,7 +6,18 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
+
+// NameKey folds a file name the way file systems that ignore case and
+// Unicode normalisation compare names (APFS and HFS+ by default, NTFS,
+// FAT): "Report.txt" and "report.txt" name one file, and so do two
+// spellings of "résumé" with each é one character or two
+func NameKey(name string) string {
+	return norm.NFC.String(cases.Fold().String(norm.NFC.String(name)))
+}
 
 // compoundExts are extensions of two parts, kept together by SplitExt
 var compoundExts = []string{".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst"}

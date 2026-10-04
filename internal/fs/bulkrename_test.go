@@ -123,3 +123,37 @@ func TestRenameAllMissingSourceRollsBack(t *testing.T) {
 		t.Fatalf("after rollback: %v", got)
 	}
 }
+
+func TestPlanRenamesIntoANameLeftInAnotherCase(t *testing.T) {
+	dir := t.TempDir()
+	if !ignoresCase(t, dir) {
+		t.Skip("the file system tells names apart by case")
+	}
+	p := func(name string) string { return filepath.Join(dir, name) }
+	writeFile(t, p("2.TXT"), "two")
+	writeFile(t, p("a.txt"), "a")
+	occupied := func(path, src string) bool {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return false
+		}
+		srcInfo, err := os.Lstat(src)
+		return err != nil || !os.SameFile(info, srcInfo)
+	}
+
+	// a.txt takes 2.txt, which 2.TXT, renamed away, holds in another case
+	pairs, err := PlanRenames([]string{p("2.TXT"), p("a.txt")}, "1.txt\n2.txt\n", occupied)
+	if err != nil {
+		t.Fatalf("PlanRenames = %v", err)
+	}
+	if err := RenameAll(pairs); err != nil {
+		t.Fatal(err)
+	}
+	if got := contents(t, dir); !reflect.DeepEqual(got, map[string]string{"1.txt": "two", "2.txt": "a"}) {
+		t.Fatalf("after renaming: %v", got)
+	}
+	// One that stays is still in the way, in whatever case
+	if _, err := PlanRenames([]string{p("1.txt")}, "2.TXT\n", occupied); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("into a name taken in another case: %v", err)
+	}
+}

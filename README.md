@@ -742,7 +742,7 @@ An entry named outside the archive, as `../evil.txt` would write outside the fol
 
 `M` renames the selection, or the file under the cursor, by finding and replacing text in the names, and shows every new name as you type. Its dialog has two fields:
 
-- **Find**: the text to look for, matched with its case, everywhere it occurs in a name. Between slashes, it is a regular expression in [Go's syntax](https://pkg.go.dev/regexp/syntax), as in `/(\d+)-(\w+)/`, and Replace takes its groups as `$1` or `${1}`; write `${1}` when a letter, digit or `_` follows, as `$1x` would be the group named `1x`. Left empty, Replace is the whole new name.
+- **Find**: the text to look for, matched with its case, everywhere it occurs in a name. Between slashes, it is a regular expression in [Go's syntax](https://pkg.go.dev/regexp/syntax), as in `/(\d+)-(\w+)/`, and Replace takes its groups as `$1` or `${1}`, whatever follows: `$2_$1` is group 2, an underscore, then group 1. Named groups are `${name}`, and `$$` is a `$` of its own. Left empty, Replace is the whole new name.
 - **Replace**: what to put in its place, with these tokens:
 
 | Token | Becomes |
@@ -758,6 +758,8 @@ An entry named outside the archive, as `../evil.txt` would write outside the fol
 | `IMG_` | `holiday-` | `holiday-0001.jpg` |
 | (empty) | `holiday-{n:3}{ext}` | `holiday-001.jpg`, then `holiday-002.jpg` for the next file |
 | `/^IMG_(\d+)/` | `{date} $1` | `2026-10-04 0001.jpg` |
+| `/^(\w+)_(\d+)/` | `$2_$1` | `0001_IMG.jpg` |
+| `/^IMG/` | `$$` | `$_0001.jpg` |
 
 | Key | Action |
 | --- | ------ |

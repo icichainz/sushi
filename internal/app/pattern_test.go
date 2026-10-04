@@ -56,6 +56,15 @@ func TestApplyPattern(t *testing.T) {
 		// A $ in a file's own name stays a $, never a group
 		{[]string{"cost$1.txt"}, "/^(.*)$/", "{name}!", []string{"cost$1!"}},
 		{[]string{"a$1.txt"}, "a", "{name}", []string{"a$1$1.txt"}},
+		// $N is group N whatever follows, rather than the group named 2_
+		// or 1x; $$ is a $; named groups still work
+		{[]string{"Song - Artist.mp3"}, `/^(.+) - (.+)\.mp3$/`, "$2_$1.mp3", []string{"Artist_Song.mp3"}},
+		{[]string{"IMG_0001.jpg"}, `/^(\w+)_(\d+)/`, "$2_$1", []string{"0001_IMG.jpg"}},
+		{[]string{"IMG_0001.jpg"}, `/^IMG/`, "$$", []string{"$_0001.jpg"}},
+		{[]string{"v1.txt"}, `/^v(\d)/`, "$1x$1", []string{"1x1.txt"}},
+		{[]string{"a.txt"}, `/^(a)/`, "$$5 $$$1", []string{"$5 $a.txt"}},
+		{[]string{"a.txt"}, `/^(?P<stem>\w+)\./`, "${stem}-$stem.", []string{"a-a.txt"}},
+		{[]string{"a.txt"}, `/^a/`, "x$", []string{"x$.txt"}},
 	} {
 		got, err := applyPattern(infos(c.files...), c.find, c.replace)
 		if err != nil || !slices.Equal(got, c.want) {
@@ -417,5 +426,27 @@ func TestPatternDialogClicks(t *testing.T) {
 	m, _ = clickAt(m, 0, 0)
 	if m.mode != ModePattern || m.pattern.find.Value() != "qXwe" || m.pattern.replace.Value() != "z" {
 		t.Fatalf("a click outside: mode %v, find %q, replace %q", m.mode, m.pattern.find.Value(), m.pattern.replace.Value())
+	}
+}
+
+func TestPatternRenameIntoANameLeftInAnotherCase(t *testing.T) {
+	dir := t.TempDir()
+	if !ignoresCase(t, dir) {
+		t.Skip("the file system tells names apart by case")
+	}
+	writeTestFile(t, filepath.Join(dir, "2.TXT"), "two")
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "a")
+	m := newTestModel(t, dir, nil)
+	m, _ = press(t, m, "*")
+
+	// 2.TXT becomes 1.txt and a.txt takes 2.txt, the same name in another
+	// case, which is free once 2.TXT has left it
+	m = openPattern(t, m, "", "{n}.txt")
+	if got := patternRowsOf(m); m.pattern.problems != 0 {
+		t.Fatalf("rows = %q", got)
+	}
+	m = submit(t, m)
+	if got := dirNames(t, dir); !slices.Equal(got, []string{"1.txt", "2.txt"}) || readTestFile(t, filepath.Join(dir, "2.txt")) != "a" {
+		t.Fatalf("after renaming: %v, %q", got, m.statusMsg)
 	}
 }
