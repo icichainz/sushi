@@ -110,6 +110,12 @@ func (m *Model) pushUndo(e *undoEntry) {
 
 // startUndo undoes the most recent operation in the background
 func (m Model) startUndo() (tea.Model, tea.Cmd) {
+	return m.undoLast(nil)
+}
+
+// undoLast undoes the most recent operation in the background; after, if
+// not nil, runs once it is done, as jobDoneMsg says
+func (m Model) undoLast(after func(m *Model) tea.Cmd) (tea.Model, tea.Cmd) {
 	if len(m.undo) == 0 {
 		cmd := m.setStatus("Nothing to undo")
 		return m, cmd
@@ -126,7 +132,9 @@ func (m Model) startUndo() (tea.Model, tea.Cmd) {
 
 	useTrash := m.config.DeleteToTrash
 	cmd := m.startJob("Undoing", func(t *fs.Task) jobDoneMsg {
-		return undoWork(t, e, useTrash)
+		done := undoWork(t, e, useTrash)
+		done.after = after
+		return done
 	})
 	return m, cmd
 }

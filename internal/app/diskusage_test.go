@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -142,11 +143,64 @@ func TestDiskUsageTrashesAndUndoes(t *testing.T) {
 		t.Fatalf("big is not in the trash: %v", err)
 	}
 
-	// It was the normal trash, which ctrl+z undoes
+	// It was the normal trash, which ctrl+z undoes, in the view too, which
+	// counts the folder again with it back
+	m, cmd = ctrl(t, m, tea.KeyCtrlZ)
+	m = drain(t, m, cmd)
+	if readTestFile(t, filepath.Join(big, "y.bin")) != strings.Repeat("y", 1000) {
+		t.Fatalf("undo didn't bring big back: %q", m.statusMsg)
+	}
+	if m.mode != ModeDiskUsage || usageRows(m) != "big=4000 .hidden=500 small.txt=100 link=3" {
+		t.Fatalf("after undoing in the view: mode %v, %s", m.mode, usageRows(m))
+	}
+	// And in the file list, once closed
+	m, cmd = press(t, cursorTo(t, m, "big"), "d")
+	m = drain(t, m, cmd)
 	m, _ = press(t, m, "q")
 	m = undoNow(t, m)
 	if readTestFile(t, filepath.Join(big, "y.bin")) != strings.Repeat("y", 1000) {
 		t.Fatal("undo didn't bring big back")
+	}
+}
+
+func TestDiskUsageKeysToTheEnds(t *testing.T) {
+	root := usageTree(t)
+	m := openUsage(t, cursorTo(t, newTestModel(t, root, nil), "small.txt"))
+	m, _ = press(t, m, "G")
+	if r, _, _ := m.du.chosen(); r.name != "link" {
+		t.Fatalf("G went to %s", r.name)
+	}
+	m, _ = ctrl(t, m, tea.KeyHome)
+	if r, _, _ := m.du.chosen(); r.name != "big" {
+		t.Fatalf("Home went to %s", r.name)
+	}
+	m, _ = ctrl(t, m, tea.KeyEnd)
+	if r, _, _ := m.du.chosen(); r.name != "link" || m.mode != ModeDiskUsage {
+		t.Fatalf("End went to %s", r.name)
+	}
+}
+
+func TestCancelFromTheViews(t *testing.T) {
+	root := usageTree(t)
+	m := cursorTo(t, newTestModel(t, root, nil), "small.txt")
+	views := map[string]func(Model) Model{
+		"disk usage":    func(m Model) Model { return openUsage(t, m) },
+		"trash browser": func(m Model) Model { return openTrashView(t, m) },
+	}
+	for name, open := range views {
+		v := open(detach(m))
+		mode := v.mode
+		if after, _ := ctrl(t, v, tea.KeyCtrlX); after.statusMsg != "Nothing to cancel" || after.mode != mode {
+			t.Errorf("%s, nothing running: %q", name, after.statusMsg)
+		}
+		// The job it started, say deleting for good from the trash
+		ctx, cancel := context.WithCancel(context.Background())
+		v.job = &job{doing: "Deleting", cancel: cancel}
+		after, _ := ctrl(t, v, tea.KeyCtrlX)
+		if ctx.Err() == nil || !after.job.cancelled || after.mode != mode {
+			t.Errorf("%s: ctrl+x didn't cancel the job (mode %v)", name, after.mode)
+		}
+		cancel()
 	}
 }
 

@@ -691,10 +691,13 @@ The heading names the folder shown, with its size and number of files. The line 
 | Key | Action |
 | --- | ------ |
 | `↑`/`k`, `↓`/`j`, `PgUp`/`Ctrl+u`, `PgDn`/`Ctrl+d` | Move |
+| `Home`, `End`/`G` | Go to the first entry, the last |
 | `Enter`, `→`/`l` | Open a folder, with what was counted already. On a file, close the view and go to it in the file list |
 | `←`/`h`, `Backspace` | Go up. Above the folder counted, the folder above it is counted, taking over what was counted of this one if the count was done |
 | `g` | Close the view and go to the entry in the file list, showing hidden files if it is one |
 | `d` | Move the entry to the trash, once the count is done or stopped |
+| `Ctrl+z` | Undo, as in the file list, then count the folder shown again |
+| `Ctrl+x` | Cancel the trashing or undo going on |
 | `i` / `Ctrl+o` | Show the entry in Quick Look / in Finder |
 | `Ctrl+r` | Count again |
 | `Esc` | Stop the count, keeping the sizes counted so far. Once it has stopped, or is done, close the view |
@@ -864,6 +867,7 @@ Nothing in the trash is ever replaced or merged into: a name that is taken gets 
 | `E` | Empty the trash, after asking |
 | `/` | Filter the items by name: type, then `Enter` to keep the filter or `Esc` to clear it |
 | `i` | Show the item in Quick Look |
+| `Ctrl+x` | Cancel putting back, deleting or emptying |
 | `Ctrl+r` | List the trash again |
 | `Esc` | Clear the filter; without one, close the browser |
 | `q` | Close the browser |
@@ -871,7 +875,7 @@ Nothing in the trash is ever replaced or merged into: a name that is taken gets 
 The questions take `y` or `Enter` to go ahead, and `n`, `Esc` or `q` to keep everything; the mouse does nothing while they ask. Otherwise, the wheel moves, a click picks an item, a double-click puts it back, and a click outside closes the browser.
 
 - Putting back never replaces anything: if something has taken the item's name in that folder, sushi says so, and the item stays in the trash.
-- Putting back, deleting and emptying run in the background, with their progress in the status bar, while the browser stays open; close it to cancel one with `Ctrl+x`. One that takes longer than `notify_after` ends with a notification, as in `Put Back finished` or `Empty Trash failed`.
+- Putting back, deleting and emptying run in the background, with their progress in the status bar, while the browser stays open; `Ctrl+x` cancels one, there or in the file list. One that takes longer than `notify_after` ends with a notification, as in `Put Back finished` or `Empty Trash failed`.
 - `Ctrl+z`, back in the file list, undoes putting an item back by moving it to the trash again, if it hasn't changed since. Deleting for good and emptying can't be undone, and `Ctrl+z` says so.
 - Emptying deletes every item the browser lists; the trash folder itself stays, and so does Finder's `.DS_Store`. An item that can't be deleted is left, and the status bar says how many were.
 

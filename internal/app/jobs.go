@@ -251,9 +251,8 @@ func (m Model) whileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	doing := strings.ToLower(m.job.doing)
 	switch {
 	case key.Matches(msg, k.Cancel):
-		m.job.cancel()
-		m.changeJob(func(j *job) { j.cancelled = true })
-		return m, nil, true
+		model, cmd := m.cancelJob()
+		return model, cmd, true
 
 	case key.Matches(msg, k.Quit, k.QuitNoCd), key.Matches(msg, k.CloseTab) && len(m.tabs) == 1:
 		if key.Matches(msg, k.QuitNoCd) {
@@ -275,6 +274,19 @@ func (m Model) whileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		return m, cmd, true
 	}
 	return m, nil, false
+}
+
+// cancelJob cancels the running job, as ctrl+x does wherever it is
+// pressed: in the file list, and in the views that start jobs of their
+// own, the trash browser and the disk usage view
+func (m Model) cancelJob() (tea.Model, tea.Cmd) {
+	if m.job == nil {
+		cmd := m.setStatus("Nothing to cancel")
+		return m, cmd
+	}
+	m.job.cancel()
+	m.changeJob(func(j *job) { j.cancelled = true })
+	return m, nil
 }
 
 // shortStatus describes the running job in fewer cells than status, as in

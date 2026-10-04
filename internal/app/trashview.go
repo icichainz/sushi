@@ -309,6 +309,11 @@ func (m Model) handleTrashMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if v.confirm != "" {
 		return m.handleTrashConfirm(msg)
 	}
+	// ctrl+x stops what the browser started, even while filtering, unless
+	// it is bound to a key that types
+	if key.Matches(msg, k.Cancel) && (!v.filtering || msg.Type != tea.KeyRunes) {
+		return m.cancelJob()
+	}
 	if v.filtering {
 		keep := ""
 		if it, ok := v.chosen(); ok {

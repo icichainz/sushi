@@ -438,8 +438,9 @@ func (m Model) closeDiskUsage() (tea.Model, tea.Cmd) {
 // handleDiskUsageMode handles keys in the disk usage view. Its own keys
 // come first: esc stops the walk, then closes the view; enter opens; g
 // goes to the entry in the file list. Moving, going up and in, trashing,
-// Quick Look, showing in Finder and refreshing follow the key map; q
-// closes the view unless one of those has taken it.
+// undoing, cancelling the job, Quick Look, showing in Finder and
+// refreshing follow the key map; q closes the view unless one of those has
+// taken it.
 func (m Model) handleDiskUsageMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	v := &m.du
 	k := m.keys
@@ -458,6 +459,11 @@ func (m Model) handleDiskUsageMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	rows, _ := m.duRows()
 	switch {
+	case key.Matches(msg, k.Cancel):
+		// The trashing d started, say
+		return m.cancelJob()
+	case key.Matches(msg, k.Undo):
+		return m.duUndo()
 	case key.Matches(msg, k.Up):
 		v.move(-1)
 	case key.Matches(msg, k.Down):
@@ -466,6 +472,10 @@ func (m Model) handleDiskUsageMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		v.move(-rows)
 	case key.Matches(msg, k.PageDown):
 		v.move(rows)
+	case key.Matches(msg, k.Home):
+		v.move(-len(v.rows))
+	case key.Matches(msg, k.End):
+		v.move(len(v.rows))
 	case key.Matches(msg, k.Right):
 		return m.duOpen()
 	case key.Matches(msg, k.Left, k.Back):
@@ -589,6 +599,28 @@ func (m Model) duTrash() (tea.Model, tea.Cmd) {
 		return nil
 	})
 	return m, cmd
+}
+
+// duUndo undoes the last operation, as ctrl+z does in the file list, such
+// as a d in the view, and counts the folder shown again once it is done,
+// so what came back is in the figures
+func (m Model) duUndo() (tea.Model, tea.Cmd) {
+	if m.job != nil {
+		cmd := m.stillBusy()
+		return m, cmd
+	}
+	scan := m.du.scan
+	return m.undoLast(func(m *Model) tea.Cmd {
+		v := &m.du
+		if m.mode != ModeDiskUsage || v.scan != scan {
+			return nil
+		}
+		focus := ""
+		if r, _, ok := v.chosen(); ok {
+			focus = r.name
+		}
+		return m.startDiskUsage(v.path, focus, nil)
+	})
 }
 
 // duForget takes what was at path out of the walk's figures, once it has

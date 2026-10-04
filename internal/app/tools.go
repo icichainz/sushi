@@ -48,9 +48,8 @@ func (m Model) handleToolKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Extract):
 		return m.startExtract()
 	case key.Matches(msg, m.keys.Cancel):
-		// A running operation is cancelled by whileBusy
-		cmd := m.setStatus("Nothing to cancel")
-		return m, cmd
+		// A running operation is cancelled by whileBusy, before this
+		return m.cancelJob()
 	}
 	return m, nil
 }
