@@ -14,7 +14,8 @@ const Placeholder = '?'
 // bytes to the file system, and drawn as it is, a newline breaks the
 // layout and an escape code can clear the screen or change colors. So
 // control characters (C0 including ESC, DEL, C1), line and paragraph
-// separators, and bytes that aren't UTF-8 each become Placeholder. It
+// separators, the bidi embeddings, overrides and isolates that reorder
+// what follows them, and bytes that aren't UTF-8 each become Placeholder. It
 // replaces rune for rune, as []rune counts runes, so positions found in
 // the original, like search matches, still hold. Other characters,
 // whatever the script, are kept.
@@ -55,6 +56,11 @@ func keep(r rune, size int) bool {
 	case r == utf8.RuneError && size == 1:
 		return false
 	case unicode.IsControl(r), r == '\u2028', r == '\u2029':
+		return false
+	case r >= '\u202a' && r <= '\u202e', r >= '\u2066' && r <= '\u2069':
+		// Bidi embeddings, overrides and isolates reorder what is drawn
+		// after them, as "invoice\u202efdp.exe" shows as invoiceexe.pdf,
+		// and can carry on past the name into the rest of the row
 		return false
 	}
 	return true
