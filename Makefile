@@ -4,7 +4,7 @@
 BINARY_NAME=sushi
 
 # The version sushi --version prints: VERSION=1.2.3 make build
-VERSION ?= 0.4.0
+VERSION ?= 0.5.0
 LDFLAGS = -X main.version=$(VERSION)
 
 # Build the application
