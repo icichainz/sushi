@@ -5,8 +5,8 @@
 class Sushi < Formula
   desc "Terminal file manager for macOS"
   homepage "https://github.com/icichainz/sushi"
-  url "https://github.com/icichainz/sushi/archive/refs/tags/v0.5.0.tar.gz"
-  sha256 "02da62a0395fee243921c5b41017cec88226d26175900182b7e33a53499eb230"
+  url "https://github.com/icichainz/sushi/archive/refs/tags/v0.5.1.tar.gz"
+  sha256 "d964caf9da254e95871f13f058215e528c860d982cac90a5965fdd44b440959b"
   license "MIT"
   head "https://github.com/icichainz/sushi.git", branch: "main"
 
