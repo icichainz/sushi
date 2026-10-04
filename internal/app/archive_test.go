@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"io/fs"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,6 +18,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/icichainz/sushi/internal/config"
 	sfs "github.com/icichainz/sushi/internal/fs"
+	"github.com/icichainz/sushi/internal/ui/components"
 )
 
 // testEntry is one item of a test archive
@@ -224,23 +226,14 @@ func TestArchiveEntryPreview(t *testing.T) {
 		t.Fatalf("the preview isn't on screen:\n%s", view)
 	}
 
-	// The copy previewed is read-only, in sushi's folder in the temporary one
+	// The copy previewed was made in sushi's folder in the temporary one,
+	// and is gone once the preview is loaded: the preview holds what it shows
 	root := m.arc.cache.root
 	if root == "" || !strings.HasPrefix(root, os.Getenv("TMPDIR")) {
 		t.Fatalf("copies are in %q", root)
 	}
-	var copies []string
-	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
-			copies = append(copies, path)
-			if info, _ := d.Info(); info.Mode().Perm() != 0444 {
-				t.Errorf("%s is %v, want read-only", filepath.Base(path), info.Mode())
-			}
-		}
-		return nil
-	})
-	if len(copies) != 1 || filepath.Base(copies[0]) != "README.md" {
-		t.Fatalf("copies = %q", copies)
+	if copies := cachedCopies(t, m); len(copies) != 0 {
+		t.Fatalf("copies after the preview = %q", copies)
 	}
 
 	// A folder lists what is in it; a link says where it points
@@ -638,5 +631,101 @@ func TestInactivePaneKeepsItsArchive(t *testing.T) {
 	m, _ = press(t, m, "w")
 	if got := cachedCopies(t, m); len(got) != 0 {
 		t.Fatalf("copies after leaving dual pane: %q", got)
+	}
+}
+
+func TestArchiveCopiesAreCapped(t *testing.T) {
+	fakeOpener(t)
+	saved := archiveCacheLimit
+	archiveCacheLimit = 25
+	t.Cleanup(func() { archiveCacheLimit = saved })
+	dir := archiveDir(t)
+	ten := strings.Repeat("x", 10)
+	writeTestZip(t, filepath.Join(dir, "tens.zip"), []testEntry{{name: "a.txt", body: ten}, {name: "b.txt", body: ten},
+		{name: "c.txt", body: ten}, {name: "d.txt", body: ten}})
+	cfg := config.DefaultConfig()
+	cfg.Opener = "system"
+	m := newTestModel(t, dir, cfg)
+	m = enter(t, m, "tens.zip")
+	open := func(name string) {
+		t.Helper()
+		var cmd tea.Cmd
+		m, cmd = press(t, cursorTo(t, m, name), "o")
+		m = drain(t, m, cmd)
+		if !strings.Contains(m.statusMsg, "read-only copy") {
+			t.Fatalf("o on %s: %q", name, m.statusMsg)
+		}
+	}
+
+	open("a.txt")
+	open("b.txt")
+	if got := cachedCopies(t, m); !slices.Equal(got, []string{"a.txt", "b.txt"}) {
+		t.Fatalf("copies = %q", got)
+	}
+	// a.txt, used again, is now more recent than b.txt, which makes room
+	open("a.txt")
+	open("c.txt")
+	if got := cachedCopies(t, m); !slices.Equal(got, []string{"a.txt", "c.txt"}) || m.arc.cache.size != 20 {
+		t.Fatalf("copies past the limit = %q (%d bytes)", got, m.arc.cache.size)
+	}
+	// A preview of an entry opened reads its copy, and leaves it
+	m = previewNow(t, cursorTo(t, m, "c.txt"))
+	if p := m.tab().Preview; p.Content != ten || !slices.Equal(cachedCopies(t, m), []string{"a.txt", "c.txt"}) {
+		t.Fatalf("preview %q, copies %q", p.Content, cachedCopies(t, m))
+	}
+	// Entries opened together never make room for one another, even past
+	// the limit
+	m, _ = press(t, cursorTo(t, m, "b.txt"), " ")
+	m, _ = press(t, cursorTo(t, m, "d.txt"), " ")
+	m, cmd := press(t, m, "o")
+	m = drain(t, m, cmd)
+	if got := cachedCopies(t, m); !slices.Equal(got, []string{"b.txt", "d.txt"}) {
+		t.Fatalf("copies after opening two = %q (%s)", got, m.statusMsg)
+	}
+}
+
+// noisyTarGz writes a tar.gz whose first entry is a megabyte that doesn't
+// compress, so reading past it takes a while, and a small one after it
+func noisyTarGz(t *testing.T, path string) {
+	t.Helper()
+	noise := make([]byte, 1<<20)
+	rand.NewChaCha8([32]byte{1}).Read(noise)
+	writeTestTarGz(t, path, []testEntry{{name: "noise.bin", body: string(noise)}, {name: "last.txt", body: "the end\n"}})
+}
+
+func TestEntryPreviewCancelledWhenTheCursorMoves(t *testing.T) {
+	dir := archiveDir(t)
+	noisyTarGz(t, filepath.Join(dir, "noisy.tar.gz"))
+	m := newTestModel(t, dir, nil)
+	m = enter(t, m, "noisy.tar.gz")
+	m = cursorTo(t, m, "last.txt")
+
+	// The preview of last.txt is on its way when the cursor moves on: it is
+	// cancelled, and brings nothing
+	slow := m.previewCmd(m.tab())
+	m, next := press(t, m, "j")
+	if cursorName(m) == "last.txt" {
+		t.Fatal("the cursor didn't move")
+	}
+	if msg := slow(); msg != nil {
+		t.Fatalf("the cancelled preview brought %#v", msg)
+	}
+	m = drain(t, m, next)
+	if p := m.tab().Preview; p.Path != m.tab().Files[m.tab().Cursor].Path {
+		t.Fatalf("preview of %s with the cursor on %s", p.Path, cursorName(m))
+	}
+	m = previewNow(t, cursorTo(t, m, "last.txt"))
+	if p := m.tab().Preview; p.Content != "the end" {
+		t.Fatalf("preview of last.txt: %q, %v", p.Content, p.Error)
+	}
+
+	// One that runs out of time says so
+	saved := entryPreviewTime
+	entryPreviewTime = time.Nanosecond
+	t.Cleanup(func() { entryPreviewTime = saved })
+	m.tab().Preview = components.PreviewContent{}
+	m = previewNow(t, m)
+	if p := m.tab().Preview; p.Error == nil || !strings.Contains(p.Content, "took over") {
+		t.Fatalf("preview out of time: %q, %v", p.Content, p.Error)
 	}
 }

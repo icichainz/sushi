@@ -616,7 +616,7 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 		showHidden:  cfg.ShowHidden,
 		sortBy:      cfg.SortBy,
 		sortReverse: cfg.SortReverse,
-		arc:         archiveState{cache: &archiveCache{}},
+		arc:         archiveState{cache: &archiveCache{}, previews: &entryPreviews{}},
 	}
 	if cfg.Watch {
 		m.watch = newDirWatcher()

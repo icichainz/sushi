@@ -410,6 +410,11 @@ type countingReader struct {
 }
 
 func (c *countingReader) Read(p []byte) (int, error) {
+	// Skipping a large entry is a single call to the tar reader, so a
+	// cancel is seen here rather than only between entries
+	if err := c.t.ctx.Err(); err != nil {
+		return 0, err
+	}
 	n, err := c.r.Read(p)
 	c.t.p.Bytes += int64(n)
 	c.t.update()

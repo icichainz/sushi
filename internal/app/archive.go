@@ -93,8 +93,9 @@ func (a *archiveView) key() string {
 
 // archiveState is what the model keeps for archives
 type archiveState struct {
-	cache *archiveCache // Shared by the model's copies
-	clip  *archiveClip  // Entries c put in the clipboard, while they are there
+	cache    *archiveCache  // Shared by the model's copies
+	clip     *archiveClip   // Entries c put in the clipboard, while they are there
+	previews *entryPreviews // Previews of entries loading; shared too
 }
 
 // archiveClip is a clipboard of archive entries, which v extracts
@@ -499,14 +500,7 @@ func (m Model) openEntries(paths []string, how openHow) (tea.Model, tea.Cmd) {
 	msg := entriesCopiedMsg{how: how, what: describe(paths)}
 	status := m.setStatus(fmt.Sprintf("Copying %s out of %s%s", msg.what, filepath.Base(view.ix.Path), currentGlyphs().more))
 	run := func() tea.Msg {
-		for _, e := range entries {
-			p, err := cache.extract(context.Background(), view, e, maxEntryOpen)
-			if err != nil {
-				msg.err = err
-				return msg
-			}
-			msg.copies = append(msg.copies, p)
-		}
+		msg.copies, msg.err = cache.extract(context.Background(), view, entries, maxEntryOpen)
 		return msg
 	}
 	return m, tea.Batch(status, run)
@@ -572,11 +566,77 @@ func (m Model) archiveHints() []hint {
 		keyHint("open a copy", k.Open), keyHint("quick look", k.QuickLook), keyHint("find", k.Find), keyHint("all keys", k.Help)}
 }
 
-// entryPreview loads the preview of an archive entry in the background
+// entryPreview loads the preview of an archive entry in the background.
+// Reading a compressed tar up to an entry can take seconds, so the tab's
+// preview still loading is cancelled: the cursor has moved on. A cancelled
+// preview brings nothing; one that ran out of time says so.
 func (m *Model) entryPreview(tab *Tab, file fs.FileInfo, cfg components.PreviewConfig) tea.Cmd {
 	view, cache, id := tab.archive, m.arc.cache, tab.ID
+	ctx, done := m.arc.previews.start(id)
 	return func() tea.Msg {
-		return previewLoadedMsg{tabID: id, preview: previewEntry(cache, view, file, cfg)}
+		defer done()
+		p := previewEntry(ctx, cache, view, file, cfg)
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil
+		}
+		return previewLoadedMsg{tabID: id, preview: p}
+	}
+}
+
+// entryPreviews are the previews of archive entries loading, by tab, so
+// that the next preview of a tab cancels the one it replaces. Shared by
+// the model's copies.
+type entryPreviews struct {
+	mu    sync.Mutex
+	seq   int
+	byTab map[int]entryLoad
+}
+
+// entryLoad is a preview loading
+type entryLoad struct {
+	seq    int
+	cancel context.CancelFunc
+}
+
+// start returns the context of a new preview for the tab, which ends after
+// entryPreviewTime, cancelling the one loading, and what to call once the
+// preview is done
+func (p *entryPreviews) start(tabID int) (context.Context, func()) {
+	ctx, cancel := context.WithTimeout(context.Background(), entryPreviewTime)
+	if p == nil {
+		return ctx, cancel
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if old, ok := p.byTab[tabID]; ok {
+		old.cancel()
+	}
+	if p.byTab == nil {
+		p.byTab = make(map[int]entryLoad)
+	}
+	p.seq++
+	seq := p.seq
+	p.byTab[tabID] = entryLoad{seq: seq, cancel: cancel}
+	return ctx, func() {
+		cancel()
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.byTab[tabID].seq == seq {
+			delete(p.byTab, tabID)
+		}
+	}
+}
+
+// cancel cancels the tab's preview of an entry loading, if there is one
+func (p *entryPreviews) cancel(tabID int) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if old, ok := p.byTab[tabID]; ok {
+		old.cancel()
+		delete(p.byTab, tabID)
 	}
 }
 
@@ -586,8 +646,8 @@ const maxEntryList = 200
 
 // previewEntry previews an entry: a folder lists what is in it, and a file
 // up to maxEntryPreview is copied out and previewed as any file is, under
-// the entry's own name
-func previewEntry(cache *archiveCache, view *archiveView, file fs.FileInfo, cfg components.PreviewConfig) components.PreviewContent {
+// the entry's own name. Reading it stops when ctx is done.
+func previewEntry(ctx context.Context, cache *archiveCache, view *archiveView, file fs.FileInfo, cfg components.PreviewConfig) components.PreviewContent {
 	p := components.PreviewContent{Path: file.Path, FileInfo: file}
 	say := func(kind string, err error, lines ...string) components.PreviewContent {
 		p.Kind, p.Lines, p.Content, p.Error = kind, lines, strings.Join(lines, "\n"), err
@@ -623,12 +683,15 @@ func previewEntry(cache *archiveCache, view *archiveView, file fs.FileInfo, cfg 
 		return say("Large file", nil, fmt.Sprintf("Too large to preview from inside the archive (over %s)", utils.HumanizeSize(maxEntryPreview)))
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), entryPreviewTime)
-	defer cancel()
-	copied, err := cache.extract(ctx, view, e, maxEntryPreview)
+	copied, done, err := cache.previewCopy(ctx, view, e, maxEntryPreview)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("took over %v to read", entryPreviewTime)
+		}
 		return say("File", err, fmt.Sprintf("Can't read it from the archive: %v", err))
 	}
+	// The preview holds what it shows, so its copy can go once it is loaded
+	defer done()
 	local := file
 	local.Path, local.IsSymlink = copied, false
 	p = components.LoadPreviewWithConfig(local, cfg)
@@ -636,12 +699,28 @@ func previewEntry(cache *archiveCache, view *archiveView, file fs.FileInfo, cfg 
 	return p
 }
 
-// archiveCache keeps the copies of entries made to preview and open them,
-// in a folder of sushi's own under the system's temporary folder, made on
-// first use, with a folder in it for each archive
+// archiveCacheLimit is how many bytes the copies of entries opened take
+// before the ones used least recently go to make room; tests lower it
+var archiveCacheLimit int64 = 256 << 20
+
+// archiveCache keeps the copies of entries opened, in a folder of sushi's
+// own under the system's temporary folder, made on first use, with a
+// folder in it for each archive. The copies add up to archiveCacheLimit,
+// or the size of the latest entries opened if more: past it, those used
+// least recently go. A preview's copy is its own, gone once the preview is
+// loaded, unless the entry has a copy opened, which it reads.
 type archiveCache struct {
-	mu   sync.Mutex
-	root string
+	mu     sync.Mutex
+	root   string
+	copies map[string]*cachedCopy // The copies opened, by path
+	size   int64                  // Their bytes
+	clock  int64                  // Counts uses, to tell the least recent
+}
+
+// cachedCopy is a copy of an entry opened
+type cachedCopy struct {
+	size int64
+	used int64 // When it was last used, by the cache's clock
 }
 
 // errTooLarge says an entry is larger than what it is copied out for allows
@@ -659,7 +738,7 @@ func (c *archiveCache) dir(view *archiveView) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("can't make a folder for copies of archive entries: %w", err)
 		}
-		c.root = root
+		c.root, c.copies, c.size = root, nil, 0
 	}
 	dir := filepath.Join(c.root, view.key())
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -668,38 +747,87 @@ func (c *archiveCache) dir(view *archiveView) (string, error) {
 	return dir, nil
 }
 
-// extract copies entry e of view's archive to the cache, up to limit
-// bytes, and returns where, reusing a copy made before. The copy has the
-// entry's own name and time, and is read-only: changes to it would go
-// nowhere.
-func (c *archiveCache) extract(ctx context.Context, view *archiveView, e fs.ArchiveEntry, limit int64) (string, error) {
+// copyPath returns where the copy of entry e opened goes in dir, the
+// archive's folder: in a folder for each entry, so copies keep their names
+// without clashing
+func copyPath(dir string, e fs.ArchiveEntry) string {
+	h := fnv.New64a()
+	io.WriteString(h, e.Inner())
+	return filepath.Join(dir, strconv.FormatUint(h.Sum64(), 16), copyName(e))
+}
+
+// extract returns copies of the entries es of view's archive, opened, each
+// up to limit bytes: the copies made before, and new ones, for which room
+// is made first. A copy has the entry's own name and time, and is
+// read-only: changes to it would go nowhere.
+func (c *archiveCache) extract(ctx context.Context, view *archiveView, es []fs.ArchiveEntry, limit int64) ([]string, error) {
+	dir, err := c.dir(view)
+	if err != nil {
+		return nil, err
+	}
+	dsts := make([]string, len(es))
+	var missing []int
+	var need int64
+	for i, e := range es {
+		if e.Size > limit {
+			return nil, errTooLarge
+		}
+		dsts[i] = copyPath(dir, e)
+		if !c.reuse(dsts[i]) {
+			missing = append(missing, i)
+			need += e.Size
+		}
+	}
+	c.makeRoom(need, dsts)
+	for _, i := range missing {
+		if err := os.MkdirAll(filepath.Dir(dsts[i]), 0700); err != nil {
+			return nil, err
+		}
+		if err := writeCopy(ctx, view, es[i], limit, dsts[i]); err != nil {
+			return nil, err
+		}
+		c.keep(dsts[i])
+	}
+	return dsts, nil
+}
+
+// previewCopy returns a copy of entry e to preview, up to limit bytes, and
+// what to call once it has been read: the copy opened, if there is one, or
+// else one of the preview's own, which that removes
+func (c *archiveCache) previewCopy(ctx context.Context, view *archiveView, e fs.ArchiveEntry, limit int64) (string, func(), error) {
 	if e.Size > limit {
-		return "", errTooLarge
+		return "", nil, errTooLarge
 	}
 	dir, err := c.dir(view)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	// A folder for each entry, so copies keep their names without clashing
-	h := fnv.New64a()
-	io.WriteString(h, e.Inner())
-	dir = filepath.Join(dir, strconv.FormatUint(h.Sum64(), 16))
-	dst := filepath.Join(dir, copyName(e))
-	if info, err := os.Lstat(dst); err == nil && info.Mode().IsRegular() {
-		return dst, nil
+	if opened := copyPath(dir, e); c.reuse(opened) {
+		return opened, func() {}, nil
 	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return "", err
+	tmp, err := os.MkdirTemp(dir, ".preview-*")
+	if err != nil {
+		return "", nil, err
 	}
+	dst := filepath.Join(tmp, copyName(e))
+	if err := writeCopy(ctx, view, e, limit, dst); err != nil {
+		os.RemoveAll(tmp)
+		return "", nil, err
+	}
+	return dst, func() { os.RemoveAll(tmp) }, nil
+}
 
+// writeCopy copies entry e of view's archive to dst, up to limit bytes,
+// through a partial file beside it, renamed into place once complete
+func writeCopy(ctx context.Context, view *archiveView, e fs.ArchiveEntry, limit int64, dst string) error {
 	rc, err := view.ix.OpenEntry(ctx, e)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer rc.Close()
-	f, err := os.CreateTemp(dir, ".partial-*")
+	f, err := os.CreateTemp(filepath.Dir(dst), ".partial-*")
 	if err != nil {
-		return "", err
+		return err
 	}
 	n, err := io.Copy(f, io.LimitReader(rc, limit+1))
 	if err == nil && n > limit {
@@ -717,9 +845,73 @@ func (c *archiveCache) extract(ctx context.Context, view *archiveView, e fs.Arch
 	}
 	if err != nil {
 		os.Remove(f.Name())
-		return "", err
 	}
-	return dst, nil
+	return err
+}
+
+// reuse reports whether there is a copy opened at dst, counting it as used
+func (c *archiveCache) reuse(dst string) bool {
+	info, err := os.Lstat(dst)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.clock++
+	if cp, ok := c.copies[dst]; ok {
+		cp.used = c.clock
+		return true
+	}
+	c.track(dst, info.Size())
+	return true
+}
+
+// keep counts the copy just made at dst
+func (c *archiveCache) keep(dst string) {
+	info, err := os.Lstat(dst)
+	if err != nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.clock++
+	c.track(dst, info.Size())
+}
+
+// track counts a copy of size bytes at dst as used now; c.mu is held
+func (c *archiveCache) track(dst string, size int64) {
+	if c.copies == nil {
+		c.copies = make(map[string]*cachedCopy)
+	}
+	if old, ok := c.copies[dst]; ok {
+		c.size -= old.size
+	}
+	c.copies[dst] = &cachedCopy{size: size, used: c.clock}
+	c.size += size
+}
+
+// makeRoom removes the copies used least recently, but those at keep,
+// until need more bytes fit within archiveCacheLimit, or none is left to
+// remove
+func (c *archiveCache) makeRoom(need int64, keep []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for c.size+need > archiveCacheLimit {
+		oldest := ""
+		for p, cp := range c.copies {
+			if !slices.Contains(keep, p) && (oldest == "" || cp.used < c.copies[oldest].used) {
+				oldest = p
+			}
+		}
+		if oldest == "" {
+			return
+		}
+		// An app may still have it open; it can be opened again, from the
+		// archive
+		os.Remove(oldest)
+		c.size -= c.copies[oldest].size
+		delete(c.copies, oldest)
+	}
 }
 
 // copyName is the name an entry's copy gets: its own, or for one named
@@ -750,8 +942,16 @@ func (c *archiveCache) sweep(keep map[string]bool) {
 		return
 	}
 	for _, e := range entries {
-		if !keep[e.Name()] {
-			os.RemoveAll(filepath.Join(c.root, e.Name()))
+		if keep[e.Name()] {
+			continue
+		}
+		gone := filepath.Join(c.root, e.Name())
+		os.RemoveAll(gone)
+		for p, cp := range c.copies {
+			if strings.HasPrefix(p, gone+string(filepath.Separator)) {
+				c.size -= cp.size
+				delete(c.copies, p)
+			}
 		}
 	}
 }
@@ -765,7 +965,7 @@ func (c *archiveCache) removeAll() {
 	defer c.mu.Unlock()
 	if c.root != "" {
 		os.RemoveAll(c.root)
-		c.root = ""
+		c.root, c.copies, c.size = "", nil, 0
 	}
 }
 

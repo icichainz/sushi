@@ -200,6 +200,9 @@ var maxPreviewLines = 20000
 // shown. A text preview reads its usual lines, or enough to show the line
 // of a search result being opened, and on a reload as many as it had.
 func (m *Model) previewCmd(tab *Tab) tea.Cmd {
+	// What an archive entry's preview still loading would show is no longer
+	// wanted; see archive.go
+	m.arc.previews.cancel(tab.ID)
 	// The inactive pane of a dual-pane tab shows no preview; it loads one
 	// once active (see dual.go)
 	if !tab.PreviewEnabled || len(tab.Files) == 0 || m.isInactivePane(tab) {

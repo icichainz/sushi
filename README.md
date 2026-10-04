@@ -721,13 +721,13 @@ Nothing inside an archive can be changed. The keys that would change files (`d`,
 | `f` | Find entries by name, below the folder shown |
 | `Ctrl+o` | Show the archive in Finder |
 
-The preview shows what is in a folder of the archive, and a file up to 4 MB as it would show it on disk; a larger one shows its details. Files up to 1 GB can be opened. The copies previewed and opened go to a folder of sushi's own in the system's temporary folder, and are removed once no tab is inside that archive, and when sushi quits.
+The preview shows what is in a folder of the archive, and a file up to 4 MB as it would show it on disk; a larger one shows its details. A preview still being read when the cursor moves on is stopped, and one that takes more than 5 seconds, as far into a large `.tar.gz`, says so. Files up to 1 GB can be opened. The copies go to a folder of sushi's own in the system's temporary folder: a preview's is removed once the preview is shown, and those opened stay while a tab or pane is inside that archive, up to 256 MB in all (or the size of the latest files opened, if more), past which the ones opened longest ago go. All of them are removed when sushi quits.
 
 `c` puts the selection, or the entry under the cursor, in sushi's clipboard. Finder can't take entries, so the pasteboard keeps what it had, and `v` pastes the entries until something is copied in Finder. `v` in a folder on disk then copies them out there, in the background, as safely as `X` extracts: a name already taken there is refused before anything is written, so nothing is ever replaced; links that would lead outside what is copied are refused; and a copy that is refused or cancelled leaves nothing behind. `Ctrl+z` removes what was copied out. `V` can't link to entries. Unlike `X`, which doesn't unpack `.tar.bz2` yet, copying out works with every kind of archive sushi browses.
 
 An entry named outside the archive, as `../evil.txt` would write outside the folder it is extracted to, is listed at the archive's top under its full name, whether hidden files are shown or not. It can be previewed, and is never copied out.
 
-- An archive with more than 100,000 entries, or a tar that takes more than 10 seconds to read through, is listed in part, as is a damaged tar, up to the damage; the status bar says some entries are missing.
+- An archive with more than 100,000 entries, or a tar that takes more than 10 seconds to read through, is listed in part, even when a single large entry takes that long, as is a damaged tar, up to the damage; the status bar says some entries are missing.
 - Git badges and Finder tags aren't shown inside. Going into or out of an archive clears the selection.
 - Sushi watches the folder holding the archive, so when the archive changes, the list is read from it again, as with `Ctrl+r`; if it is deleted, the tab goes up to that folder. A new tab opened inside (`t`) is inside too.
 - Quitting with `q` under [`sushicd`](#changing-directory-on-quit) changes to the folder holding the archive.

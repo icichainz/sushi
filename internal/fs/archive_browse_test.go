@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -399,6 +400,95 @@ func TestExtractEntriesCancelled(t *testing.T) {
 	}
 	if got := dirNamesIn(t, dest); len(got) != 0 {
 		t.Fatalf("a cancelled copy left %q", got)
+	}
+}
+
+// doneAfter is a context that is done once its Err has been asked for n
+// times: a cancel arriving while something is being read
+type doneAfter struct {
+	context.Context
+	n *int
+}
+
+func newDoneAfter(n int) doneAfter {
+	return doneAfter{context.Background(), &n}
+}
+
+func (d doneAfter) Err() error {
+	if *d.n <= 0 {
+		return context.Canceled
+	}
+	*d.n--
+	return nil
+}
+
+// noisyTar writes a tar.gz whose first entry is a megabyte that doesn't
+// compress, so reading past it takes many reads of the file
+func noisyTar(t *testing.T) string {
+	t.Helper()
+	noise := make([]byte, 1<<20)
+	rand.NewChaCha8([32]byte{1}).Read(noise)
+	archive := filepath.Join(t.TempDir(), "noisy.tar.gz")
+	writeTar(t, archive, true, []entry{{name: "first.txt", body: "1"}, {name: "big.bin", body: string(noise)}, {name: "last.txt", body: "3"}})
+	return archive
+}
+
+func TestArchiveReadsStopWithinAnEntry(t *testing.T) {
+	archive := noisyTar(t)
+	ix, err := ReadArchiveIndex(archive)
+	if err != nil || ix.Partial {
+		t.Fatalf("index: %v, partial %v", err, ix != nil && ix.Partial)
+	}
+	last, _ := ix.Entry("last.txt")
+
+	// Reaching last.txt reads through big.bin in one step of the tar
+	// reader: a cancel arriving meanwhile stops it there
+	if _, err := ix.OpenEntry(newDoneAfter(20), last); !errors.Is(err, context.Canceled) {
+		t.Fatalf("OpenEntry cancelled while skipping big.bin: %v", err)
+	}
+	rc, err := ix.OpenEntry(context.Background(), last)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(rc)
+	rc.Close()
+	if string(got) != "3" {
+		t.Fatalf("last.txt = %q", got)
+	}
+	// Reading the entry itself stops too
+	big, _ := ix.Entry("big.bin")
+	rc, err = ix.OpenEntry(newDoneAfter(20), big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(rc); !errors.Is(err, context.Canceled) {
+		t.Fatalf("reading big.bin went on after the cancel: %v", err)
+	}
+	rc.Close()
+
+	// And copying last.txt out, which reads past big.bin too
+	dest := t.TempDir()
+	if _, err := NewTask(newDoneAfter(20), 0, nil).ExtractEntries(ix, []string{"last.txt"}, dest); !errors.Is(err, ErrNotCreated) {
+		t.Fatalf("copy out cancelled while skipping big.bin: %v", err)
+	}
+	if got := dirNamesIn(t, dest); len(got) != 0 {
+		t.Fatalf("a cancelled copy left %q", got)
+	}
+
+	// So does indexing, which lists what it has read by then
+	slow := &ArchiveIndex{Path: archive, Kind: "tar.gz", byInner: map[string]int{}, children: map[string][]int{}}
+	if err := slow.readTar(newDoneAfter(20)); err != nil || !slow.Partial {
+		t.Fatalf("index cut short: %v, partial %v", err, slow.Partial)
+	}
+	if names := names(mustScan(t, slow, "")); slices.Contains(names, "last.txt") || !slices.Contains(names, "first.txt") {
+		t.Fatalf("index cut short lists %q", names)
+	}
+	// One that has read nothing says why
+	saved := indexTime
+	indexTime = time.Nanosecond
+	t.Cleanup(func() { indexTime = saved })
+	if _, err := ReadArchiveIndex(archive); err == nil || !strings.Contains(err.Error(), "too slow to read") {
+		t.Fatalf("index out of time: %v", err)
 	}
 }
 

@@ -119,7 +119,9 @@ func ReadArchiveIndex(path string) (ix *ArchiveIndex, err error) {
 	case "zip":
 		err = ix.readZip()
 	case "tar", "tar.gz", "tar.bz2":
-		err = ix.readTar()
+		ctx, cancel := context.WithTimeout(context.Background(), indexTime)
+		defer cancel()
+		err = ix.readTar(ctx)
 	default:
 		err = fmt.Errorf("%s is not an archive sushi can open", filepath.Base(path))
 	}
@@ -164,26 +166,56 @@ func (ix *ArchiveIndex) readZip() error {
 	return nil
 }
 
+// ctxReader reads from r until ctx is done, and then fails with ctx's
+// error. Reading a compressed tar to an entry decompresses everything
+// before it, and skipping one large entry is a single call, so ctx is
+// checked with every read of the file rather than between entries.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
 // tarReader opens the tar archive at path for reading from the start,
-// decompressing it as its kind says
-func tarReader(path, kind string) (*tar.Reader, io.Closer, error) {
+// decompressing it as its kind says, until ctx is done
+func tarReader(ctx context.Context, path, kind string) (*tar.Reader, io.Closer, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, nil, err
 	}
-	var r io.Reader = f
+	// A plain tar skips what it doesn't read by seeking, so it keeps Seek
+	var r io.Reader = ctxSeeker{ctxReader{ctx, f}, f}
 	switch kind {
 	case "tar.gz":
-		gz, err := gzip.NewReader(bufio.NewReader(f))
+		gz, err := gzip.NewReader(bufio.NewReader(ctxReader{ctx, f}))
 		if err != nil {
 			f.Close()
 			return nil, nil, err
 		}
 		r = gz
 	case "tar.bz2":
-		r = bzip2.NewReader(bufio.NewReader(f))
+		r = bzip2.NewReader(bufio.NewReader(ctxReader{ctx, f}))
 	}
 	return tar.NewReader(r), f, nil
+}
+
+// ctxSeeker is a ctxReader that can seek
+type ctxSeeker struct {
+	ctxReader
+	s io.Seeker
+}
+
+func (c ctxSeeker) Seek(offset int64, whence int) (int64, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.s.Seek(offset, whence)
 }
 
 // nextHeader returns the next header of tr. Names a tar reader set to
@@ -196,13 +228,20 @@ func nextHeader(tr *tar.Reader) (*tar.Header, error) {
 	return hdr, err
 }
 
-func (ix *ArchiveIndex) readTar() error {
-	tr, c, err := tarReader(ix.Path, ix.Kind)
-	if err != nil {
+// readTar indexes a tar until ctx is done: a read too slow, as of a large
+// compressed one, lists what it has read by then
+func (ix *ArchiveIndex) readTar(ctx context.Context) error {
+	tooSlow := func(err error) error {
+		if ctx.Err() != nil {
+			return fmt.Errorf("too slow to read: no entry found in %v", indexTime)
+		}
 		return err
 	}
+	tr, c, err := tarReader(ctx, ix.Path, ix.Kind)
+	if err != nil {
+		return tooSlow(err)
+	}
 	defer c.Close()
-	deadline := time.Now().Add(indexTime)
 	for pos := 0; ; pos++ {
 		hdr, err := nextHeader(tr)
 		if errors.Is(err, io.EOF) {
@@ -210,9 +249,9 @@ func (ix *ArchiveIndex) readTar() error {
 		}
 		if err != nil {
 			if len(ix.entries) == 0 {
-				return err
+				return tooSlow(err)
 			}
-			// A damaged or cut short archive still lists what came before
+			// A damaged, cut short or slow archive still lists what came before
 			ix.Partial = true
 			return nil
 		}
@@ -230,7 +269,7 @@ func (ix *ArchiveIndex) readTar() error {
 			e.Link, e.hardLink = hdr.Linkname, true
 		}
 		ix.add(e)
-		if len(ix.entries) >= maxIndexEntries || time.Now().After(deadline) {
+		if len(ix.entries) >= maxIndexEntries || ctx.Err() != nil {
 			ix.Partial = true
 			return nil
 		}
@@ -487,10 +526,10 @@ func (ix *ArchiveIndex) OpenEntry(ctx context.Context, e ArchiveEntry) (io.ReadC
 			zr.Close()
 			return nil, err
 		}
-		return readCloser{rc, func() error { rc.Close(); return zr.Close() }}, nil
+		return readCloser{ctxReader{ctx, rc}, func() error { rc.Close(); return zr.Close() }}, nil
 	}
 
-	tr, c, err := tarReader(ix.Path, ix.Kind)
+	tr, c, err := tarReader(ctx, ix.Path, ix.Kind)
 	if err != nil {
 		return nil, err
 	}
