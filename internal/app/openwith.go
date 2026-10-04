@@ -170,7 +170,11 @@ func (m Model) openWithApp(app opener.App) (tea.Model, tea.Cmd) {
 
 // reveal shows the targets selected in Finder
 func (m Model) reveal() (tea.Model, tea.Cmd) {
-	paths := m.targets()
+	return m.revealPaths(m.targets())
+}
+
+// revealPaths shows paths in Finder, as reveal does the targets
+func (m Model) revealPaths(paths []string) (tea.Model, tea.Cmd) {
 	if len(paths) == 0 {
 		return m, nil
 	}

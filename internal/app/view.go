@@ -110,6 +110,13 @@ func (m Model) View() string {
 		lines = m.withDialog(lines, m.tagBox())
 	case ModeJump:
 		lines = m.withDialog(lines, m.jumpBox())
+	case ModeDiskUsage:
+		lines = m.withDialog(lines, m.duBox())
+	case ModeTrash:
+		lines = m.withDialog(lines, m.trashBox())
+		if m.trash.confirm != "" {
+			lines = m.withDialog(lines, m.trashConfirmBox())
+		}
 	case ModeHelp:
 		lines = m.withHelp(lines)
 	}
@@ -712,6 +719,13 @@ func (m Model) modeBadge() (string, lipgloss.Color) {
 		return "TAGS", t.Accent
 	case ModeJump:
 		return "JUMP", t.Accent
+	case ModeDiskUsage:
+		return "DISK USAGE", t.Accent
+	case ModeTrash:
+		if m.trash.confirm != "" {
+			return "CONFIRM", t.Danger
+		}
+		return "TRASH", t.Accent
 	case ModeHelp:
 		return "KEYS", t.Accent
 	}
@@ -885,6 +899,10 @@ func (m Model) renderBottomRow() string {
 		return m.renderHints(m.tagHints())
 	case ModeJump:
 		return m.renderHints(m.jumpHints())
+	case ModeDiskUsage:
+		return m.renderHints(m.duHints())
+	case ModeTrash:
+		return m.renderHints(m.trashHints())
 	case ModeHelp:
 		if m.maxHelpScroll() > 0 {
 			return m.renderHints([]hint{{"esc", "close"}, {keysLabel("/", k.Down, k.Up), "scroll"}, {"any other key", "does what it says"}})
@@ -1128,8 +1146,10 @@ func (k KeyMap) helpGroups() []helpGroup {
 			keyHint("hidden files", k.Hidden), keyHint("this panel", k.Help)}},
 		{"Find", []hint{keyHint("find by name, tag", k.Find, k.FindTag), keyHint("find in files", k.Grep), keyHint("sort by, reverse", k.Sort, k.Reverse),
 			keyHint("refresh", k.Refresh), keyHint("quit without cd", k.QuitNoCd)}},
-		{"Tabs", []hint{keyHint("new here, home", k.NewTab, k.NewTabHome), keyHint("next", k.NextTab), keyHint("previous", k.PrevTab),
-			keyHint("close", k.CloseTab)}},
+		// The panel is full at 100x24, so disk usage and the trash share the
+		// Tabs group's spare row
+		{"Tabs, space", []hint{keyHint("new here, home", k.NewTab, k.NewTabHome), keyHint("next", k.NextTab), keyHint("previous", k.PrevTab),
+			keyHint("close", k.CloseTab), keyHint("disk usage, trash", k.DiskUsage, k.Trash)}},
 		{"Go", []hint{keyHint("bookmarks, add", k.Bookmark, k.AddBookmark), {"1-9", "jump to bookmark"}, keyHint("plugins", k.Plugins),
 			keyHint("shell command", k.Shell), keyHint("quit", k.Quit)}},
 		// Five rows at most, like the others, so the panel still fits 100x24

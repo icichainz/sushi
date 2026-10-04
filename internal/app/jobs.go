@@ -55,6 +55,9 @@ type jobDoneMsg struct {
 	undo  *undoEntry       // How to reverse what was done, if anything was
 	moved []fs.RenamePair  // Paths that moved, so references to them follow
 	focus string           // Something new to put the cursor on
+	// Brings the view that started the job up to date with what it did,
+	// such as the disk usage view or the trash browser; may be nil
+	after func(m *Model) tea.Cmd
 }
 
 // startJob runs work in the background, passing its progress to the
@@ -186,7 +189,12 @@ func (msg jobDoneMsg) apply(m Model) (tea.Model, tea.Cmd) {
 	if msg.focus != "" && filepath.Dir(msg.focus) == m.tab().CurrentPath {
 		m.tab().focusPath = msg.focus
 	}
-	return m.Update(msg.op)
+	var after tea.Cmd
+	if msg.after != nil {
+		after = msg.after(&m)
+	}
+	updated, cmd := m.Update(msg.op)
+	return updated, tea.Batch(cmd, after)
 }
 
 // sendNotification tells the terminal, or the Sushi app, that something
@@ -205,6 +213,8 @@ var jobTitles = map[string]string{
 	"Compressing":     "Compression",
 	"Extracting":      "Extraction",
 	"Undoing":         "Undo",
+	"Putting back":    "Put Back",
+	"Emptying trash":  "Empty Trash",
 }
 
 // notifyDone notifies the terminal that j has finished or failed, if it

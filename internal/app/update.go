@@ -328,6 +328,12 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == ModeJump {
 		return m.handleJumpMode(msg)
 	}
+	if m.mode == ModeDiskUsage {
+		return m.handleDiskUsageMode(msg)
+	}
+	if m.mode == ModeTrash {
+		return m.handleTrashMode(msg)
+	}
 
 	// Plugin shortcuts; bindPluginKeys keeps them clear of built-in keys
 	if i, ok := m.pluginKeys[msg.String()]; ok {
@@ -371,6 +377,12 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Tag):
 		return m.openTags()
+
+	case key.Matches(msg, m.keys.DiskUsage):
+		return m.openDiskUsage()
+
+	case key.Matches(msg, m.keys.Trash):
+		return m.openTrash()
 
 	case key.Matches(msg, m.keys.Help):
 		m.mode = ModeHelp

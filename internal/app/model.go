@@ -130,6 +130,8 @@ type Model struct {
 	sending  *paneTransfer // The > or < transfer the overwrite dialog asks about; see dual.go
 	frecent  *frecency     // The folders visited, for z; see jump.go
 	jumper   jumpPalette   // The frequent folders palette (z)
+	du       duView        // The disk usage view (U); see diskusage.go
+	trash    trashView     // The trash browser (ctrl+t); see trashview.go
 }
 
 // tab returns a pointer to the active tab: in dual-pane mode, its active
@@ -197,6 +199,8 @@ const (
 	ModeOpenWith
 	ModeTags
 	ModeJump // The frequent folders palette; see jump.go
+	ModeDiskUsage
+	ModeTrash
 )
 
 // KeyMap defines all key bindings. Each field is an action that keys: in
@@ -272,6 +276,8 @@ type KeyMap struct {
 	HistoryBack    key.Binding
 	HistoryForward key.Binding
 	Frequent       key.Binding
+	DiskUsage      key.Binding
+	Trash          key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings
@@ -551,6 +557,15 @@ func DefaultKeyMap() KeyMap {
 		Frequent: key.NewBinding(
 			key.WithKeys("z"),
 			key.WithHelp("z", "frequent folders"),
+		),
+		// See diskusage.go and trashview.go
+		DiskUsage: key.NewBinding(
+			key.WithKeys("U"),
+			key.WithHelp("U", "disk usage"),
+		),
+		Trash: key.NewBinding(
+			key.WithKeys("ctrl+t"),
+			key.WithHelp("ctrl+t", "browse the trash"),
 		),
 	}
 }

@@ -61,9 +61,15 @@ func (m Model) startTrash() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	clear(m.tab().Selected)
+	cmd := m.trashJob(paths, nil)
+	return m, cmd
+}
 
-	cmd := m.startJob("Moving to trash", func(t *fs.Task) jobDoneMsg {
-		tr, err := fs.DefaultTrash()
+// trashJob moves paths to the trash in the background; after, if not nil,
+// runs once it is done, as jobDoneMsg says
+func (m *Model) trashJob(paths []string, after func(m *Model) tea.Cmd) tea.Cmd {
+	return m.startJob("Moving to trash", func(t *fs.Task) jobDoneMsg {
+		tr, err := userTrash()
 		if err != nil {
 			return jobDoneMsg{op: fileOperationMsg{operation: "trash", err: fmt.Errorf("can't find the trash: %w", err)}}
 		}
@@ -76,9 +82,8 @@ func (m Model) startTrash() (tea.Model, tea.Cmd) {
 			undo.steps = append(undo.steps, undoStep{kind: stepRestore, trashed: true, from: item.Path, to: item.Original, info: item.Info})
 			return nil
 		})
-		return jobDoneMsg{op: op, undo: undo}
+		return jobDoneMsg{op: op, undo: undo, after: after}
 	})
-	return m, cmd
 }
 
 // startHardDelete deletes the targets permanently. It always asks first,
