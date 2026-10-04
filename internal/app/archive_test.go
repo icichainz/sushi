@@ -729,3 +729,133 @@ func TestEntryPreviewCancelledWhenTheCursorMoves(t *testing.T) {
 		t.Fatalf("preview out of time: %q, %v", p.Content, p.Error)
 	}
 }
+
+func TestViewsFromInsideAnArchive(t *testing.T) {
+	dir := archiveDir(t)
+	m := newTestModel(t, dir, noWatch())
+	m = enter(t, m, "bundle.zip")
+
+	// U counts the folder holding the archive, with the cursor on it
+	du, cmd := press(t, detach(m), "U")
+	du = drain(t, du, cmd)
+	if r, _, _ := du.du.chosen(); du.mode != ModeDiskUsage || du.du.path != dir || r.name != "bundle.zip" || du.du.status.err != nil {
+		t.Fatalf("U inside: mode %v at %s on %s, %v", du.mode, du.du.path, r.name, du.du.status.err)
+	}
+
+	// p in the trash browser restores into the folder holding the archive
+	os.MkdirAll(trashDir(t), 0700)
+	writeTestFile(t, filepath.Join(trashDir(t), "from finder.pdf"), "pdf")
+	m = openTrashView(t, m)
+	m, cmd = press(t, m, "p")
+	m = drain(t, m, cmd)
+	if readTestFile(t, filepath.Join(dir, "from finder.pdf")) != "pdf" {
+		t.Fatalf("restore here, inside an archive: %q", m.statusMsg)
+	}
+}
+
+func TestTransfersAndArchives(t *testing.T) {
+	dir := archiveDir(t)
+	out := filepath.Join(t.TempDir(), "out")
+	os.Mkdir(out, 0755)
+	archive := filepath.Join(dir, "bundle.zip")
+	before := readTestFile(t, archive)
+	m := newTestModel(t, dir, noWatch())
+	m = enter(t, m, "bundle.zip")
+	m, cmd := press(t, m, "w")
+	m = goThere(t, drain(t, m, cmd), out)
+
+	// > copies entries out into the other pane's folder, as c and v would
+	m = cursorTo(t, m, "src")
+	m, _ = press(t, m, " ")
+	m = cursorTo(t, m, "README.md")
+	m, _ = press(t, m, " ")
+	m, cmd = press(t, m, ">")
+	m = drain(t, m, cmd)
+	if !fileExists(filepath.Join(out, "README.md")) {
+		t.Fatalf("> from inside an archive: %q", m.statusMsg)
+	}
+	if readTestFile(t, filepath.Join(out, "README.md")) != "# hello\n" || readTestFile(t, filepath.Join(out, "src", "main.go")) != "package main\n" {
+		t.Fatalf("> from inside an archive: %q, out holds %q", m.statusMsg, dirNames(t, out))
+	}
+	if len(m.tab().Selected) != 0 || !slices.Contains(names(m.otherPane()), "README.md") {
+		t.Fatalf("after >: selection %v, other pane %q", m.tab().Selected, names(m.otherPane()))
+	}
+	// Never over what is there, and ctrl+z takes it back
+	if again, _ := press(t, detach(m), ">"); !strings.Contains(again.statusMsg, "README.md already exists in the other pane") {
+		t.Errorf("> again: %q", again.statusMsg)
+	}
+	m = undoNow(t, m)
+	if got := dirNames(t, out); len(got) != 0 {
+		t.Fatalf("after undo, out holds %q", got)
+	}
+
+	// < would take entries out of the archive
+	if after, _ := press(t, detach(m), "<"); after.statusMsg != readOnly || after.job != nil {
+		t.Errorf("< from inside an archive: %q", after.statusMsg)
+	}
+	// Nothing goes into a pane inside an archive
+	m, _ = ctrl(t, m, tea.KeyCtrlL)
+	writeTestFile(t, filepath.Join(out, "new.txt"), "new")
+	m, cmd = ctrl(t, m, tea.KeyCtrlR)
+	m = drain(t, m, cmd)
+	m = cursorTo(t, m, "new.txt")
+	for _, k := range []string{">", "<"} {
+		if after, _ := press(t, detach(m), k); after.statusMsg != "Read-only: the other pane is inside an archive" || after.job != nil {
+			t.Errorf("%s into an archive: %q", k, after.statusMsg)
+		}
+	}
+	if readTestFile(t, archive) != before || readTestFile(t, filepath.Join(out, "new.txt")) != "new" {
+		t.Fatal("the archive or the file changed")
+	}
+}
+
+func TestTransfersWaitForTheFolderToOpen(t *testing.T) {
+	_, left, right := twoFolders(t)
+	m := dualModel(t, left, right)
+	m = cursorTo(t, m, "a.txt")
+
+	// The other pane is leaving right for somewhere else: > would put the
+	// copy in right
+	other := m.otherPane()
+	other.Loading, other.loadingTo = true, filepath.Dir(right)
+	for _, k := range []string{">", "<"} {
+		if after, _ := press(t, detach(m), k); after.statusMsg != "Wait for the other pane to open its folder" || after.job != nil {
+			t.Errorf("%s while the other pane opens a folder: %q", k, after.statusMsg)
+		}
+	}
+	// Reloading the folder it shows is no reason to wait
+	other.loadingTo = right
+	if after, cmd := press(t, detach(m), ">"); after.job == nil {
+		t.Errorf("> while the other pane reloads: %q", after.statusMsg)
+	} else {
+		drain(t, after, cmd)
+	}
+
+	// Nor does a paste go to the folder the pane is leaving
+	other.Loading = false
+	m, _ = press(t, m, "c")
+	tab := m.tab()
+	tab.Loading, tab.loadingTo = true, right
+	if after, _ := press(t, detach(m), "v"); after.statusMsg != stillOpening || after.job != nil || after.mode != ModeNormal {
+		t.Errorf("v while leaving: %q", after.statusMsg)
+	}
+}
+
+func TestCopyOutRefusedWhole(t *testing.T) {
+	dir := archiveDir(t)
+	out := t.TempDir()
+	writeTestZip(t, filepath.Join(dir, "links.zip"), []testEntry{{name: "d/ok.txt", body: "ok"},
+		{name: "d/away", body: "../../../outside", link: true}})
+	m := newTestModel(t, dir, noWatch())
+	m = enter(t, m, "links.zip")
+	m, _ = press(t, cursorTo(t, m, "d"), "c")
+	m = goHere(t, m, out)
+	m, cmd := press(t, m, "v")
+	m = drain(t, m, cmd)
+	if !strings.Contains(m.statusMsg, "nothing was copied out of links.zip") || !strings.Contains(m.statusMsg, "away") {
+		t.Fatalf("status %q", m.statusMsg)
+	}
+	if got := dirNames(t, out); len(got) != 0 {
+		t.Fatalf("a refused copy left %q", got)
+	}
+}

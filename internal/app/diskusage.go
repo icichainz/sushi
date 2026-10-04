@@ -413,9 +413,17 @@ func (v *duView) chosen() (duRow, string, bool) {
 }
 
 // openDiskUsage opens the disk usage view on the folder under the cursor,
-// or on the current folder when the cursor is on anything else
+// or on the current folder when the cursor is on anything else. Inside an
+// archive, which isn't on disk to count, it counts the folder holding it,
+// with the cursor on the archive.
 func (m Model) openDiskUsage() (tea.Model, tea.Cmd) {
 	tab := m.tab()
+	if a := tab.archive; a != nil {
+		m.mode = ModeDiskUsage
+		cmd := tea.Batch(m.startDiskUsage(tab.realDir(), filepath.Base(a.ix.Path), nil),
+			m.setStatus("Counting the folder holding "+utils.Printable(filepath.Base(a.ix.Path))))
+		return m, cmd
+	}
 	root := tab.CurrentPath
 	if len(tab.Files) > 0 {
 		if f := tab.Files[tab.Cursor]; f.IsDir && !f.IsSymlink {

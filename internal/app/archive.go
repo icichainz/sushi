@@ -404,19 +404,42 @@ func (m Model) pasteEntries(links bool) (tea.Model, tea.Cmd) {
 		cmd := m.setStatus(what)
 		return m, cmd
 	}
-	dir := tab.CurrentPath
-	inners := make([]string, 0, len(clip.paths))
-	for _, p := range clip.paths {
-		if name := filepath.Base(p); fs.Exists(filepath.Join(dir, name)) {
-			cmd := m.setStatus(fmt.Sprintf("Can't paste: %s already exists here", name))
+	if tab.leaving() {
+		cmd := m.setStatus(stillOpening)
+		return m, cmd
+	}
+	return m.extractTo(clip.view, clip.paths, tab.CurrentPath, "paste", "here")
+}
+
+// extractTo copies entries at paths of view's archive out into dir, a
+// folder on disk, in the background: v does with the entries c copied,
+// and > from inside an archive with those chosen. A name taken there is
+// refused before anything is written: extracting never replaces anything,
+// and a copy refused part way, as for a link leading out of what is
+// copied, leaves nothing. verb and where say what was refused: "paste"
+// "here", or "copy" "in the other pane".
+func (m Model) extractTo(view *archiveView, paths []string, dir, verb, where string) (tea.Model, tea.Cmd) {
+	inners := make([]string, 0, len(paths))
+	for _, p := range paths {
+		e, ok := view.entry(p)
+		switch {
+		case !ok:
+			cmd := m.setStatus(fmt.Sprintf("Can't %s %s: it is no longer in the archive", verb, filepath.Base(p)))
+			return m, cmd
+		case e.Unsafe:
+			cmd := m.setStatus(fmt.Sprintf("Can't %s %s: unsafe path in archive", verb, e.Name))
 			return m, cmd
 		}
-		inners = append(inners, clip.view.inner(p))
+		if name := filepath.Base(p); fs.Exists(filepath.Join(dir, name)) {
+			cmd := m.setStatus(fmt.Sprintf("Can't %s: %s already exists %s", verb, name, where))
+			return m, cmd
+		}
+		inners = append(inners, view.inner(p))
 	}
 
-	paths := slices.Clone(clip.paths)
-	archive := filepath.Base(clip.view.ix.Path)
-	ix := clip.view.ix
+	paths = slices.Clone(paths)
+	archive := filepath.Base(view.ix.Path)
+	ix := view.ix
 	cmd := m.startJob("Extracting", func(t *fs.Task) jobDoneMsg {
 		made, err := t.ExtractEntries(ix, inners, dir)
 		undo := &undoEntry{label: fmt.Sprintf("copy %s out of %s", describe(paths), archive)}
@@ -427,6 +450,9 @@ func (m Model) pasteEntries(links bool) (tea.Model, tea.Cmd) {
 		switch {
 		case t.Err() != nil:
 			done.op.message = "Cancelled: nothing was copied out of " + archive
+		case errors.Is(err, fs.ErrNotCreated):
+			// All or nothing, so one entry refused keeps all of them in
+			done.op.err = fmt.Errorf("nothing was copied out of %s: %w", archive, err)
 		case err != nil:
 			done.op.err = err
 		default:

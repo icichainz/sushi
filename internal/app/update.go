@@ -173,7 +173,7 @@ func (m *Model) setStatusFor(msg string, d time.Duration) tea.Cmd {
 // flight. A load starting now sees every change so far, and lists files in
 // the order chosen so far, so no reload or re-sort is wanted after it.
 func (m *Model) loadDir(tab *Tab, path string) tea.Cmd {
-	tab.Loading = true
+	tab.Loading, tab.loadingTo = true, path
 	tab.reloadWanted = false
 	tab.resortWanted = false
 	tab.loadSeq++

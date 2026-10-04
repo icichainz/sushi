@@ -134,6 +134,10 @@ func (msg pasteboardWrittenMsg) apply(m Model) (tea.Model, tea.Cmd) {
 // own write isn't in, or after it failed, sushi's clipboard is the newer,
 // so that is pasted at once, unless it is empty.
 func (m Model) paste(links bool) (tea.Model, tea.Cmd) {
+	if m.tab().leaving() {
+		cmd := m.setStatus(stillOpening)
+		return m, cmd
+	}
 	board := m.board()
 	if board == nil || !m.pb.ours && len(m.clipboard) > 0 {
 		return m.pasteClipboard(links)

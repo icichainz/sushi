@@ -222,14 +222,28 @@ func (m Model) otherPaneHere() (tea.Model, tea.Cmd) {
 // transfer copies, or with mode "cut" moves, the targets to the other
 // pane's folder, as a paste there would, through the same checks, the
 // overwrite dialog, the progress and undo. The clipboard is left alone.
+// From inside an archive, a copy copies the entries out, as c then v
+// there would; nothing goes into an archive, or out of one by moving.
 func (m Model) transfer(mode string) (tea.Model, tea.Cmd) {
 	verb, doing := "copy", "Copying"
 	if mode == "cut" {
 		verb, doing = "move", "Moving"
 	}
-	other := m.otherPane()
-	if other == nil {
-		cmd := m.setStatus(m.notSplit(doing + " to the other pane"))
+	tab, other := m.tab(), m.otherPane()
+	why := ""
+	switch {
+	case other == nil:
+		why = m.notSplit(doing + " to the other pane")
+	case other.archive != nil:
+		why = "Read-only: the other pane is inside an archive"
+	case tab.archive != nil && mode == "cut":
+		why = readOnly
+	case other.leaving():
+		// Its folder is the one it is leaving
+		why = "Wait for the other pane to open its folder"
+	}
+	if why != "" {
+		cmd := m.setStatus(why)
 		return m, cmd
 	}
 	if m.job != nil {
@@ -241,6 +255,13 @@ func (m Model) transfer(mode string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	dir := other.CurrentPath
+	if tab.archive != nil {
+		updated, cmd := m.extractTo(tab.archive, srcs, dir, "copy", "in the other pane")
+		if m = updated.(Model); m.job != nil {
+			clear(m.tab().Selected)
+		}
+		return m, cmd
+	}
 	conflicts, err := m.checkPaste(srcs, dir)
 	if err != nil {
 		cmd := m.setStatus(fmt.Sprintf("Can't %s: %v", verb, err))

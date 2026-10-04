@@ -85,7 +85,8 @@ func (m Model) openTrash() (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	m.stopTrashSizer()
-	m.trash = trashView{tr: tr, here: m.tab().CurrentPath, filter: components.NewTextInput(""), seq: m.trash.seq}
+	// Inside an archive, p restores into the folder holding it
+	m.trash = trashView{tr: tr, here: m.tab().realDir(), filter: components.NewTextInput(""), seq: m.trash.seq}
 	m.mode = ModeTrash
 	cmd := m.listTrash()
 	return m, cmd

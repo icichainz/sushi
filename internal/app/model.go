@@ -40,8 +40,9 @@ type Tab struct {
 	SearchResultIdx int              // Current position in SearchResults (avoids O(n) lookup)
 	TotalSize       int64            // Cached total size of all files
 	Loading         bool
-	reloadWanted    bool // Changed while loading: reload once the load is in
-	resortWanted    bool // Sort order changed while loading: sort the load once in
+	loadingTo       string // Where the load in flight goes
+	reloadWanted    bool   // Changed while loading: reload once the load is in
+	resortWanted    bool   // Sort order changed while loading: sort the load once in
 
 	git gitState // What Git says about CurrentPath; see git.go
 
@@ -176,6 +177,16 @@ func (m *Model) newTab(path string) Tab {
 		PreviewWidth:   m.config.PreviewWidth,
 	}
 }
+
+// leaving reports whether the tab is loading another folder than the one
+// it shows: what goes into the folder shown would land where it is
+// leaving
+func (t *Tab) leaving() bool {
+	return t.Loading && t.loadingTo != t.CurrentPath
+}
+
+// stillOpening is what pasting into a tab that is leaving its folder says
+const stillOpening = "Wait for the folder to open: pasting now would go to the one being left"
 
 // setFiles replaces the tab's file list and refreshes the cached total size
 func (t *Tab) setFiles(files []fs.FileInfo) {

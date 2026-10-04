@@ -630,7 +630,9 @@ The parent pane isn't shown in dual-pane mode. From 120 columns, the active list
 
 With one list, these keys say that they need two panes, and that `w` shows them.
 
-`>` and `<` work as a paste into the other list's folder would, leaving the clipboard as it is: the same checks, so nothing is pasted onto itself; the same dialog before overwriting anything, which pastes nothing if the other list has moved to another folder meanwhile; and the same progress, cancel, notification and undo. The selection is cleared, and both lists show the result once the operation is done.
+`>` and `<` work as a paste into the other list's folder would, leaving the clipboard as it is: the same checks, so nothing is pasted onto itself; the same dialog before overwriting anything, which pastes nothing if the other list has moved to another folder meanwhile; and the same progress, cancel, notification and undo. The selection is cleared, and both lists show the result once the operation is done. While the other list is still opening another folder, they wait for it, as they would put the files in the folder it is leaving; so does `v` in a list opening another folder.
+
+Inside an [archive](#browsing-archives), `>` copies the entries out into the other list's folder, as `c` then `v` would, never over anything, and `<` says `Read-only: inside an archive`. Nothing goes into a list that is inside an archive: there both say `Read-only: the other pane is inside an archive`. Splitting a tab inside an archive opens the second list inside it too.
 
 A click in the other list makes it active, then does what it does there: a double-click opens what it is on. The wheel over the other list moves its cursor and leaves it inactive. While searching with `/`, clicks in the other list are ignored.
 
@@ -708,6 +710,7 @@ The mouse works too: the wheel moves, a click picks an entry, and a double-click
 - Everything is counted, hidden files included. Symbolic links are counted as links, never followed.
 - Sizes are the bytes in the files. The space on disk, in the line below the heading, counts a file with several hard links once.
 - A folder on another volume, such as a drive mounted inside the folder, is listed as `other volume` and not counted; `Enter` on it counts it on its own. `d` refuses it: eject a volume rather than trash it.
+- Inside an archive, `U` counts the folder holding it, with the cursor on the archive.
 - Folders that can't be read, and the folders holding them, are marked `!`, and the line below the heading says how many can't be read.
 - `d` always moves to the trash, whatever `delete_to_trash` says, and the entry leaves the figures once it has gone; `Ctrl+z`, once the view is closed, brings it back.
 
@@ -726,7 +729,7 @@ Nothing inside an archive can be changed. The keys that would change files (`d`,
 
 The preview shows what is in a folder of the archive, and a file up to 4 MB as it would show it on disk; a larger one shows its details. A preview still being read when the cursor moves on is stopped, and one that takes more than 5 seconds, as far into a large `.tar.gz`, says so. Files up to 1 GB can be opened. The copies go to a folder of sushi's own in the system's temporary folder: a preview's is removed once the preview is shown, and those opened stay while a tab or pane is inside that archive, up to 256 MB in all (or the size of the latest files opened, if more), past which the ones opened longest ago go. All of them are removed when sushi quits.
 
-`c` puts the selection, or the entry under the cursor, in sushi's clipboard. Finder can't take entries, so the pasteboard keeps what it had, and `v` pastes the entries until something is copied in Finder. `v` in a folder on disk then copies them out there, in the background, as safely as `X` extracts: a name already taken there is refused before anything is written, so nothing is ever replaced; links that would lead outside what is copied are refused; and a copy that is refused or cancelled leaves nothing behind. `Ctrl+z` removes what was copied out. `V` can't link to entries. Unlike `X`, which doesn't unpack `.tar.bz2` yet, copying out works with every kind of archive sushi browses.
+`c` puts the selection, or the entry under the cursor, in sushi's clipboard. Finder can't take entries, so the pasteboard keeps what it had, and `v` pastes the entries until something is copied in Finder. `v` in a folder on disk then copies them out there, in the background, as safely as `X` extracts: a name already taken there is refused before anything is written, so nothing is ever replaced; links that would lead outside what is copied are refused; and a copy that is refused or cancelled leaves nothing behind: one entry refused keeps all of them in, and the status bar names it and says that nothing was copied out. In dual-pane mode, `>` copies entries out into the other list's folder the same way. `Ctrl+z` removes what was copied out. `V` can't link to entries. Unlike `X`, which doesn't unpack `.tar.bz2` yet, copying out works with every kind of archive sushi browses.
 
 An entry named outside the archive, as `../evil.txt` would write outside the folder it is extracted to, is listed at the archive's top under its full name, whether hidden files are shown or not. It can be previewed, and is never copied out.
 
@@ -862,7 +865,7 @@ Nothing in the trash is ever replaced or merged into: a name that is taken gets 
 | --- | ------ |
 | `↑`/`k`, `↓`/`j`, `PgUp`/`Ctrl+u`, `PgDn`/`Ctrl+d` | Move |
 | `Enter` / `r` | Put the item back where it came from |
-| `p` | Restore the item into the folder sushi was showing, under the name it had before it was trashed, where that is known |
+| `p` | Restore the item into the folder sushi was showing (inside an archive, the folder holding it), under the name it had before it was trashed, where that is known |
 | `D` | Delete the item for good, after asking |
 | `E` | Empty the trash, after asking |
 | `/` | Filter the items by name: type, then `Enter` to keep the filter or `Esc` to clear it |
