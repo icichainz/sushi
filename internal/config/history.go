@@ -7,10 +7,14 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"sync"
+	"syscall"
 	"time"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // The folders visited, which the z palette offers to jump back to, are
@@ -98,10 +102,23 @@ func readHistory(path string) []DirVisit {
 		if !filepath.IsAbs(v.Path) || math.IsNaN(v.Count) || math.IsInf(v.Count, 0) || v.Count <= 0 {
 			continue
 		}
-		v.Path = filepath.Clean(v.Path)
+		v.Path = HistoryPath(v.Path)
 		byPath[v.Path] = merge(byPath[v.Path], v)
 	}
 	return pruneHistory(slices.Collect(maps.Values(byPath)), time.Now())
+}
+
+// HistoryPath is a folder's path as the history keeps it: clean, without a
+// trailing slash, and on macOS composed (NFC), as its file systems take a
+// name composed and decomposed (é as one character or as e and an accent,
+// as Finder may pass it) for the same, so it is one folder in the history
+// too. Elsewhere the two are different names, and stay as they are.
+func HistoryPath(path string) string {
+	path = filepath.Clean(path)
+	if runtime.GOOS == "darwin" {
+		path = norm.NFC.String(path)
+	}
+	return path
 }
 
 // merge adds the visits of v to e
@@ -115,8 +132,9 @@ func merge(e, v DirVisit) DirVisit {
 // SaveDirHistory adds visits to history.json, and drops the folders in
 // gone. The counts of visits are added to those in the file, rather than
 // replacing them, so sushis running at the same time don't undo each
-// other's visits. The file is replaced whole, through a temporary file, so
-// it is never left half written.
+// other's visits: the file is read and written holding a lock on
+// history.json.lock, which other sushi processes take too. It is replaced
+// whole, through a temporary file, so it is never left half written.
 func SaveDirHistory(visits []DirVisit, gone []string, now time.Time) error {
 	historyMu.Lock()
 	defer historyMu.Unlock()
@@ -124,15 +142,21 @@ func SaveDirHistory(visits []DirVisit, gone []string, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("finding the history file: %w", err)
 	}
+	unlock, err := lockHistory(path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	byPath := make(map[string]DirVisit)
 	for _, v := range readHistory(path) {
 		byPath[v.Path] = v
 	}
 	for _, p := range gone {
-		delete(byPath, p)
+		delete(byPath, HistoryPath(p))
 	}
 	for _, v := range visits {
+		v.Path = HistoryPath(v.Path)
 		byPath[v.Path] = merge(byPath[v.Path], v)
 	}
 	dirs := pruneHistory(slices.Collect(maps.Values(byPath)), now)
@@ -142,6 +166,24 @@ func SaveDirHistory(visits []DirVisit, gone []string, now time.Time) error {
 		return fmt.Errorf("encoding the history: %w", err)
 	}
 	return replaceFile(path, append(data, '\n'))
+}
+
+// lockHistory takes the lock other sushi processes take to change the
+// history at path, waiting for it, and returns what releases it
+func lockHistory(path string) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return nil, fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("locking the history: %w", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		lock.Close()
+		return nil, fmt.Errorf("locking the history: %w", err)
+	}
+	// Closing the file releases the lock
+	return func() { lock.Close() }, nil
 }
 
 // pruneHistory ages the counts once they add up to more than

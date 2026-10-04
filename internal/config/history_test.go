@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -60,8 +62,75 @@ func TestSaveDirHistoryAddsUpVisits(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("history.json: %v, %v", info, err)
 	}
-	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
-		t.Fatalf("config dir holds %d entries, want history.json alone", len(entries))
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if e.Name() != "history.json" && e.Name() != "history.json.lock" {
+			t.Fatalf("config dir holds %s, beside history.json and its lock", e.Name())
+		}
+	}
+}
+
+func TestSaveDirHistoryWaitsForOtherProcesses(t *testing.T) {
+	dir := useTempHome(t)
+	now := time.Now()
+	if err := SaveDirHistory([]DirVisit{{Path: "/a", Count: 1, Last: now.Unix()}}, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	// Another sushi holds the lock, as it reads and writes the file
+	lock, err := os.OpenFile(filepath.Join(dir, "history.json.lock"), os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	saved := make(chan error, 1)
+	go func() { saved <- SaveDirHistory([]DirVisit{{Path: "/a", Count: 2, Last: now.Unix()}}, nil, now) }()
+	select {
+	case err := <-saved:
+		t.Fatalf("saved while another process held the lock: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	// Its save is in; this one adds to it
+	os.WriteFile(filepath.Join(dir, "history.json"), []byte(`{"dirs":[{"path":"/a","count":10,"last":1}]}`), 0600)
+	lock.Close()
+	if err := <-saved; err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadDirHistory(); len(got) != 1 || got[0].Count != 12 {
+		t.Fatalf("history = %+v, want the other's 10 visits and these 2", got)
+	}
+}
+
+func TestHistoryPathsAreNormalised(t *testing.T) {
+	useTempHome(t)
+	now := time.Now()
+	composed, decomposed := "/x/café", "/x/café"
+	visits := []DirVisit{{Path: composed, Count: 1, Last: now.Unix()}, {Path: "/y/", Count: 1, Last: now.Unix()}}
+	if err := SaveDirHistory(visits, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveDirHistory([]DirVisit{{Path: decomposed + "/", Count: 2, Last: now.Unix()}, {Path: "/y", Count: 2, Last: now.Unix()}}, nil, now); err != nil {
+		t.Fatal(err)
+	}
+	counts := make(map[string]float64)
+	for _, v := range LoadDirHistory() {
+		counts[v.Path] = v.Count
+	}
+	if counts["/y"] != 3 {
+		t.Errorf("/y and /y/ weren't one folder: %v", counts)
+	}
+	if runtime.GOOS == "darwin" && (counts[composed] != 3 || len(counts) != 2) {
+		t.Errorf("café composed and decomposed weren't one folder: %v", counts)
+	}
+	// Dropping a folder gone drops it however it is spelled
+	if err := SaveDirHistory(nil, []string{"/y/"}, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range LoadDirHistory() {
+		if v.Path == "/y" {
+			t.Errorf("/y/ gone, /y kept")
+		}
 	}
 }
 

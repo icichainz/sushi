@@ -57,11 +57,13 @@ func newFrecency(keep bool) *frecency {
 	return f
 }
 
-// record counts a visit to dir, now
+// record counts a visit to dir, now. Two spellings of one folder, as with
+// a trailing slash, are one; see config.HistoryPath.
 func (f *frecency) record(dir string) {
 	if f == nil {
 		return
 	}
+	dir = config.HistoryPath(dir)
 	now := time.Now().Unix()
 	add := func(set map[string]config.DirVisit) {
 		v := set[dir]
@@ -92,6 +94,7 @@ func (f *frecency) drop(dirs ...string) tea.Cmd {
 		return nil
 	}
 	for _, dir := range dirs {
+		dir = config.HistoryPath(dir)
 		delete(f.dirs, dir)
 		if f.keep {
 			delete(f.unsaved, dir)
@@ -239,8 +242,9 @@ func (m *Model) filterJumps(keep bool) {
 	query := strings.ToLower(j.input.Value())
 	var out []jumpResult
 	if m.frecent != nil {
+		here := config.HistoryPath(m.tab().CurrentPath)
 		for path, v := range m.frecent.dirs {
-			if path == m.tab().CurrentPath {
+			if path == here {
 				continue
 			}
 			shown := displayPath(path)

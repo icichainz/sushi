@@ -638,7 +638,7 @@ The sort order and hidden files apply to both lists. Quitting with `q` under [`s
 
 ## History and Frequent Folders
 
-Each list remembers the folders it has shown, as a web browser does: `[` goes back to the folder before, `]` forward again, and the status bar says where, as in `Back to ~/projects`. Every way of changing folder counts: `h`, `l`, `Enter`, a click, a bookmark, a Find result, a plugin's `cd`, and `z`. Reloading the same folder doesn't. Each list keeps the last 100 folders each way, and a new tab, or the second list of a split tab, starts with none. Folders that no longer exist are passed over, and so are folders inside archives; renaming or moving a folder updates the history.
+Each list remembers the folders it has shown, as a web browser does: `[` goes back to the folder before, `]` forward again, and the status bar says where, as in `Back to ~/projects`. Every way of changing folder counts: `h`, `l`, `Enter`, a click, a bookmark, a Find result, a plugin's `cd`, and `z`. Reloading the same folder doesn't. Each list keeps the last 100 folders each way, and a new tab, or the second list of a split tab, starts with none. Folders that no longer exist are passed over; when every one is, nothing is forgotten, so they can be gone back to once they are there again, as on a drive plugged back in. `[` and `]` go back into [archives](#browsing-archives) too. Renaming or moving a folder updates the history.
 
 `z` opens the frequent folders palette: the folders you have visited, those you visit most often and most recently first, but not the one shown. Type to narrow it down, ignoring case: first come the folders whose name starts with what you typed, then those whose name contains it, then those whose path contains it, then those whose path has its letters in order; within each, the most frecent first. The letters matched are underlined, and each row says when you were last there, as in `5m ago`, `3h ago` or `12d ago` (after 60 days, the month and year).
 
@@ -667,7 +667,7 @@ With `history: true`, the default, the folders you visit are kept in `~/.config/
 }
 ```
 
-`count` is the number of visits, scaled down as they age, and `last` the time of the latest, in seconds since 1970. Each sushi, in each terminal or window, adds its visits to the counts in the file rather than replacing them, and the file is replaced whole through a temporary file, so it is never left half written. If it can't be written, the status bar says so, once.
+`count` is the number of visits, scaled down as they age, and `last` the time of the latest, in seconds since 1970. Each sushi, in each terminal or window, adds its visits to the counts in the file rather than replacing them, one at a time, holding a lock on `history.json.lock`, and the file is replaced whole through a temporary file, so it is never left half written. If it can't be written, the status bar says so, once. A folder is counted under one path however it was reached: without a trailing slash, and with accented letters composed, as macOS takes `é` as one character or as `e` and an accent for the same. Inside an archive, the folder holding it counts, as you arrive there from elsewhere; the folders inside aren't kept.
 
 Folders are ranked by frecency, as [zoxide](https://github.com/ajeetdsouza/zoxide) ranks them: their count, weighted by how long ago the latest visit was.
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -371,5 +372,91 @@ func TestJumpMatch(t *testing.T) {
 	}
 	if _, hits, _ := jumpMatch("sh", "~/src/sushi"); len(hits) != 2 || !hits[8] || !hits[9] {
 		t.Errorf("hits %v, want the s and h of sushi", hits)
+	}
+}
+
+func TestHistoryGoesBackIntoArchives(t *testing.T) {
+	dir := archiveDir(t)
+	historyHome(t)
+	elsewhere := t.TempDir()
+	m := startAt(t, dir, noWatch())
+	m = enter(t, enter(t, m, "bundle.zip"), "src")
+	m = goHere(t, m, elsewhere)
+
+	// Back into the archive, a folder at a time, then out of it
+	zip := filepath.Join(dir, "bundle.zip")
+	for _, want := range []string{filepath.Join(zip, "src"), zip, dir} {
+		if m = step(t, m, "["); m.tab().CurrentPath != want {
+			t.Fatalf("[ went to %s, want %s (%q)", m.tab().CurrentPath, want, m.statusMsg)
+		}
+		if inside := want != dir; (m.tab().archive != nil) != inside {
+			t.Fatalf("at %s, inside the archive: %v", want, m.tab().archive != nil)
+		}
+	}
+	if m = step(t, m, "]"); m.tab().CurrentPath != zip || m.tab().archive == nil {
+		t.Fatalf("] went to %s", m.tab().CurrentPath)
+	}
+
+	// The folders inside aren't counted for z, where they would be found
+	// gone; the folder holding the archive is, as the pane comes to it or
+	// into the archive from elsewhere: at the start, [ from elsewhere into
+	// src, and [ out of the archive
+	m.Close()
+	got := visitsOf()
+	for path := range got {
+		if strings.Contains(path, "bundle.zip") {
+			t.Errorf("history.json has %s", path)
+		}
+	}
+	if got[dir] != 3 || got[elsewhere] != 1 {
+		t.Errorf("history.json has %v", got)
+	}
+	m = startAt(t, elsewhere, noWatch())
+	m = goHere(t, m, filepath.Join(zip, "src"))
+	m.Close()
+	if got := visitsOf(); got[dir] != 4 {
+		t.Errorf("after coming in from elsewhere: %v", got)
+	}
+}
+
+func TestHistoryKeptWhenNothingToGoTo(t *testing.T) {
+	root, a, b, _ := historyDirs(t)
+	m := newTestModel(t, root, noWatch())
+	m = goHere(t, m, a)
+	m = goHere(t, m, b)
+
+	// Gone for now, as on a drive unplugged: [ has nowhere to go, and
+	// forgets nothing
+	away := root + "-away"
+	if err := os.Rename(root, away); err != nil {
+		t.Fatal(err)
+	}
+	if m = step(t, m, "["); m.statusMsg != "Nothing to go back to" || m.tab().CurrentPath != b {
+		t.Fatalf("[ with every folder gone: %q, in %s", m.statusMsg, m.tab().CurrentPath)
+	}
+	os.Rename(away, root)
+	if m = step(t, m, "["); m.tab().CurrentPath != a {
+		t.Fatalf("once back, [ went to %s, want %s (%q)", m.tab().CurrentPath, a, m.statusMsg)
+	}
+	if m = step(t, m, "["); m.tab().CurrentPath != root {
+		t.Fatalf("[ went to %s, want %s", m.tab().CurrentPath, root)
+	}
+}
+
+func TestFrecencyNormalisesPaths(t *testing.T) {
+	f := newFrecency(false)
+	f.record("/x/y/")
+	f.record("/x/y")
+	f.record("/x/café")
+	f.record("/x/café")
+	if f.dirs["/x/y"].Count != 2 {
+		t.Errorf("/x/y and /x/y/ counted apart: %v", f.dirs)
+	}
+	if runtime.GOOS == "darwin" && (f.dirs["/x/café"].Count != 2 || len(f.dirs) != 2) {
+		t.Errorf("café composed and decomposed counted apart: %v", f.dirs)
+	}
+	f.drop("/x/y/")
+	if _, ok := f.dirs["/x/y"]; ok {
+		t.Error("dropping /x/y/ kept /x/y")
 	}
 }

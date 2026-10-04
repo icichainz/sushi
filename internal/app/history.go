@@ -38,7 +38,17 @@ func (m *Model) noteVisit(tab *Tab, from string) tea.Cmd {
 		h.forward = nil
 	}
 	h.landing = ""
-	return m.frecent.visit(tab.CurrentPath)
+	dir := tab.CurrentPath
+	if tab.archive != nil {
+		// A folder inside an archive is no folder z could go to: the one
+		// holding the archive counts instead, once, as the pane arrives
+		// from elsewhere (going in from it counted it already)
+		dir = tab.realDir()
+		if from == dir || tab.archive.holds(from) {
+			return nil
+		}
+	}
+	return m.frecent.visit(dir)
 }
 
 // pushDir adds dir to the end of list, unless it is there already, and
@@ -56,7 +66,8 @@ func pushDir(list []string, dir string) []string {
 }
 
 // historyStep goes back (-1) or forward (1) in the active pane's history,
-// passing over folders that are gone
+// passing over folders that are gone. With nowhere to go, the history is
+// left as it was: a folder passed over may come back, as a drive does.
 func (m Model) historyStep(dir int) (tea.Model, tea.Cmd) {
 	tab := m.tab()
 	h := &tab.nav
@@ -69,16 +80,14 @@ func (m Model) historyStep(dir int) (tea.Model, tea.Cmd) {
 	if h.landing != "" && tab.Loading {
 		here = h.landing
 	}
-	for len(*from) > 0 {
-		n := len(*from)
-		target := (*from)[n-1]
-		*from = slices.Clip((*from)[:n-1])
-		if target == here {
+	list := *from
+	for i := len(list) - 1; i >= 0; i-- {
+		target := list[i]
+		if target == here || !canReturnTo(target) {
 			continue
 		}
-		if info, err := os.Stat(target); err != nil || !info.IsDir() {
-			continue
-		}
+		// What was passed over on the way goes
+		*from = slices.Clip(list[:i])
 		*to = pushDir(*to, here)
 		h.landing = target
 		status := m.setStatus(word + " to " + displayPath(target))
@@ -86,6 +95,15 @@ func (m Model) historyStep(dir int) (tea.Model, tea.Cmd) {
 	}
 	cmd := m.setStatus("Nothing to go " + strings.ToLower(word) + " to")
 	return m, cmd
+}
+
+// canReturnTo reports whether the history can go back to path: a folder,
+// or an archive or a folder inside one (see archive.go)
+func canReturnTo(path string) bool {
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return true
+	}
+	return archiveAt(path) != ""
 }
 
 // retarget moves the folders of the history along with a rename; move
