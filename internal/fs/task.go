@@ -430,6 +430,10 @@ func (t *Task) Move(src, dst string) (err error) {
 	if err != nil {
 		return fmt.Errorf("cannot access source: %w", err)
 	}
+	// Its rename fails as across filesystems, and the copy would empty it
+	if err := checkNotMount(src, srcInfo); err != nil {
+		return err
+	}
 	existing, dstErr := os.Lstat(dst)
 	if dstErr != nil && !errors.Is(dstErr, os.ErrNotExist) {
 		return fmt.Errorf("cannot access destination: %w", dstErr)
@@ -492,9 +496,22 @@ func (t *Task) Move(src, dst string) (err error) {
 // since they were copied, are left where they are, with the folders
 // holding them, and the error says so
 func deleteCopied(list []copied) error {
-	var left []string
+	var left, mounted []string
 	var firstErr error
+	// The source itself is copied last; a volume mounted inside it, on
+	// another device, is left as it is, copied but not emptied
+	var dev uint64
+	if len(list) > 0 {
+		last := list[len(list)-1]
+		dev = deviceOf(last.path, last.info)
+	}
 	for _, c := range list {
+		if deviceOf(c.path, c.info) != dev {
+			if c.info.IsDir() {
+				mounted = append(mounted, c.path)
+			}
+			continue
+		}
 		now, err := os.Lstat(c.path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -517,6 +534,10 @@ func deleteCopied(list []copied) error {
 	}
 	if firstErr != nil {
 		return firstErr
+	}
+	if len(mounted) > 0 {
+		// Its folders come before it, so the last is the volume's root
+		return fmt.Errorf("%s is a mounted volume, so it was copied but left where it was", filepath.Base(mounted[len(mounted)-1]))
 	}
 	switch len(left) {
 	case 0:
@@ -584,7 +605,8 @@ func isCrossDevice(err error) bool {
 
 // Delete deletes path, and everything in it if it is a directory, a file
 // at a time so it can be cancelled. Symlinks are removed without touching
-// their target.
+// their target. The root of a mounted volume is refused, and so is one
+// found inside path, where the delete stops: see checkNotMount.
 func (t *Task) Delete(path string) error {
 	if err := t.ctx.Err(); err != nil {
 		return err
@@ -596,14 +618,33 @@ func (t *Task) Delete(path string) error {
 	if err != nil {
 		return fmt.Errorf("cannot access %s: %w", path, err)
 	}
+	if err := checkNotMount(path, info); err != nil {
+		return err
+	}
+	return t.deleteOn(path, info, deviceOf(path, info))
+}
 
+// deleteOn deletes path, which info describes, on the device dev, never
+// going into a folder on another one: a volume mounted inside
+func (t *Task) deleteOn(path string, info os.FileInfo, dev uint64) error {
+	if err := t.ctx.Err(); err != nil {
+		return err
+	}
 	if info.IsDir() {
+		if deviceOf(path, info) != dev {
+			return mountedError{name: filepath.Base(path), inside: true}
+		}
 		entries, err := os.ReadDir(path)
 		if err != nil {
 			return fmt.Errorf("cannot read %s: %w", path, err)
 		}
 		for _, entry := range entries {
-			if err := t.Delete(filepath.Join(path, entry.Name())); err != nil {
+			child := filepath.Join(path, entry.Name())
+			childInfo, err := os.Lstat(child)
+			if err != nil {
+				return fmt.Errorf("cannot access %s: %w", child, err)
+			}
+			if err := t.deleteOn(child, childInfo, dev); err != nil {
 				return err
 			}
 		}

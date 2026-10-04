@@ -5,3 +5,9 @@ package fs
 func isLocal(path string) bool {
 	return true
 }
+
+// mountedOn reports whether the system says a volume is mounted at path.
+// Here only the device numbers tell; see checkNotMount.
+func mountedOn(path string) bool {
+	return false
+}

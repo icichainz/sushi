@@ -567,10 +567,15 @@ func (m Model) duGoTo() (tea.Model, tea.Cmd) {
 // duTrash moves the entry under the cursor to the trash, as d does in the
 // file list, and takes it out of the figures once it has gone
 func (m Model) duTrash() (tea.Model, tea.Cmd) {
-	_, path, ok := m.du.chosen()
+	r, path, ok := m.du.chosen()
 	switch {
 	case !ok:
 		return m, nil
+	case r.mount:
+		// Trashing would copy the whole volume, then empty it; fs.Trash
+		// refuses it too
+		cmd := m.setStatus(utils.Printable(r.name) + " is a mounted volume; eject it instead")
+		return m, cmd
 	case m.du.scan.running():
 		cmd := m.setStatus("Still scanning: wait for it to finish, or esc to stop it")
 		return m, cmd

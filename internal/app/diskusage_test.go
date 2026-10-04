@@ -316,3 +316,25 @@ func TestThousands(t *testing.T) {
 		t.Error(countOf(12340, "file"))
 	}
 }
+
+func TestDiskUsageWontTrashAVolume(t *testing.T) {
+	root := usageTree(t)
+	m := cursorTo(t, newTestModel(t, root, nil), "small.txt")
+	m = openUsage(t, m)
+
+	// big shows as another volume mounted there, as the walk marks one: d
+	// would copy all of it into the trash, then empty it
+	m.du.rows[0].node.mount = true
+	m.du.refresh()
+	if r, _, _ := m.du.chosen(); r.name != "big" || !r.mount {
+		t.Fatalf("cursor on %+v", r)
+	}
+	m, cmd := press(t, m, "d")
+	m = drain(t, m, cmd)
+	if m.job != nil || m.statusMsg != "big is a mounted volume; eject it instead" {
+		t.Fatalf("d on a volume: job %v, status %q", m.job, m.statusMsg)
+	}
+	if readTestFile(t, filepath.Join(root, "big", "y.bin")) != strings.Repeat("y", 1000) || len(m.undo) != 0 {
+		t.Fatal("the volume was trashed")
+	}
+}

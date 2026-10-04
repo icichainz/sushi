@@ -101,6 +101,10 @@ func (tr *Trash) Put(t *Task, path string) (TrashedItem, error) {
 	if err != nil {
 		return TrashedItem{}, fmt.Errorf("cannot access %s: %w", filepath.Base(abs), err)
 	}
+	// Its rename fails as across filesystems, and the copy would empty it
+	if err := checkNotMount(abs, srcInfo); err != nil {
+		return TrashedItem{}, err
+	}
 
 	// The item itself isn't resolved: trashing a symlink moves only the link
 	item := filepath.Join(resolvePath(filepath.Dir(abs)), filepath.Base(abs))

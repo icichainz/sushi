@@ -704,7 +704,7 @@ The mouse works too: the wheel moves, a click picks an entry, and a double-click
 
 - Everything is counted, hidden files included. Symbolic links are counted as links, never followed.
 - Sizes are the bytes in the files. The space on disk, in the line below the heading, counts a file with several hard links once.
-- A folder on another volume, such as a drive mounted inside the folder, is listed as `other volume` and not counted; `Enter` on it counts it on its own.
+- A folder on another volume, such as a drive mounted inside the folder, is listed as `other volume` and not counted; `Enter` on it counts it on its own. `d` refuses it: eject a volume rather than trash it.
 - Folders that can't be read, and the folders holding them, are marked `!`, and the line below the heading says how many can't be read.
 - `d` always moves to the trash, whatever `delete_to_trash` says, and the entry leaves the figures once it has gone; `Ctrl+z`, once the view is closed, brings it back.
 
@@ -843,7 +843,7 @@ Sushi reaches macOS for these, and for the pasteboard, through `osascript` and `
 | macOS | `~/.Trash`, the Trash in the Dock |
 | Linux | The freedesktop.org trash in `$XDG_DATA_HOME/Trash`, or `~/.local/share/Trash`, so desktop file managers can show and restore what sushi trashed |
 
-Nothing in the trash is ever replaced or merged into: a name that is taken gets a number, as in `notes 2.txt`, even when another program trashes something of the same name at the same moment. Files on another drive are copied into the trash and then deleted, which takes longer; only what was copied is deleted, so files added meanwhile stay where they were. The Finder's Put Back doesn't know where files trashed by sushi came from; use `Ctrl+z`, or the [trash browser](#the-trash-browser), instead.
+Nothing in the trash is ever replaced or merged into: a name that is taken gets a number, as in `notes 2.txt`, even when another program trashes something of the same name at the same moment. Files on another drive are copied into the trash and then deleted, which takes longer; only what was copied is deleted, so files added meanwhile stay where they were. A mounted volume itself (a drive, a disk image or a share, as in `/Volumes`) is never trashed, moved or deleted: that would empty it, so sushi says to eject it instead. Deleting a folder stops at a volume mounted inside it, and moving one to another drive leaves such a volume where it is. The Finder's Put Back doesn't know where files trashed by sushi came from; use `Ctrl+z`, or the [trash browser](#the-trash-browser), instead.
 
 `Ctrl+z` undoes the last of up to 20 operations: trash, rename, move, copy, new file or folder, duplicate, symlink paste, permissions, bulk rename, rename by pattern, compress, extract, copying out of an archive, Finder tags, and putting back from the trash. Undo history lasts until sushi quits.
 
