@@ -136,6 +136,29 @@ func TestDualPaneSplitsAndSwitches(t *testing.T) {
 	}
 }
 
+func TestDualPaneReopensOnTheSameSide(t *testing.T) {
+	_, left, right := twoFolders(t)
+	m := dualModel(t, left, right)
+
+	// The right pane active, dual pane off and on again: it is still on the
+	// right, with the other pane back on the left
+	m, _ = ctrl(t, m, tea.KeyCtrlL)
+	m, _ = press(t, m, "w")
+	m, cmd := press(t, m, "w")
+	m = drain(t, m, cmd)
+	if !m.tab().split.right || m.tab().CurrentPath != right || m.otherPane().CurrentPath != left || !m.layout().otherFirst {
+		t.Fatalf("reopened: active in %s on the right %v, other in %s", m.tab().CurrentPath, m.tab().split.right, m.otherPane().CurrentPath)
+	}
+	// And on the left once it was there
+	m, _ = ctrl(t, m, tea.KeyCtrlH)
+	m, _ = press(t, m, "w")
+	m, cmd = press(t, m, "w")
+	m = drain(t, m, cmd)
+	if m.tab().split.right || m.tab().CurrentPath != left || m.layout().otherFirst {
+		t.Fatalf("reopened from the left: active in %s, on the right %v", m.tab().CurrentPath, m.tab().split.right)
+	}
+}
+
 func TestDualPaneFromTheConfig(t *testing.T) {
 	_, left, _ := twoFolders(t)
 	cfg := noWatch()

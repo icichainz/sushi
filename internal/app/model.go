@@ -50,6 +50,7 @@ type Tab struct {
 	// the other. See dual.go.
 	split    *split
 	otherDir string       // Where the other pane was when dual-pane mode was left
+	wasRight bool         // Whether this pane was on the right then, where it goes back
 	nav      navHistory   // Folders to go back and forward to; see history.go
 	archive  *archiveView // The archive the tab is inside of, or nil; see archive.go
 }

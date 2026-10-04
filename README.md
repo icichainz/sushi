@@ -534,7 +534,7 @@ Below a folder, `f`, `F` and `#` walk it, reading every name and file, so they f
 
 The sort order applies to every tab for the rest of the session; `sort_by` and `sort_reverse` in the config set the order sushi starts with. A newly chosen order starts in its usual direction: size largest first, modified newest first.
 
-Tabs also reload by themselves when files change on disk, once the changes pause for 200 ms, or every 2 seconds while they keep coming, keeping the cursor and the selection. If a tab's directory is deleted, the tab moves up to the nearest directory that still exists. Directories that can't be watched, such as on some network drives, reload only with `Ctrl+r`. On macOS, watching a directory holds a file open for each of its entries, and sushi keeps to 2048 in all, so very large directories reload only with `Ctrl+r` too. `watch: false` turns watching off.
+Tabs also reload by themselves when files change on disk, once the changes pause for 200 ms, or every 2 seconds while they keep coming, keeping the cursor and the selection. If a tab's directory is deleted, here or by another program, the tab, or the list of a dual pane, moves up to the nearest directory that still exists, and the status bar says so, as in `Folder gone: drafts, showing ~/projects`. Directories that can't be watched, such as on some network drives, reload only with `Ctrl+r`. On macOS, watching a directory holds a file open for each of its entries, and sushi keeps to 2048 in all, so very large directories reload only with `Ctrl+r` too. `watch: false` turns watching off.
 
 ### Plugins
 
@@ -616,7 +616,7 @@ While sushi uses the mouse, terminals select text only with a key held: `Shift` 
 
 ## Dual Pane
 
-`w` splits the tab into two file lists side by side, each with its own folder, cursor, selection, search and history. One of them is active: the keys, prompts, search, Find, bookmarks and the preview work on it, as they do on a single list, and the breadcrumb shows its folder. `w` again leaves the active list on its own. The next time, the second list opens where it was, or in the nearest folder above that still exists; the first time, it opens on the same folder. Each tab splits on its own, and `dual_pane: true` in the config starts sushi with its first tab split.
+`w` splits the tab into two file lists side by side, each with its own folder, cursor, selection, search and history. One of them is active: the keys, prompts, search, Find, bookmarks and the preview work on it, as they do on a single list, and the breadcrumb shows its folder. `w` again leaves the active list on its own. The next time, the second list opens where it was, or in the nearest folder above that still exists, and the active list stays on the side it was on; the first time, it opens on the same folder, on the right. Each tab splits on its own, and `dual_pane: true` in the config starts sushi with its first tab split.
 
 The parent pane isn't shown in dual-pane mode. From 120 columns, the active list's preview shows beside the two lists, and is to each of them what `preview_width` makes it to a single list: at the default 50, the three take a third of the width each. Narrower, or with the preview off (`p`), the two lists share the width. Each list's heading names its folder, with `~` for your home folder, and how many files are selected in it; the active list's heading is in the theme's accent color.
 

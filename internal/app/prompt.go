@@ -257,11 +257,24 @@ func (m *Model) retarget(oldPath, newPath string) {
 	}
 }
 
-// reloadAll reloads every tab, since any of them may show what changed
+// reloadAll reloads every tab, since any of them may show what changed:
+// a folder deleted, the nearest one above it that is still there. That
+// is said after what the status bar says, as what the operation did.
 func (m *Model) reloadAll() tea.Cmd {
-	cmds := make([]tea.Cmd, 0, len(m.tabs))
+	cmds := make([]tea.Cmd, 0, len(m.tabs)+1)
+	note := ""
 	for _, tab := range m.panes() {
-		cmds = append(cmds, m.loadDir(tab, tab.CurrentPath))
+		load, gone := m.reloadOrUp(tab)
+		cmds = append(cmds, load)
+		if note == "" {
+			note = gone
+		}
+	}
+	if note != "" {
+		if m.statusMsg != "" {
+			note = m.statusMsg + ". " + note
+		}
+		cmds = append(cmds, m.setStatus(note))
 	}
 	return tea.Batch(cmds...)
 }

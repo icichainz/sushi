@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,6 +51,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The load read the directory before the order changed
 		resort := tab.resortWanted
 		tab.resortWanted = false
+		if msg.err != nil && msg.path == tab.CurrentPath && errors.Is(msg.err, os.ErrNotExist) && existingDir(msg.path) != msg.path {
+			// The folder shown went while it was read again: the nearest
+			// one above it that is there, saying so
+			tab.focusPath = ""
+			return m, m.reloadTab(tab)
+		}
 		if msg.err != nil {
 			// Keep showing the previous directory rather than an empty
 			// one. The file to focus was in the directory that failed, and

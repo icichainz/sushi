@@ -76,14 +76,15 @@ func (m *Model) isInactivePane(tab *Tab) bool {
 	return false
 }
 
-// splitTab gives tab a second pane, on the right, showing dir: at once
-// with a copy of the tab's own list when it is the same folder, and
-// otherwise once the load it returns is in
+// splitTab gives tab a second pane showing dir: at once with a copy of the
+// tab's own list when it is the same folder, and otherwise once the load
+// it returns is in. The tab stays on the side it was on when dual-pane
+// mode was left, the left the first time.
 func (m *Model) splitTab(tab *Tab, dir string) tea.Cmd {
 	other := m.newTab(dir)
 	other.PreviewEnabled, other.PreviewWidth = tab.PreviewEnabled, tab.PreviewWidth
 	if dir != tab.CurrentPath {
-		tab.split = &split{other: other}
+		tab.split = &split{other: other, right: tab.wasRight}
 		return m.loadDir(&tab.split.other, dir)
 	}
 	// Copies, as lists are sorted in place
@@ -93,7 +94,7 @@ func (m *Model) splitTab(tab *Tab, dir string) tea.Cmd {
 	// Inside the same archive, so read-only, previewed and left as the
 	// tab is; see archive.go
 	other.archive = tab.archive
-	tab.split = &split{other: other}
+	tab.split = &split{other: other, right: tab.wasRight}
 	return nil
 }
 
@@ -150,7 +151,7 @@ func (m Model) toggleDual() (tea.Model, tea.Cmd) {
 		if s.other.git.cancel != nil {
 			s.other.git.cancel()
 		}
-		tab.otherDir, tab.split = s.other.CurrentPath, nil
+		tab.otherDir, tab.wasRight, tab.split = s.other.CurrentPath, s.right, nil
 		// The copies of entries of an archive only that pane was in go
 		m.sweepArchives()
 		cmd := m.setStatus("Dual pane off")

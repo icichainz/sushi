@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fsnotify/fsnotify"
+	"github.com/icichainz/sushi/internal/utils"
 )
 
 const (
@@ -449,17 +451,28 @@ func (m *Model) handleDirsChanged(msg dirsChangedMsg) tea.Cmd {
 }
 
 // reloadTab reloads the tab's directory, or if it has been deleted, the
-// nearest directory above it that still exists
+// nearest directory above it that still exists, saying so whichever pane
+// or tab it is
 func (m *Model) reloadTab(tab *Tab) tea.Cmd {
+	load, gone := m.reloadOrUp(tab)
+	if gone != "" {
+		return tea.Batch(load, m.setStatus(gone))
+	}
+	return load
+}
+
+// reloadOrUp reloads the tab as reloadTab does, and returns what to say
+// if its folder is gone, rather than say it
+func (m *Model) reloadOrUp(tab *Tab) (tea.Cmd, string) {
 	dir := existingDir(tab.CurrentPath)
 	if a := tab.archive; a != nil && archiveAt(tab.CurrentPath) == a.ix.Path {
 		dir = tab.CurrentPath // Inside an archive that is still there; see archive.go
 	}
 	load := m.loadDir(tab, dir)
-	if dir != tab.CurrentPath && tab.ID == m.tab().ID {
-		return tea.Batch(load, m.setStatus(filepath.Base(tab.CurrentPath)+" no longer exists"))
+	if dir != tab.CurrentPath {
+		return load, fmt.Sprintf("Folder gone: %s, showing %s", utils.Printable(filepath.Base(tab.CurrentPath)), displayPath(dir))
 	}
-	return load
+	return load, ""
 }
 
 // existingDir returns path, or its nearest ancestor if path no longer
