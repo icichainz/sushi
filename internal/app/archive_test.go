@@ -541,3 +541,102 @@ func TestArchiveReloads(t *testing.T) {
 		t.Fatalf("archive gone: at %s", m.tab().CurrentPath)
 	}
 }
+
+// cachedCopies returns the copies of entries in the cache, by name
+func cachedCopies(t *testing.T, m Model) []string {
+	t.Helper()
+	var out []string
+	if m.arc.cache.root == "" {
+		return nil
+	}
+	filepath.WalkDir(m.arc.cache.root, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			out = append(out, d.Name())
+		}
+		return nil
+	})
+	slices.Sort(out)
+	return out
+}
+
+func TestSplitInsideAnArchive(t *testing.T) {
+	dir := archiveDir(t)
+	var told []string
+	setHostDirectory = func(dir string) error { told = append(told, dir); return nil }
+	t.Cleanup(func() { setHostDirectory = func(string) error { return nil } })
+	m := newTestModel(t, dir, noWatch())
+	m = enter(t, enter(t, m, "bundle.zip"), "src")
+
+	// The second pane opens in the same folder of the archive, and is inside
+	// it as the first is
+	m, cmd := press(t, m, "w")
+	m = drain(t, m, cmd)
+	other := m.otherPane()
+	if other == nil || other.archive != m.tab().archive || other.CurrentPath != filepath.Join(dir, "bundle.zip", "src") {
+		t.Fatalf("second pane: %+v", other)
+	}
+	m, cmd = ctrl(t, m, tea.KeyCtrlL)
+	m = drain(t, m, cmd)
+	if !strings.Contains(statusLine(m), "ARCHIVE") {
+		t.Errorf("status bar %q", statusLine(m))
+	}
+	if !m.tab().git.off {
+		t.Error("git runs inside the archive in the second pane")
+	}
+	m = previewNow(t, cursorTo(t, m, "main.go"))
+	if p := m.tab().Preview; p.Error != nil || !strings.Contains(p.Content, "package main") {
+		t.Fatalf("preview in the second pane: %q, %v", p.Content, p.Error)
+	}
+	for _, k := range []string{"M", "n", "a", "d"} {
+		if after, _ := press(t, detach(m), k); after.mode != ModeNormal || after.statusMsg != readOnly {
+			t.Errorf("%s in the second pane: mode %v, status %q", k, after.mode, after.statusMsg)
+		}
+	}
+	if after, _ := press(t, detach(m), "!"); after.mode != ModeNormal || !strings.Contains(after.statusMsg, "Plugins and shell commands") {
+		t.Errorf("! in the second pane: %q", after.statusMsg)
+	}
+	// The shell and the window go to the folder holding the archive
+	if got := m.ExitDir(); got != dir {
+		t.Errorf("ExitDir = %s", got)
+	}
+	if len(told) == 0 || told[len(told)-1] != dir {
+		t.Errorf("the host was told %q", told)
+	}
+}
+
+func TestInactivePaneKeepsItsArchive(t *testing.T) {
+	fakeOpener(t)
+	dir := archiveDir(t)
+	cfg := noWatch()
+	cfg.Opener = "system"
+	m := newTestModel(t, dir, cfg)
+	m = enter(t, m, "bundle.zip")
+	m, cmd := press(t, cursorTo(t, m, "README.md"), "o")
+	m = drain(t, m, cmd)
+	if got := cachedCopies(t, m); !slices.Equal(got, []string{"README.md"}) {
+		t.Fatalf("copies after o: %q (%s)", got, m.statusMsg)
+	}
+
+	// Both panes inside; the active one leaves, and the other is still in
+	// there, so the copy opened stays
+	m, cmd = press(t, m, "w")
+	m = back(t, drain(t, m, cmd))
+	if m.tab().archive != nil || m.otherPane().archive == nil {
+		t.Fatalf("active in %s, other in %s", m.tab().CurrentPath, m.otherPane().CurrentPath)
+	}
+	if got := cachedCopies(t, m); !slices.Equal(got, []string{"README.md"}) {
+		t.Fatalf("the inactive pane's copies went: %q", got)
+	}
+	// Going back in reads nothing again: the other pane's index serves
+	m = enter(t, m, "bundle.zip")
+	if m.tab().archive != m.otherPane().archive {
+		t.Error("the archive was read again rather than taken from the other pane")
+	}
+	m = back(t, m)
+
+	// One pane again: the copies of the archive only the other was in go
+	m, _ = press(t, m, "w")
+	if got := cachedCopies(t, m); len(got) != 0 {
+		t.Fatalf("copies after leaving dual pane: %q", got)
+	}
+}

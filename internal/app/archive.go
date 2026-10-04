@@ -119,15 +119,15 @@ func (t *Tab) realDir() string {
 }
 
 // archiveFor returns the archive a load of path into tab lists from: the
-// tab's own, or another tab's, already read. A load of an archive no tab
+// tab's own, or another pane's, already read. A load of an archive no pane
 // is in, or of anything else, goes to loadDirectory, which reads the
 // archive when it finds path isn't a directory.
 func (m *Model) archiveFor(tab *Tab, path string) *archiveView {
 	if tab.archive.holds(path) {
 		return tab.archive
 	}
-	for i := range m.tabs {
-		if a := m.tabs[i].archive; a.holds(path) {
+	for _, p := range m.panes() {
+		if a := p.archive; a.holds(path) {
 			return a
 		}
 	}
@@ -236,11 +236,12 @@ func (m *Model) arriveIn(tab *Tab, view *archiveView) tea.Cmd {
 	return nil
 }
 
-// sweepArchives removes the copies of entries of archives no tab is in
+// sweepArchives removes the copies of entries of archives no pane is in,
+// the inactive panes of dual-pane tabs included
 func (m *Model) sweepArchives() {
 	keep := make(map[string]bool)
-	for i := range m.tabs {
-		if a := m.tabs[i].archive; a != nil {
+	for _, p := range m.panes() {
+		if a := p.archive; a != nil {
 			keep[a.key()] = true
 		}
 	}

@@ -90,6 +90,9 @@ func (m *Model) splitTab(tab *Tab, dir string) tea.Cmd {
 	other.setFiles(slices.Clone(tab.Files))
 	other.ParentFiles = slices.Clone(tab.ParentFiles)
 	other.Cursor = tab.Cursor
+	// Inside the same archive, so read-only, previewed and left as the
+	// tab is; see archive.go
+	other.archive = tab.archive
 	tab.split = &split{other: other}
 	return nil
 }
@@ -148,6 +151,8 @@ func (m Model) toggleDual() (tea.Model, tea.Cmd) {
 			s.other.git.cancel()
 		}
 		tab.otherDir, tab.split = s.other.CurrentPath, nil
+		// The copies of entries of an archive only that pane was in go
+		m.sweepArchives()
 		cmd := m.setStatus("Dual pane off")
 		return m, cmd
 	}
