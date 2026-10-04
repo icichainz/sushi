@@ -828,7 +828,7 @@ func TestKeyPanel(t *testing.T) {
 			labels = append(labels, k.key)
 		}
 	}
-	want := []string{"j k", "h l", "backspace", "g G", "ctrl+u d", "enter", "e o", "r L", "n N", "d D",
+	want := []string{"j k", "h l", "backspace", "g G", "ctrl+u d", "enter", "e o", "r M L", "n N", "d D",
 		"ctrl+z", "ctrl+x", "y V", "m R", "a X", "space", "*", "u", "c x v", "O ctrl+o", "/", "p i", "J K", ".", "?",
 		"f #", "F", "s S", "ctrl+r", "Q", "t T", "tab", "shift+tab", "ctrl+w", "U ctrl+t", "b B", "1-9", "P", "!", "q",
 		"w W", "ctrl+h l", "> <", "=", "[ ] z"}

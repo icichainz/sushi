@@ -376,6 +376,10 @@ func batchResult(operation, verb string, paths []string, op func(string) error) 
 // pruneClipboard drops clipboard entries that no longer exist, e.g. after
 // some of a cut have been moved
 func (m *Model) pruneClipboard() {
+	// Archive entries aren't on disk to be found; see archive.go
+	if m.arc.clip.holds(m.clipboard) {
+		return
+	}
 	kept := m.clipboard[:0]
 	for _, p := range m.clipboard {
 		if _, err := os.Lstat(p); err == nil {

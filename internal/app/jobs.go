@@ -268,7 +268,7 @@ func (m Model) whileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		cmd := m.setStatus(fmt.Sprintf("Stopping %s before quitting; press %s again to quit now", doing, keyName(msg.String())))
 		return m, cmd, true
 
-	case key.Matches(msg, k.Delete, k.HardDelete, k.Paste, k.PasteLink, k.Rename, k.BulkRename,
+	case key.Matches(msg, k.Delete, k.HardDelete, k.Paste, k.PasteLink, k.Rename, k.BulkRename, k.PatternRename,
 		k.NewFile, k.NewDir, k.Duplicate, k.Chmod, k.Archive, k.Extract, k.Undo,
 		k.Plugins, k.Shell, k.Edit, k.Open, k.OpenWith, k.Reveal, k.QuickLook, k.Tag):
 		cmd := m.stillBusy()

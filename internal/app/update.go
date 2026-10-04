@@ -79,6 +79,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			fs.SortFiles(tab.Files, m.sortBy, m.sortReverse)
 			fs.SortFiles(tab.ParentFiles, m.sortBy, m.sortReverse)
 		}
+		arrived := m.arriveIn(tab, msg.archive) // Into or out of an archive; see archive.go
 		tab.pruneSelection()
 		tab.Cursor = 0
 		if samePath {
@@ -101,7 +102,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// For [, ] and z; see history.go
 		visit := m.noteVisit(tab, from)
-		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt, m.gitAfterLoad(tab), visit)
+		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt, m.gitAfterLoad(tab), visit, arrived)
 		return m, cmd
 
 	case previewLoadedMsg:
@@ -176,6 +177,9 @@ func (m *Model) loadDir(tab *Tab, path string) tea.Cmd {
 	tab.reloadWanted = false
 	tab.resortWanted = false
 	tab.loadSeq++
+	if a := m.archiveFor(tab, path); a != nil {
+		return loadArchive(tab.ID, tab.loadSeq, a, path, m.scanOptions())
+	}
 	return loadDirectory(tab.ID, tab.loadSeq, path, m.scanOptions())
 }
 
@@ -208,6 +212,9 @@ func (m *Model) previewCmd(tab *Tab) tea.Cmd {
 	}
 	if p := tab.Preview; p.Path == file.Path && p.IsText {
 		cfg.MaxLines = max(cfg.MaxLines, len(p.Lines))
+	}
+	if tab.archive != nil {
+		return m.entryPreview(tab, file, cfg) // See archive.go
 	}
 	return loadPreviewWith(tab.ID, file, cfg)
 }
@@ -334,6 +341,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == ModeTrash {
 		return m.handleTrashMode(msg)
 	}
+	if m.mode == ModePattern {
+		return m.handlePatternMode(msg)
+	}
 
 	// Plugin shortcuts; bindPluginKeys keeps them clear of built-in keys
 	if i, ok := m.pluginKeys[msg.String()]; ok {
@@ -345,6 +355,11 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if model, cmd, handled := m.whileBusy(msg); handled {
 			return model, cmd
 		}
+	}
+
+	// Inside an archive nothing changes, and some keys work on its entries
+	if model, cmd, handled := m.inArchive(msg); handled {
+		return model, cmd
 	}
 
 	tab := &m.tabs[m.activeTabIdx]
@@ -604,6 +619,10 @@ func (m Model) openCursor() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if file := tab.Files[tab.Cursor]; !file.IsDir {
+		// Archives are gone into, and what is in them opens as a copy
+		if model, cmd, ok := m.openArchived(file); ok {
+			return model, cmd
+		}
 		// An editor or app could change the files a job is working on
 		if m.job != nil {
 			cmd := m.stillBusy()
@@ -648,6 +667,7 @@ func (m Model) closeTab() (tea.Model, tea.Cmd) {
 	if m.activeTabIdx >= len(m.tabs) {
 		m.activeTabIdx = len(m.tabs) - 1
 	}
+	m.sweepArchives()
 
 	cmd := m.setStatus(fmt.Sprintf("Tab closed. %d remaining", len(m.tabs)))
 	return m, cmd
@@ -906,6 +926,8 @@ type dirLoadedMsg struct {
 	files  []fs.FileInfo
 	parent []fs.FileInfo
 	err    error
+
+	archive *archiveView // The archive path is in, or nil on disk; see archive.go
 }
 
 // scanParent lists the directory above path for the parent pane. It is
@@ -958,6 +980,12 @@ type clearStatusMsg struct {
 func loadDirectory(tabID, seq int, path string, opts fs.ScanOptions) tea.Cmd {
 	return func() tea.Msg {
 		files, err := fs.ScanDirectory(path, opts)
+		if err != nil {
+			// Not a directory, but maybe an archive to go inside; see archive.go
+			if msg, ok := archiveLoad(tabID, seq, path, opts); ok {
+				return msg
+			}
+		}
 		msg := dirLoadedMsg{tabID: tabID, seq: seq, path: path, files: files, err: err}
 		if err == nil {
 			msg.parent = scanParent(path, opts)

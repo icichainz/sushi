@@ -165,6 +165,10 @@ func (m Model) paste(links bool) (tea.Model, tea.Cmd) {
 
 // pasteClipboard pastes sushi's clipboard, as symlinks with links
 func (m Model) pasteClipboard(links bool) (tea.Model, tea.Cmd) {
+	// Entries copied inside an archive are extracted; see archive.go
+	if m.arc.clip.holds(m.clipboard) {
+		return m.pasteEntries(links)
+	}
 	if links {
 		return m.pasteLinks()
 	}

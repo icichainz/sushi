@@ -92,6 +92,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.mouseDiskUsage(msg)
 	case ModeTrash:
 		return m.mouseTrash(msg)
+	case ModePattern:
+		return m.mousePattern(msg)
 	case ModeHelp:
 		return m.mouseHelp(msg)
 	}

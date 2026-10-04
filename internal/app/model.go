@@ -48,8 +48,9 @@ type Tab struct {
 	// A tab's own fields are its active pane; in dual-pane mode split holds
 	// the other. See dual.go.
 	split    *split
-	otherDir string     // Where the other pane was when dual-pane mode was left
-	nav      navHistory // Folders to go back and forward to; see history.go
+	otherDir string       // Where the other pane was when dual-pane mode was left
+	nav      navHistory   // Folders to go back and forward to; see history.go
+	archive  *archiveView // The archive the tab is inside of, or nil; see archive.go
 }
 
 // Model represents the application state
@@ -132,6 +133,8 @@ type Model struct {
 	jumper   jumpPalette   // The frequent folders palette (z)
 	du       duView        // The disk usage view (U); see diskusage.go
 	trash    trashView     // The trash browser (ctrl+t); see trashview.go
+	arc      archiveState  // Copies of archive entries, and entries copied; see archive.go
+	pattern  patternRename // The rename-by-pattern dialog (M); see pattern.go
 }
 
 // tab returns a pointer to the active tab: in dual-pane mode, its active
@@ -201,6 +204,7 @@ const (
 	ModeJump // The frequent folders palette; see jump.go
 	ModeDiskUsage
 	ModeTrash
+	ModePattern // Rename by pattern; see pattern.go
 )
 
 // KeyMap defines all key bindings. Each field is an action that keys: in
@@ -278,6 +282,7 @@ type KeyMap struct {
 	Frequent       key.Binding
 	DiskUsage      key.Binding
 	Trash          key.Binding
+	PatternRename  key.Binding // Rename by pattern; see pattern.go
 }
 
 // DefaultKeyMap returns the default key bindings
@@ -567,6 +572,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("ctrl+t"),
 			key.WithHelp("ctrl+t", "browse the trash"),
 		),
+		PatternRename: key.NewBinding(
+			key.WithKeys("M"),
+			key.WithHelp("M", "rename by pattern"),
+		),
 	}
 }
 
@@ -607,6 +616,7 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 		showHidden:  cfg.ShowHidden,
 		sortBy:      cfg.SortBy,
 		sortReverse: cfg.SortReverse,
+		arc:         archiveState{cache: &archiveCache{}},
 	}
 	if cfg.Watch {
 		m.watch = newDirWatcher()

@@ -44,7 +44,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	// Tell the terminal when the shown directory changes, by any route:
 	// navigation, a tab switch, a tab closing, a find jump
-	if dir := m.tab().CurrentPath; dir != m.hostDir {
+	if dir := m.tab().realDir(); dir != m.hostDir {
 		m.hostDir = dir
 		_ = setHostDirectory(dir)
 	}

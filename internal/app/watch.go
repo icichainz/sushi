@@ -400,13 +400,15 @@ func (m *Model) watchTabs() {
 			}
 		}
 	}
-	add(m.tab().CurrentPath, filepath.Dir(m.tab().CurrentPath))
+	// Inside an archive, the folder holding it (realDir); see archive.go.
+	// The active pane first, then the other pane of a dual-pane tab
+	add(m.tab().realDir(), filepath.Dir(m.tab().realDir()))
 	if other := m.otherPane(); other != nil {
-		add(other.CurrentPath) // Shown beside it, in dual-pane mode
+		add(other.realDir()) // Shown beside it, in dual-pane mode
 	}
 	panes := m.panes()
 	for _, tab := range panes {
-		add(tab.CurrentPath, filepath.Dir(tab.CurrentPath))
+		add(tab.realDir(), filepath.Dir(tab.realDir()))
 	}
 	for _, tab := range panes {
 		if tab.git.dir == tab.CurrentPath {
@@ -430,7 +432,7 @@ func (m *Model) handleDirsChanged(msg dirsChangedMsg) tea.Cmd {
 
 	var cmds []tea.Cmd
 	for _, tab := range m.panes() {
-		if !changed[tab.CurrentPath] && !changed[filepath.Dir(tab.CurrentPath)] {
+		if dir := tab.realDir(); !changed[dir] && !changed[filepath.Dir(dir)] {
 			if tab.gitChanged(changed) && !tab.Loading {
 				cmds = append(cmds, m.runGit(tab))
 			}
@@ -450,6 +452,9 @@ func (m *Model) handleDirsChanged(msg dirsChangedMsg) tea.Cmd {
 // nearest directory above it that still exists
 func (m *Model) reloadTab(tab *Tab) tea.Cmd {
 	dir := existingDir(tab.CurrentPath)
+	if a := tab.archive; a != nil && archiveAt(tab.CurrentPath) == a.ix.Path {
+		dir = tab.CurrentPath // Inside an archive that is still there; see archive.go
+	}
 	load := m.loadDir(tab, dir)
 	if dir != tab.CurrentPath && tab.ID == m.tab().ID {
 		return tea.Batch(load, m.setStatus(filepath.Base(tab.CurrentPath)+" no longer exists"))
