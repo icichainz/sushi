@@ -959,7 +959,7 @@ make check
 sushi/
 ├── internal/
 │   ├── app/         # Application logic (Bubble Tea model, update, view)
-│   ├── config/      # Configuration and bookmarks
+│   ├── config/      # Configuration, bookmarks and the folder history
 │   ├── fonts/       # Nerd Font installer
 │   ├── fs/          # File system scanning and operations, trash and archives
 │   ├── git/         # Reading git status for the badges and the branch
@@ -1015,9 +1015,15 @@ sushi/
 - [x] Search with Spotlight, below a folder or everywhere
 - [ ] Signed and notarized macOS builds, so other Macs open them without a warning
 - [x] Open a folder in sushi from Finder, multiple windows, and notifications when a long operation finishes
+- [x] Dual pane, with copy and move between the two lists
+- [x] Back and forward through the folders visited, and a palette of frequent folders
+- [x] Disk usage view
+- [x] Trash browser: put back, delete for good, empty
+- [x] Browse inside archives, and copy files out of them
+- [x] Rename by pattern
 - [ ] Follow EXIF orientation in image previews, and preview TIFF and animated GIFs
 - [ ] Per-volume trashes (`.Trashes` on macOS, `.Trash-$uid` on Linux), so trashing on another drive doesn't copy
-- [ ] Extract more formats, such as `.tar.bz2`, `.tar.xz` and `.7z`
+- [ ] Extract more formats with `X`, such as `.tar.bz2` (which can already be browsed and copied out of), `.tar.xz` and `.7z`
 
 ## Contributing
 
