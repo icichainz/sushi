@@ -300,7 +300,7 @@ When sushi starts, it reports problems with the keys in the status bar: unknown 
 
 - A key bound to two actions stays with one of them, which the message names: an action whose keys the config sets wins over one left at its defaults, and between two the config sets, the one listed first in the table below.
 - An action that takes a digit hides the bookmark that digit jumps to.
-- A key that a dialog uses for itself, such as `esc`, or a letter of the sort menu, does what the dialog says there, so the action's key is ignored in that dialog.
+- A key that a dialog uses for itself, such as `esc`, a letter of the sort menu, `g` in the disk usage view or `p` in the trash browser, does what the dialog says there, so the action's key is ignored in that dialog.
 - `ctrl+c` always quits, so another action can't have it, and `quit` needs a key of its own besides it.
 
 Plugin keys can't take a key that an action or a bookmark digit uses: a plugin that asks for one is reported, and left in the Run palette without a key.
@@ -312,8 +312,9 @@ These keys don't change:
 - `ctrl+c` quits from anywhere, stopping a running operation first, as `q` does.
 - `1`-`9` jump to bookmarks, unless an action has taken the digit.
 - Confirmations take `y` or `Enter` to go ahead, and `n`, `Esc` or `q` to cancel.
-- Typing in the search (`/`), in prompts, in the Find palette and in the tag picker goes into the text. Search moves between matches with `↑` and `↓`, and the Find palette and the tag picker have their own keys (see [Search](#search) and [Finder Tags](#finder-tags)).
-- Dialogs close with `Esc` and act with `Enter`; the Run palette switches with `Tab` and `Shift+Tab`, and the sort menu sorts with its letters `n`, `s`, `m` and `t`. Otherwise they follow the actions: the `up` and `down` keys move in the bookmark list, the sort menu, the Run palette and the Open with list, `home` and `end` go to the first and last app in the Open with list, `delete` removes a bookmark, `reverse` reverses the sort, and `shell` switches the Run palette to its command line.
+- Typing in the search (`/`), in prompts, in the Find palette, in the tag picker, in the frequent folders palette (`z`), in the trash browser's filter and in the fields of Rename by pattern (`M`) goes into the text. Search moves between matches with `↑` and `↓`, and the Find palette, the tag picker, the frequent folders palette and Rename by pattern have their own keys (see [Search](#search), [Finder Tags](#finder-tags), [History and Frequent Folders](#history-and-frequent-folders) and [Rename by Pattern](#rename-by-pattern)).
+- Dialogs close with `Esc` and act with `Enter`; the Run palette switches with `Tab` and `Shift+Tab`, and the sort menu sorts with its letters `n`, `s`, `m` and `t`. The disk usage view goes to an entry with `g`, and the trash browser puts an item back with `r` as well as `Enter`, restores it here with `p` and empties the trash with `E`. Otherwise they follow the actions: the `up` and `down` keys move in the bookmark list, the sort menu, the Run palette, the Open with list, the disk usage view and the trash browser, `home` and `end` go to the first and last app in the Open with list, `delete` removes a bookmark, `reverse` reverses the sort, and `shell` switches the Run palette to its command line.
+- The disk usage view also follows `page_up`, `page_down`, `left`, `back` and `right` to move, `delete` to trash, `quick_look`, `reveal` and `refresh`; the trash browser follows `page_up`, `page_down`, `hard_delete` to delete for good, `search` to filter, `quick_look` and `refresh`. Both close with `q`, unless one of the actions they follow has taken it.
 - The key panel closes with `Esc`, the `help` key and the `quit` key it lists, and scrolls with the `up` and `down` keys.
 
 With `tags: false` in the config, `tag` and `find_tag` have no keys, whatever `keys:` says.
@@ -380,6 +381,19 @@ The actions, with their default keys as the config writes them:
 | `grep` | `F` | Find text in the files below this directory |
 | `find_tag` | `"#"` | Find files by Finder tag below this directory |
 | `quit_no_cd` | `Q` | Quit without changing the shell's directory |
+| `dual_pane` | `w` | Split the tab into two file lists, or back to one |
+| `swap_panes` | `W` | Swap the two lists' sides |
+| `left_pane` | `ctrl+h` | Make the left list the active one |
+| `right_pane` | `ctrl+l` | Make the right list the active one |
+| `copy_to_pane` | `">"` | Copy to the other list's folder |
+| `move_to_pane` | `"<"` | Move to the other list's folder |
+| `other_pane_here` | `"="` | Open the other list on this folder |
+| `history_back` | `"["` | Go back to the folder before |
+| `history_forward` | `"]"` | Go forward again |
+| `frequent` | `z` | Open the frequent folders palette |
+| `disk_usage` | `U` | Show what takes the space in a folder |
+| `trash` | `ctrl+t` | Browse the trash |
+| `pattern_rename` | `M` | Rename by pattern |
 
 ## Layout
 
@@ -422,7 +436,7 @@ These are the default keys. `keys:` in the config changes them (see [Remapping K
 | `g`/`Home` | Go to first file |
 | `G`/`End` | Go to last file |
 | `←`/`h`, `Backspace` | Go to parent directory |
-| `→`/`l`, `Enter` | Enter a directory, or open a file (see `opener`) |
+| `→`/`l`, `Enter` | Enter a directory or an archive (see [Browsing Archives](#browsing-archives)), or open a file (see `opener`) |
 
 ### Files
 
@@ -439,6 +453,7 @@ Keys that act on files use the selection when there is one, and the file under t
 | `d` | Move to the trash, without asking (`Ctrl+z` brings it back; see [Trash and Undo](#trash-and-undo)) |
 | `D` | Delete permanently. Always asks first |
 | `r` | Rename |
+| `M` | Rename by pattern: find and replace in the names, with numbers and dates (see [Rename by Pattern](#rename-by-pattern)) |
 | `n` | New file (a name ending in `/` makes a directory; `src/main.go` creates `src/` too) |
 | `N` | New directory |
 | `e` | Edit in `$VISUAL` / `$EDITOR` |
@@ -538,6 +553,28 @@ Plugins can also have their own keys. See [docs/plugins.md](docs/plugins.md).
 | `T` | New tab in home directory |
 | `Tab` / `Shift+Tab` | Next / previous tab |
 | `Ctrl+w` | Close tab (quits on the last one) |
+
+### Panes and History
+
+| Key | Action |
+| --- | ------ |
+| `w` | Split the tab into two file lists side by side, or go back to one (see [Dual Pane](#dual-pane)) |
+| `Ctrl+h` / `Ctrl+l` | Make the left / right list the active one |
+| `W` | Swap the two lists' sides |
+| `=` | Open the other list on this folder, with its cursor on the same file |
+| `>` | Copy the selection, or the file under the cursor, into the other list's folder |
+| `<` | Move the selection, or the file under the cursor, into the other list's folder |
+| `[` / `]` | Back / forward through the folders this list has shown (see [History and Frequent Folders](#history-and-frequent-folders)) |
+| `z` | Jump to one of the folders you visit most |
+
+### Disk Usage and Trash
+
+| Key | Action |
+| --- | ------ |
+| `U` | Show what takes the space in the folder under the cursor, or in this one (see [Disk Usage](#disk-usage)) |
+| `Ctrl+t` | Browse the trash: put things back, delete them for good, empty it (see [The Trash Browser](#the-trash-browser)) |
+
+The key panel lists these two in its `Tabs, space` group.
 
 ### General
 
