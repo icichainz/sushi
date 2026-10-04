@@ -843,23 +843,51 @@ Sushi reaches macOS for these, and for the pasteboard, through `osascript` and `
 | macOS | `~/.Trash`, the Trash in the Dock |
 | Linux | The freedesktop.org trash in `$XDG_DATA_HOME/Trash`, or `~/.local/share/Trash`, so desktop file managers can show and restore what sushi trashed |
 
-Nothing in the trash is ever replaced or merged into: a name that is taken gets a number, as in `notes 2.txt`, even when another program trashes something of the same name at the same moment. Files on another drive are copied into the trash and then deleted, which takes longer; only what was copied is deleted, so files added meanwhile stay where they were. The Finder's Put Back doesn't know where files trashed by sushi came from; use `Ctrl+z` instead.
+Nothing in the trash is ever replaced or merged into: a name that is taken gets a number, as in `notes 2.txt`, even when another program trashes something of the same name at the same moment. Files on another drive are copied into the trash and then deleted, which takes longer; only what was copied is deleted, so files added meanwhile stay where they were. The Finder's Put Back doesn't know where files trashed by sushi came from; use `Ctrl+z`, or the [trash browser](#the-trash-browser), instead.
 
-`Ctrl+z` undoes the last of up to 20 operations: trash, rename, move, copy, new file or folder, duplicate, symlink paste, permissions, bulk rename, compress, extract and Finder tags. Undo history lasts until sushi quits.
+`Ctrl+z` undoes the last of up to 20 operations: trash, rename, move, copy, new file or folder, duplicate, symlink paste, permissions, bulk rename, rename by pattern, compress, extract, copying out of an archive, Finder tags, and putting back from the trash. Undo history lasts until sushi quits.
 
 - Undo never replaces anything. If something now sits where a file would go back, sushi says so and keeps that step, so you can move it out of the way and press `Ctrl+z` again.
 - Undoing an operation that created files, such as a copy, removes only what it created, and only if it hasn't changed since. Anything that isn't empty goes to the trash rather than being deleted, unless `delete_to_trash` is off; then a copy whose original is gone or has changed is kept, as it may be the only one left.
 - Permanent deletes can't be undone, and neither can files a paste overwrote. Undo stops there: what came before may depend on them, so nothing older can be undone.
 
+### The Trash Browser
+
+`Ctrl+t` lists what is in the trash, the most recently trashed first: each item's name, the folder it came from, its size, counted in the background, and when it was trashed. The heading says where the trash is, and how many items it holds and their size. Narrow views drop the folder first, then the date.
+
+| Key | Action |
+| --- | ------ |
+| `↑`/`k`, `↓`/`j`, `PgUp`/`Ctrl+u`, `PgDn`/`Ctrl+d` | Move |
+| `Enter` / `r` | Put the item back where it came from |
+| `p` | Restore the item into the folder sushi was showing, under the name it had before it was trashed, where that is known |
+| `D` | Delete the item for good, after asking |
+| `E` | Empty the trash, after asking |
+| `/` | Filter the items by name: type, then `Enter` to keep the filter or `Esc` to clear it |
+| `i` | Show the item in Quick Look |
+| `Ctrl+r` | List the trash again |
+| `Esc` | Clear the filter; without one, close the browser |
+| `q` | Close the browser |
+
+The questions take `y` or `Enter` to go ahead, and `n`, `Esc` or `q` to keep everything; the mouse does nothing while they ask. Otherwise, the wheel moves, a click picks an item, a double-click puts it back, and a click outside closes the browser.
+
+- Putting back never replaces anything: if something has taken the item's name in that folder, sushi says so, and the item stays in the trash.
+- Putting back, deleting and emptying run in the background, with their progress in the status bar, while the browser stays open; close it to cancel one with `Ctrl+x`. One that takes longer than `notify_after` ends with a notification, as in `Put Back finished` or `Empty Trash failed`.
+- `Ctrl+z`, back in the file list, undoes putting an item back by moving it to the trash again, if it hasn't changed since. Deleting for good and emptying can't be undone, and `Ctrl+z` says so.
+- Emptying deletes every item the browser lists; the trash folder itself stays, and so does Finder's `.DS_Store`. An item that can't be deleted is left, and the status bar says how many were.
+
+On macOS, `~/.Trash` keeps no record sushi can read of where its items came from: Finder keeps its own, in its `.DS_Store`. So sushi notes what it moves there in `~/.config/sushi/trash.json`: where each item came from, where it went in the trash, and when; an item is dropped from the file once it has left the trash. Items trashed by Finder or by other programs show `unknown origin`: `Enter` says so, and `p` restores them into the folder sushi was showing. When sushi has no note of an item, its date is the time it last changed, which moving it to the trash does. On Linux, the trash's `.trashinfo` files say where each item came from and when, and sushi notes nothing.
+
+macOS shows `~/.Trash` only to a terminal that has Full Disk Access. Without it, the browser says it can't read the trash and where to turn it on: System Settings > Privacy & Security > Full Disk Access.
+
 ## Background Operations
 
-Copy, move, delete, trash, duplicate, compress, extract and undo run in the background, one at a time, with their progress in the status bar:
+Copy, move, delete, trash, duplicate, compress, extract and undo run in the background, one at a time, with their progress in the status bar, and so do copies and moves to the other list of a dual pane (`>`, `<`), copying out of an archive, and putting back, deleting and emptying in the trash browser:
 
 ```text
 Copying 3/120 files 45% ████░░░░░░
 ```
 
-Where the status bar is short of room, the progress drops its bar, as in `Copying 3/120 45%`. You can keep browsing meanwhile. Keys that change files are refused until the operation finishes or you cancel it with `Ctrl+x`, with a message beside the progress (`Still copying: wait, or ctrl+x to cancel`), and so are plugins, the Run palette, opening files in other programs (`e`, `o`, `O`), Quick Look (`i`), showing files in Finder (`Ctrl+o`) and changing Finder tags (`L`). A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q`, `Q` and closing the last tab stop a running operation before quitting; press the key again to quit at once, and sushi still waits a few seconds for the operation to clean up. So does closing the terminal sushi runs in, or losing the ssh connection: sushi takes the hangup (SIGHUP) as it takes `q`. Files are copied, and zips written, under a hidden `.sushi-partial-` name and renamed once complete, so nothing half-written ever has its real name; if sushi is killed, what it leaves is removed when its folder is listed a day later. Copies keep their permissions, modification times, Finder tags and other extended attributes, as Finder's do; an attribute the destination can't take, as on a drive without them, is left behind.
+Where the status bar is short of room, the progress drops its bar, as in `Copying 3/120 45%`. You can keep browsing meanwhile. Keys that change files are refused until the operation finishes or you cancel it with `Ctrl+x`, with a message beside the progress (`Still copying: wait, or ctrl+x to cancel`), and so are plugins, the Run palette, opening files in other programs (`e`, `o`, `O`), Quick Look (`i`), showing files in Finder (`Ctrl+o`) and changing Finder tags (`L`); the disk usage view and the trash browser likewise refuse to trash, put back, delete or show anything in Quick Look or Finder meanwhile. A cancelled copy removes only the file it was in the middle of; the files already copied stay. `q`, `Q` and closing the last tab stop a running operation before quitting; press the key again to quit at once, and sushi still waits a few seconds for the operation to clean up. So does closing the terminal sushi runs in, or losing the ssh connection: sushi takes the hangup (SIGHUP) as it takes `q`. Files are copied, and zips written, under a hidden `.sushi-partial-` name and renamed once complete, so nothing half-written ever has its real name; if sushi is killed, what it leaves is removed when its folder is listed a day later. Copies keep their permissions, modification times, Finder tags and other extended attributes, as Finder's do; an attribute the destination can't take, as on a drive without them, is left behind.
 
 ### Notifications
 
