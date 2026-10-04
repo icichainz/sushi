@@ -682,6 +682,91 @@ The file keeps the 500 folders that score highest. Once the counts add up to mor
 
 `history: false` reads and writes nothing: `z` then offers only the folders of this session, and its title and footer say so.
 
+## Disk Usage
+
+`U` shows what takes the space in the folder under the cursor, or in the current folder when the cursor is on anything else, as ncdu does. It counts in the background, and the view, as large as the screen, fills in as it goes: the folder's entries, largest first, each with its size, a bar and the share of the folder it takes, and for folders, how many files are in them. Narrow views drop the number of files first, then the bar, then the share.
+
+The heading names the folder shown, with its size and number of files. The line below says how the count is going, as in `Scanning… 12,345 files, 1.2 GB so far`, and once it is done, what it found: `4.1 GB in 52,310 files, 3.9 GB on disk, scanned in 2.3s`.
+
+| Key | Action |
+| --- | ------ |
+| `↑`/`k`, `↓`/`j`, `PgUp`/`Ctrl+u`, `PgDn`/`Ctrl+d` | Move |
+| `Enter`, `→`/`l` | Open a folder, with what was counted already. On a file, close the view and go to it in the file list |
+| `←`/`h`, `Backspace` | Go up. Above the folder counted, the folder above it is counted, taking over what was counted of this one if the count was done |
+| `g` | Close the view and go to the entry in the file list, showing hidden files if it is one |
+| `d` | Move the entry to the trash, once the count is done or stopped |
+| `i` / `Ctrl+o` | Show the entry in Quick Look / in Finder |
+| `Ctrl+r` | Count again |
+| `Esc` | Stop the count, keeping the sizes counted so far. Once it has stopped, or is done, close the view |
+| `q` | Close the view |
+
+The mouse works too: the wheel moves, a click picks an entry, and a double-click opens it, as `Enter` does.
+
+- Everything is counted, hidden files included. Symbolic links are counted as links, never followed.
+- Sizes are the bytes in the files. The space on disk, in the line below the heading, counts a file with several hard links once.
+- A folder on another volume, such as a drive mounted inside the folder, is listed as `other volume` and not counted; `Enter` on it counts it on its own.
+- Folders that can't be read, and the folders holding them, are marked `!`, and the line below the heading says how many can't be read.
+- `d` always moves to the trash, whatever `delete_to_trash` says, and the entry leaves the figures once it has gone; `Ctrl+z`, once the view is closed, brings it back.
+
+## Browsing Archives
+
+`Enter`, `→`/`l` or a double-click on a `.zip`, `.jar`, `.tar`, `.tar.gz`/`.tgz` or `.tar.bz2`/`.tbz2` file goes inside it as if it were a folder. Its list of entries is read once, and nothing is extracted to browse it. The breadcrumb goes on past the archive, as in `downloads / bundle.zip / src`, the parent pane and going up work as they do on disk, and going up from the archive's top leaves it, with the cursor on it. The status bar shows `ARCHIVE` in place of `NORMAL`, and the last line the keys that work inside.
+
+Nothing inside an archive can be changed. The keys that would change files (`d`, `D`, `r`, `R`, `M`, `n`, `N`, `m`, `y`, `x`, `v`, `V`, `a`, `X` and `L`) say `Read-only: inside an archive`, and plugins, the Run palette, `O`, `F` and `#` say why they don't work there. These do:
+
+| Key | Inside an archive |
+| --- | ----------------- |
+| `Enter` on a file, `o`, `e`, `i` | Open a read-only copy: as `Enter` opens files (see `opener`), with the default app, in your editor, or in Quick Look. Changes to the copy aren't saved to the archive |
+| `c`, then `v` in a folder on disk | Copy the entries out, folders with all that is in them |
+| `f` | Find entries by name, below the folder shown |
+| `Ctrl+o` | Show the archive in Finder |
+
+The preview shows what is in a folder of the archive, and a file up to 4 MB as it would show it on disk; a larger one shows its details. The copies previewed and opened, of files up to 1 GB, go to a folder of sushi's own in the system's temporary folder, which is removed once no tab is inside that archive, and when sushi quits.
+
+`c` puts the selection, or the entry under the cursor, in sushi's clipboard. Finder can't take entries, so the pasteboard keeps what it had, and `v` pastes the entries until something is copied in Finder. `v` in a folder on disk then copies them out there, in the background, as safely as `X` extracts: a name already taken there is refused before anything is written, so nothing is ever replaced; links that would lead outside what is copied are refused; and a copy that is refused or cancelled leaves nothing behind. `Ctrl+z` removes what was copied out. `V` can't link to entries. Unlike `X`, which doesn't unpack `.tar.bz2` yet, copying out works with every kind of archive sushi browses.
+
+An entry named outside the archive, as `../evil.txt` would write outside the folder it is extracted to, is listed at the archive's top under its full name, whether hidden files are shown or not. It can be previewed, and is never copied out.
+
+- An archive with more than 100,000 entries, or a tar that takes more than 10 seconds to read through (a compressed one is read from its start), is listed in part, as is a damaged tar, up to the damage; the status bar says some entries are missing.
+- Git badges and Finder tags aren't shown inside. Going into or out of an archive clears the selection.
+- Sushi watches the folder holding the archive, so when the archive changes, the list is read from it again, as with `Ctrl+r`; if it is deleted, the tab goes up to that folder. A new tab opened inside (`t`) is inside too.
+- Quitting with `q` under [`sushicd`](#changing-directory-on-quit) changes to the folder holding the archive.
+
+## Rename by Pattern
+
+`M` renames the selection, or the file under the cursor, by finding and replacing text in the names, and shows every new name as you type. Its dialog has two fields:
+
+- **Find**: the text to look for, matched with its case, everywhere it occurs in a name. Between slashes, it is a regular expression in [Go's syntax](https://pkg.go.dev/regexp/syntax), as in `/(\d+)-(\w+)/`, and Replace takes its groups as `$1` or `${1}`; write `${1}` when a letter, digit or `_` follows, as `$1x` would be the group named `1x`. Left empty, Replace is the whole new name.
+- **Replace**: what to put in its place, with these tokens:
+
+| Token | Becomes |
+| ----- | ------- |
+| `{n}` | The file's number, from 1, in the order of the list |
+| `{n:3}` | The same, padded with zeros to 3 digits, as `001` (up to 18) |
+| `{name}` | The name without its extension; for a folder, its whole name |
+| `{ext}` | The extension with its dot, as `.jpg`, or nothing. `.tar.gz` and the like are one extension, and folders have none |
+| `{date}` | The modification date, as `2026-10-04` |
+
+| Find | Replace | `IMG_0001.jpg` becomes |
+| ---- | ------- | ---------------------- |
+| `IMG_` | `holiday-` | `holiday-0001.jpg` |
+| (empty) | `holiday-{n:3}{ext}` | `holiday-001.jpg`, then `holiday-002.jpg` for the next file |
+| `/^IMG_(\d+)/` | `{date} $1` | `2026-10-04 0001.jpg` |
+
+| Key | Action |
+| --- | ------ |
+| Typing | Edit the field. `Ctrl+u` clears what is before the cursor |
+| `Tab` / `Shift+Tab` | Switch between Find and Replace |
+| `↑`/`↓`, `PgUp`/`PgDn` | Scroll the names |
+| `Enter` | Rename |
+| `Esc` | Cancel |
+
+The dialog lists each name and what it becomes, faint if it stays the same, and says how many change. A new name that can't be used is shown in red, with why: it isn't a valid name, two of the files would get it, or a file that isn't being renamed away has it already, comparing names as macOS does, ignoring case and how accents are written. `Enter` renames nothing while there are any, nor while Find is an invalid regular expression. With no name changed, `Enter` closes the dialog.
+
+Every file is renamed at once, as with `R`: names can be swapped or shifted along, as `0.txt` to `1.txt` while `1.txt` becomes `2.txt`; a failure part way puts every name back; and one `Ctrl+z` undoes them all. Files selected in other folders come after those listed, and stay in their own folders. Tabs, bookmarks and selections follow the files, and the cursor stays on its file.
+
+A click on a field types there, where you clicked, and the wheel scrolls the names. A click outside the dialog does nothing, so a stray one can't lose what you typed. Names with a line break in them can't be renamed by pattern.
+
 ## Git
 
 In a Git repository, the file list has a narrow column after the selection marker with each entry's status:
