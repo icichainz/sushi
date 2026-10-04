@@ -614,6 +614,74 @@ While searching with `/`, clicks and the wheel move between the matches, and a d
 
 While sushi uses the mouse, terminals select text only with a key held: `Shift` in most, `Option` in iTerm2. In macOS Terminal, `Cmd+R` (View > Allow Mouse Reporting) switches the mouse between sushi and the terminal. Set `mouse: false` to leave the mouse to the terminal for good.
 
+## Dual Pane
+
+`w` splits the tab into two file lists side by side, each with its own folder, cursor, selection, search and history. One of them is active: the keys, prompts, search, Find, bookmarks and the preview work on it, as they do on a single list, and the breadcrumb shows its folder. `w` again leaves the active list on its own. The next time, the second list opens where it was, or in the nearest folder above that still exists; the first time, it opens on the same folder. Each tab splits on its own, and `dual_pane: true` in the config starts sushi with its first tab split.
+
+The parent pane isn't shown in dual-pane mode. From 120 columns, the active list's preview shows beside the two lists, and is to each of them what `preview_width` makes it to a single list: at the default 50, the three take a third of the width each. Narrower, or with the preview off (`p`), the two lists share the width. Each list's heading names its folder, with `~` for your home folder, and how many files are selected in it; the active list's heading is in the theme's accent color.
+
+| Key | Action |
+| --- | ------ |
+| `Ctrl+h` / `Ctrl+l` | Make the left / right list the active one. A click in a list does too |
+| `W` | Swap the two sides; the active list stays active |
+| `=` | Open the other list on the active list's folder, with its cursor on the same file |
+| `>` | Copy the selection, or the file under the cursor, into the other list's folder |
+| `<` | Move them there |
+
+With one list, these keys say that they need two panes, and that `w` shows them.
+
+`>` and `<` work as a paste into the other list's folder would, leaving the clipboard as it is: the same checks, so nothing is pasted onto itself; the same dialog before overwriting anything, which pastes nothing if the other list has moved to another folder meanwhile; and the same progress, cancel, notification and undo. The selection is cleared, and both lists show the result once the operation is done.
+
+A click in the other list makes it active, then does what it does there: a double-click opens what it is on. The wheel over the other list moves its cursor and leaves it inactive. While searching with `/`, clicks in the other list are ignored.
+
+The sort order and hidden files apply to both lists. Quitting with `q` under [`sushicd`](#changing-directory-on-quit) changes to the active list's folder.
+
+## History and Frequent Folders
+
+Each list remembers the folders it has shown, as a web browser does: `[` goes back to the folder before, `]` forward again, and the status bar says where, as in `Back to ~/projects`. Every way of changing folder counts: `h`, `l`, `Enter`, a click, a bookmark, a Find result, a plugin's `cd`, and `z`. Reloading the same folder doesn't. Each list keeps the last 100 folders each way, and a new tab, or the second list of a split tab, starts with none. Folders that no longer exist are passed over, and so are folders inside archives; renaming or moving a folder updates the history.
+
+`z` opens the frequent folders palette: the folders you have visited, those you visit most often and most recently first, but not the one shown. Type to narrow it down, ignoring case: first come the folders whose name starts with what you typed, then those whose name contains it, then those whose path contains it, then those whose path has its letters in order; within each, the most frecent first. The letters matched are underlined, and each row says when you were last there, as in `5m ago`, `3h ago` or `12d ago` (after 60 days, the month and year).
+
+| Key | Action |
+| --- | ------ |
+| Typing | Narrow the list down |
+| `↑`/`↓`, `Ctrl+p`/`Ctrl+n`, `PgUp`/`PgDn` | Move |
+| `Enter` | Go there, in the active list |
+| `Esc` | Close |
+
+The mouse works too: the wheel moves, a click picks a folder, a double-click goes there, and a click outside closes the palette. When it opens, the palette checks in the background for folders that are gone and drops them; one gone by the time you choose it is dropped then, and the palette stays open and says so.
+
+### The History File
+
+With `history: true`, the default, the folders you visit are kept in `~/.config/sushi/history.json`, which only you can read. Visits are written a couple of seconds after they happen, in the background, and when sushi quits:
+
+```json
+{
+  "dirs": [
+    {
+      "path": "/Users/you/projects/sushi",
+      "count": 42,
+      "last": 1791072000
+    }
+  ]
+}
+```
+
+`count` is the number of visits, scaled down as they age, and `last` the time of the latest, in seconds since 1970. Each sushi, in each terminal or window, adds its visits to the counts in the file rather than replacing them, and the file is replaced whole through a temporary file, so it is never left half written. If it can't be written, the status bar says so, once.
+
+Folders are ranked by frecency, as [zoxide](https://github.com/ajeetdsouza/zoxide) ranks them: their count, weighted by how long ago the latest visit was.
+
+| Latest visit | Score |
+| ------------ | ----- |
+| Within the last hour | count × 4 |
+| Within the last day | count × 2 |
+| Within the last week | count ÷ 2 |
+| Longer ago | count ÷ 4 |
+
+The file keeps the 500 folders that score highest. Once the counts add up to more than 10,000, every count is scaled down so that they add up to 9,000, and folders left with less than one visit are forgotten: old habits fade, so new ones can take over.
+
+`history: false` reads and writes nothing: `z` then offers only the folders of this session, and its title and footer say so.
+
 ## Git
 
 In a Git repository, the file list has a narrow column after the selection marker with each entry's status:
