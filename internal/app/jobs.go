@@ -55,6 +55,9 @@ type jobDoneMsg struct {
 	undo  *undoEntry       // How to reverse what was done, if anything was
 	moved []fs.RenamePair  // Paths that moved, so references to them follow
 	focus string           // Something new to put the cursor on
+	// Brings the view that started the job up to date with what it did,
+	// such as the disk usage view or the trash browser; may be nil
+	after func(m *Model) tea.Cmd
 }
 
 // startJob runs work in the background, passing its progress to the
@@ -186,7 +189,12 @@ func (msg jobDoneMsg) apply(m Model) (tea.Model, tea.Cmd) {
 	if msg.focus != "" && filepath.Dir(msg.focus) == m.tab().CurrentPath {
 		m.tab().focusPath = msg.focus
 	}
-	return m.Update(msg.op)
+	var after tea.Cmd
+	if msg.after != nil {
+		after = msg.after(&m)
+	}
+	updated, cmd := m.Update(msg.op)
+	return updated, tea.Batch(cmd, after)
 }
 
 // sendNotification tells the terminal, or the Sushi app, that something
@@ -205,6 +213,8 @@ var jobTitles = map[string]string{
 	"Compressing":     "Compression",
 	"Extracting":      "Extraction",
 	"Undoing":         "Undo",
+	"Putting back":    "Put Back",
+	"Emptying trash":  "Empty Trash",
 }
 
 // notifyDone notifies the terminal that j has finished or failed, if it
@@ -241,9 +251,8 @@ func (m Model) whileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	doing := strings.ToLower(m.job.doing)
 	switch {
 	case key.Matches(msg, k.Cancel):
-		m.job.cancel()
-		m.changeJob(func(j *job) { j.cancelled = true })
-		return m, nil, true
+		model, cmd := m.cancelJob()
+		return model, cmd, true
 
 	case key.Matches(msg, k.Quit, k.QuitNoCd), key.Matches(msg, k.CloseTab) && len(m.tabs) == 1:
 		if key.Matches(msg, k.QuitNoCd) {
@@ -258,13 +267,26 @@ func (m Model) whileBusy(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 		cmd := m.setStatus(fmt.Sprintf("Stopping %s before quitting; press %s again to quit now", doing, keyName(msg.String())))
 		return m, cmd, true
 
-	case key.Matches(msg, k.Delete, k.HardDelete, k.Paste, k.PasteLink, k.Rename, k.BulkRename,
+	case key.Matches(msg, k.Delete, k.HardDelete, k.Paste, k.PasteLink, k.Rename, k.BulkRename, k.PatternRename,
 		k.NewFile, k.NewDir, k.Duplicate, k.Chmod, k.Archive, k.Extract, k.Undo,
 		k.Plugins, k.Shell, k.Edit, k.Open, k.OpenWith, k.Reveal, k.QuickLook, k.Tag):
 		cmd := m.stillBusy()
 		return m, cmd, true
 	}
 	return m, nil, false
+}
+
+// cancelJob cancels the running job, as ctrl+x does wherever it is
+// pressed: in the file list, and in the views that start jobs of their
+// own, the trash browser and the disk usage view
+func (m Model) cancelJob() (tea.Model, tea.Cmd) {
+	if m.job == nil {
+		cmd := m.setStatus("Nothing to cancel")
+		return m, cmd
+	}
+	m.job.cancel()
+	m.changeJob(func(j *job) { j.cancelled = true })
+	return m, nil
 }
 
 // shortStatus describes the running job in fewer cells than status, as in

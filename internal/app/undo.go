@@ -25,6 +25,7 @@ const (
 	stepChmod                   // Put path's mode back
 	stepRenames                 // Undo a bulk rename, all at once
 	stepTags                    // Put path's Finder tags back; see tags.go
+	stepTrash                   // Trash path again if unchanged: undoes putting it back; see trashview.go
 )
 
 // undoStep reverses one part of an operation
@@ -33,8 +34,8 @@ type undoStep struct {
 	from, to string          // stepRestore
 	info     string          // stepRestore from the trash: the item's .trashinfo file
 	trashed  bool            // stepRestore: from is in the trash
-	path     string          // stepRemove and stepChmod
-	stamp    fs.Stamp        // stepRemove: what it was like when created
+	path     string          // stepRemove, stepChmod and stepTrash
+	stamp    fs.Stamp        // stepRemove and stepTrash: what it was like when created
 	source   string          // stepRemove of a copy: what it was copied from
 	original fs.Stamp        // stepRemove of a copy: what source was like then
 	mode     os.FileMode     // stepChmod
@@ -109,6 +110,12 @@ func (m *Model) pushUndo(e *undoEntry) {
 
 // startUndo undoes the most recent operation in the background
 func (m Model) startUndo() (tea.Model, tea.Cmd) {
+	return m.undoLast(nil)
+}
+
+// undoLast undoes the most recent operation in the background; after, if
+// not nil, runs once it is done, as jobDoneMsg says
+func (m Model) undoLast(after func(m *Model) tea.Cmd) (tea.Model, tea.Cmd) {
 	if len(m.undo) == 0 {
 		cmd := m.setStatus("Nothing to undo")
 		return m, cmd
@@ -125,7 +132,9 @@ func (m Model) startUndo() (tea.Model, tea.Cmd) {
 
 	useTrash := m.config.DeleteToTrash
 	cmd := m.startJob("Undoing", func(t *fs.Task) jobDoneMsg {
-		return undoWork(t, e, useTrash)
+		done := undoWork(t, e, useTrash)
+		done.after = after
+		return done
 	})
 	return m, cmd
 }
@@ -231,6 +240,9 @@ func (s undoStep) undo(t *fs.Task, useTrash bool) ([]fs.RenamePair, error) {
 
 	case stepTags:
 		return nil, undoTags(s)
+
+	case stepTrash:
+		return nil, trashAgain(t, s)
 	}
 	return nil, nil
 }
@@ -263,7 +275,7 @@ func removeCreated(t *fs.Task, s undoStep, useTrash bool) error {
 		}
 		return t.Delete(path)
 	}
-	tr, err := fs.DefaultTrash()
+	tr, err := userTrash()
 	if err != nil {
 		return err
 	}

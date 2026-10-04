@@ -15,6 +15,7 @@ type externalDoneMsg struct {
 	label  string // What ran, for the status message
 	err    error
 	reload bool // Whether files may have changed
+	exec   bool // It had the terminal, which sushi has back; see dispatch.go
 }
 
 // openFile opens a file as the opener setting says: "editor", "system", or
@@ -45,7 +46,7 @@ func (m Model) edit(paths []string) (tea.Model, tea.Cmd) {
 	}
 	cmd := tea.ExecProcess(opener.EditorCommand(paths...), func(err error) tea.Msg {
 		// The editor may have changed or created files
-		return externalDoneMsg{label: "Editor", err: err, reload: true}
+		return externalDoneMsg{label: "Editor", err: err, reload: true, exec: true}
 	})
 	return m, cmd
 }

@@ -3,6 +3,7 @@ package fs
 import (
 	"archive/tar"
 	"archive/zip"
+	"compress/bzip2"
 	"compress/gzip"
 	"errors"
 	"fmt"
@@ -211,11 +212,11 @@ func (t *Task) Extract(path, dir string) error {
 	var err error
 	switch ArchiveKind(path) {
 	case "zip":
-		err = t.extractZip(x, path, dir)
+		err = t.extractZip(x, path, dir, keepName)
 	case "tar":
-		err = t.extractTar(x, path, dir, false)
+		err = t.extractTar(x, path, dir, "", keepName)
 	case "tar.gz":
-		err = t.extractTar(x, path, dir, true)
+		err = t.extractTar(x, path, dir, "gz", keepName)
 	default:
 		err = fmt.Errorf("%s is not a zip, tar or tar.gz archive", filepath.Base(path))
 	}
@@ -233,8 +234,14 @@ func (t *Task) Extract(path, dir string) error {
 	return err
 }
 
-// extractZip unpacks a zip archive
-func (t *Task) extractZip(x *extractor, path, dir string) error {
+// keepName extracts every entry under its own name
+func keepName(name string) (string, bool) {
+	return name, true
+}
+
+// extractZip unpacks the entries of a zip archive that choose picks, under
+// the names it gives them
+func (t *Task) extractZip(x *extractor, path, dir string, choose func(string) (string, bool)) error {
 	zr, err := zip.OpenReader(path)
 	if err != nil {
 		return fmt.Errorf("cannot read %s: %w", filepath.Base(path), err)
@@ -242,9 +249,13 @@ func (t *Task) extractZip(x *extractor, path, dir string) error {
 	defer zr.Close()
 
 	for _, f := range zr.File {
+		name, ok := choose(f.Name)
+		if !ok {
+			continue
+		}
 		mode := f.FileInfo().Mode()
 		link := mode&os.ModeSymlink != 0
-		if _, err := x.admit(f.Name, link, mode.IsDir()); err != nil {
+		if _, err := x.admit(name, link, mode.IsDir()); err != nil {
 			return err
 		}
 		if link {
@@ -252,7 +263,7 @@ func (t *Task) extractZip(x *extractor, path, dir string) error {
 			if err != nil {
 				return err
 			}
-			if err := checkLinkTarget(f.Name, target); err != nil {
+			if err := checkLinkTarget(name, target); err != nil {
 				return err
 			}
 		}
@@ -270,20 +281,24 @@ func (t *Task) extractZip(x *extractor, path, dir string) error {
 		if err := t.ctx.Err(); err != nil {
 			return err
 		}
+		name, ok := choose(f.Name)
+		if !ok {
+			continue
+		}
 		info := f.FileInfo()
 		mode := info.Mode()
 		switch {
 		case mode.IsDir():
-			err = x.mkdir(f.Name, mode, info.ModTime())
+			err = x.mkdir(name, mode, info.ModTime())
 		case mode&os.ModeSymlink != 0:
 			var target string
 			if target, err = readZipLink(f); err == nil {
-				err = x.symlink(f.Name, target)
+				err = x.symlink(name, target)
 			}
 		case mode.IsRegular():
 			var rc io.ReadCloser
 			if rc, err = f.Open(); err == nil {
-				err = x.file(f.Name, mode, info.ModTime(), rc, true)
+				err = x.file(name, mode, info.ModTime(), rc, true)
 				rc.Close()
 			}
 		}
@@ -306,10 +321,11 @@ func readZipLink(f *zip.File) (string, error) {
 	return string(b), err
 }
 
-// extractTar unpacks a tar archive, gzipped if gz is set. Progress goes by
-// how much of the archive file has been read, as the number of files isn't
-// known until the end.
-func (t *Task) extractTar(x *extractor, path, dir string, gz bool) error {
+// extractTar unpacks the entries of a tar archive that choose picks, under
+// the names it gives them; compressed is "gz", "bz2" or "" for none.
+// Progress goes by how much of the archive file has been read, as the
+// number of files isn't known until the end.
+func (t *Task) extractTar(x *extractor, path, dir, compressed string, choose func(string) (string, bool)) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("cannot read %s: %w", filepath.Base(path), err)
@@ -320,13 +336,16 @@ func (t *Task) extractTar(x *extractor, path, dir string, gz bool) error {
 	}
 
 	var r io.Reader = &countingReader{r: f, t: t}
-	if gz {
+	switch compressed {
+	case "gz":
 		zr, err := gzip.NewReader(r)
 		if err != nil {
 			return fmt.Errorf("cannot read %s: %w", filepath.Base(path), err)
 		}
 		defer zr.Close()
 		r = zr
+	case "bz2":
+		r = bzip2.NewReader(r)
 	}
 	if err := x.open(dir); err != nil {
 		return err
@@ -345,25 +364,35 @@ func (t *Task) extractTar(x *extractor, path, dir string, gz bool) error {
 		if err != nil {
 			return fmt.Errorf("cannot read %s: %w", filepath.Base(path), err)
 		}
+		name, ok := choose(hdr.Name)
+		if !ok {
+			continue
+		}
 		mode := hdr.FileInfo().Mode()
 		switch hdr.Typeflag {
 		case tar.TypeDir, tar.TypeReg, tar.TypeSymlink, tar.TypeLink:
 			// Checked as they come, as a tar archive is read in order
-			if _, err := x.admit(hdr.Name, hdr.Typeflag == tar.TypeSymlink, hdr.Typeflag == tar.TypeDir); err != nil {
+			if _, err := x.admit(name, hdr.Typeflag == tar.TypeSymlink, hdr.Typeflag == tar.TypeDir); err != nil {
 				return err
 			}
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			err = x.mkdir(hdr.Name, mode, hdr.ModTime)
+			err = x.mkdir(name, mode, hdr.ModTime)
 		case tar.TypeReg:
-			err = x.file(hdr.Name, mode, hdr.ModTime, tr, false)
+			err = x.file(name, mode, hdr.ModTime, tr, false)
 		case tar.TypeSymlink:
-			if err = checkLinkTarget(hdr.Name, hdr.Linkname); err == nil {
-				err = x.symlink(hdr.Name, hdr.Linkname)
+			if err = checkLinkTarget(name, hdr.Linkname); err == nil {
+				err = x.symlink(name, hdr.Linkname)
 			}
 		case tar.TypeLink:
-			err = x.hardlink(hdr.Name, hdr.Linkname)
+			// To an entry extracted with it; a link to anything else would
+			// be to whatever is there
+			target, picked := choose(hdr.Linkname)
+			if !picked {
+				return refuse("%s links to %s, which isn't extracted with it", hdr.Name, hdr.Linkname)
+			}
+			err = x.hardlink(name, target)
 		default:
 			// Devices, pipes and other special entries aren't extracted
 		}
@@ -381,6 +410,11 @@ type countingReader struct {
 }
 
 func (c *countingReader) Read(p []byte) (int, error) {
+	// Skipping a large entry is a single call to the tar reader, so a
+	// cancel is seen here rather than only between entries
+	if err := c.t.ctx.Err(); err != nil {
+		return 0, err
+	}
 	n, err := c.r.Read(p)
 	c.t.p.Bytes += int64(n)
 	c.t.update()

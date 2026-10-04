@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fsnotify/fsnotify"
+	"github.com/icichainz/sushi/internal/utils"
 )
 
 const (
@@ -400,12 +402,18 @@ func (m *Model) watchTabs() {
 			}
 		}
 	}
-	add(m.tab().CurrentPath, filepath.Dir(m.tab().CurrentPath))
-	for i := range m.tabs {
-		add(m.tabs[i].CurrentPath, filepath.Dir(m.tabs[i].CurrentPath))
+	// Inside an archive, the folder holding it (realDir); see archive.go.
+	// The active pane first, then the other pane of a dual-pane tab
+	add(m.tab().realDir(), filepath.Dir(m.tab().realDir()))
+	if other := m.otherPane(); other != nil {
+		add(other.realDir()) // Shown beside it, in dual-pane mode
 	}
-	for i := range m.tabs {
-		if tab := &m.tabs[i]; tab.git.dir == tab.CurrentPath {
+	panes := m.panes()
+	for _, tab := range panes {
+		add(tab.realDir(), filepath.Dir(tab.realDir()))
+	}
+	for _, tab := range panes {
+		if tab.git.dir == tab.CurrentPath {
 			add(tab.git.watch...)
 		}
 	}
@@ -425,9 +433,8 @@ func (m *Model) handleDirsChanged(msg dirsChangedMsg) tea.Cmd {
 	}
 
 	var cmds []tea.Cmd
-	for i := range m.tabs {
-		tab := &m.tabs[i]
-		if !changed[tab.CurrentPath] && !changed[filepath.Dir(tab.CurrentPath)] {
+	for _, tab := range m.panes() {
+		if dir := tab.realDir(); !changed[dir] && !changed[filepath.Dir(dir)] {
 			if tab.gitChanged(changed) && !tab.Loading {
 				cmds = append(cmds, m.runGit(tab))
 			}
@@ -444,14 +451,28 @@ func (m *Model) handleDirsChanged(msg dirsChangedMsg) tea.Cmd {
 }
 
 // reloadTab reloads the tab's directory, or if it has been deleted, the
-// nearest directory above it that still exists
+// nearest directory above it that still exists, saying so whichever pane
+// or tab it is
 func (m *Model) reloadTab(tab *Tab) tea.Cmd {
-	dir := existingDir(tab.CurrentPath)
-	load := m.loadDir(tab, dir)
-	if dir != tab.CurrentPath && tab.ID == m.tab().ID {
-		return tea.Batch(load, m.setStatus(filepath.Base(tab.CurrentPath)+" no longer exists"))
+	load, gone := m.reloadOrUp(tab)
+	if gone != "" {
+		return tea.Batch(load, m.setStatus(gone))
 	}
 	return load
+}
+
+// reloadOrUp reloads the tab as reloadTab does, and returns what to say
+// if its folder is gone, rather than say it
+func (m *Model) reloadOrUp(tab *Tab) (tea.Cmd, string) {
+	dir := existingDir(tab.CurrentPath)
+	if a := tab.archive; a != nil && archiveAt(tab.CurrentPath) == a.ix.Path {
+		dir = tab.CurrentPath // Inside an archive that is still there; see archive.go
+	}
+	load := m.loadDir(tab, dir)
+	if dir != tab.CurrentPath {
+		return load, fmt.Sprintf("Folder gone: %s, showing %s", utils.Printable(filepath.Base(tab.CurrentPath)), displayPath(dir))
+	}
+	return load, ""
 }
 
 // existingDir returns path, or its nearest ancestor if path no longer
@@ -480,10 +501,10 @@ func (m Model) refresh() (tea.Model, tea.Cmd) {
 	m.retryGit()
 	m.openWith.cache = nil
 	cmds := []tea.Cmd{m.setStatus("Refreshed")}
-	for i := range m.tabs {
+	for _, tab := range m.panes() {
 		// A load in flight may have read its directory before the change
 		// that prompted the refresh, so the tab reloads once it is in
-		if tab := &m.tabs[i]; tab.Loading {
+		if tab.Loading {
 			tab.reloadWanted = true
 		} else {
 			cmds = append(cmds, m.reloadTab(tab))

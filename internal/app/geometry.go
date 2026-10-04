@@ -34,6 +34,7 @@ const (
 	areaPreview
 	areaStatus // The status bar and the hints below it
 	areaDialog
+	areaOther // The inactive list of a dual-pane tab; see dual.go
 )
 
 // spot is what lies under a screen cell
@@ -44,17 +45,26 @@ type spot struct {
 }
 
 // paneAt returns the pane drawn at column x. mainLines puts the parent,
-// the file list and the preview side by side, in that order.
+// the file list and the preview side by side, in that order, and in
+// dual-pane mode the inactive list on whichever side of the active one
+// it is.
 func (l layout) paneAt(x int) area {
-	switch {
-	case x < 0:
+	if x < 0 {
 		return areaNone
-	case x < l.parentW:
-		return areaParent
-	case x < l.parentW+l.listW:
-		return areaList
-	case x < l.parentW+l.listW+l.previewW:
-		return areaPreview
+	}
+	type col struct {
+		area  area
+		width int
+	}
+	cols := []col{{areaParent, l.parentW}, {areaList, l.listW}, {areaOther, l.otherW}, {areaPreview, l.previewW}}
+	if l.otherFirst {
+		cols[1], cols[2] = cols[2], cols[1]
+	}
+	for _, c := range cols {
+		if x < c.width {
+			return c.area
+		}
+		x -= c.width
 	}
 	return areaNone
 }
@@ -170,6 +180,13 @@ func (m Model) spotAt(x, y int) spot {
 	case areaList:
 		visible := m.visibleFiles()
 		if i := m.listStart(visible, rows) + s.row; i < len(visible) {
+			s.index = visible[i]
+		}
+	case areaOther:
+		// Found as it is drawn
+		o := m.otherView()
+		visible := o.visibleFiles()
+		if i := o.listStart(visible, rows) + s.row; i < len(visible) {
 			s.index = visible[i]
 		}
 	}

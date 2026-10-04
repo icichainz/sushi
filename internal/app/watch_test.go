@@ -505,8 +505,33 @@ func TestReloadOfDeletedDirectoryMovesUp(t *testing.T) {
 
 	os.RemoveAll(filepath.Join(root, "sub"))
 	m = changeDirs(t, m, sub)
-	if m.tab().CurrentPath != root || !strings.Contains(m.statusMsg, "no longer exists") {
+	if m.tab().CurrentPath != root || m.statusMsg != "Folder gone: deeper, showing "+displayPath(root) {
 		t.Fatalf("in %s with status %q, want %s", m.tab().CurrentPath, m.statusMsg, root)
+	}
+}
+
+func TestFolderGoneFromAnotherPane(t *testing.T) {
+	_, left, right := twoFolders(t)
+	m := dualModel(t, left, right)
+	m = goThere(t, m, filepath.Join(left, "sub"))
+
+	// Trashed from this pane, the folder the other shows is gone: the other
+	// goes up, and the status bar says so, after what was done, rather
+	// than show a raw error
+	m, cmd := press(t, cursorTo(t, m, "sub"), "d")
+	m = drain(t, m, cmd)
+	if m.otherPane().CurrentPath != left || m.statusMsg != "Moved to trash: sub. Folder gone: sub, showing "+displayPath(left) {
+		t.Fatalf("other pane in %s, status %q", m.otherPane().CurrentPath, m.statusMsg)
+	}
+
+	// Gone between finding it there and reading it: the same
+	os.Mkdir(filepath.Join(right, "brief"), 0755)
+	m = goHere(t, m, filepath.Join(right, "brief"))
+	load := m.loadDir(m.tab(), m.tab().CurrentPath)
+	os.Remove(filepath.Join(right, "brief"))
+	m = drain(t, m, load)
+	if m.tab().CurrentPath != right || m.statusMsg != "Folder gone: brief, showing "+displayPath(right) {
+		t.Fatalf("in %s, status %q", m.tab().CurrentPath, m.statusMsg)
 	}
 }
 

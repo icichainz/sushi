@@ -92,8 +92,7 @@ func (m Model) reverseSort() (tea.Model, tea.Cmd) {
 // forever.
 func (m Model) setSort(by string, reverse bool) (tea.Model, tea.Cmd) {
 	m.sortBy, m.sortReverse = by, reverse
-	for i := range m.tabs {
-		tab := &m.tabs[i]
+	for _, tab := range m.panes() {
 		m.resort(tab)
 		tab.resortWanted = tab.Loading
 	}

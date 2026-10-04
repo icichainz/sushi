@@ -54,6 +54,11 @@ func TestPrintableReplacesControlsRuneForRune(t *testing.T) {
 		"del\x7f c1\u009b31m nel\u0085": "del? c1?31m nel?",
 		"line\u2028para\u2029end":       "line?para?end",
 		"bad\xff\xfeutf8\xc3":           "bad??utf8?",
+		// Bidi overrides and isolates reorder what follows, as an
+		// "invoice\u202efdp.exe" shows as invoiceexe.pdf
+		"invoice\u202efdp.exe":                              "invoice?fdp.exe",
+		"\u202a\u202b\u202c\u202d \u2066\u2067\u2068\u2069": "???? ????",
+		"\u05e2\u05d1\u05e8\u05d9\u05ea \u200f mark":        "\u05e2\u05d1\u05e8\u05d9\u05ea \u200f mark", // Marks and right-to-left text are kept
 	} {
 		got := Printable(in)
 		if got != want {

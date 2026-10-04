@@ -28,18 +28,11 @@ func (e notCreated) Is(target error) bool { return target == ErrNotCreated }
 
 // DeletePath deletes a file or directory (recursively if directory).
 // Symlinks are removed without touching their target, even when named with
-// a trailing slash, which Lstat would follow.
+// a trailing slash, which Lstat would follow. As Task.Delete, it refuses a
+// mounted volume, and stops at one inside the directory, where os.RemoveAll
+// would empty it.
 func DeletePath(path string) error {
-	path = filepath.Clean(path)
-	info, err := os.Lstat(path)
-	if err != nil {
-		return fmt.Errorf("cannot access %s: %w", path, err)
-	}
-
-	if info.IsDir() {
-		return os.RemoveAll(path)
-	}
-	return os.Remove(path)
+	return background().Delete(path)
 }
 
 // CheckTransfer reports whether src can be copied or moved to dst.

@@ -45,7 +45,7 @@ func PlanRenames(paths []string, edited string, occupied func(path, src string) 
 
 	var pairs []RenamePair
 	var lineOf []int
-	moving := make(map[string]bool)
+	moving := make(Leaving)
 	for i, path := range paths {
 		if lines[i] == filepath.Base(path) {
 			continue
@@ -55,7 +55,7 @@ func PlanRenames(paths []string, edited string, occupied func(path, src string) 
 		}
 		pairs = append(pairs, RenamePair{From: path, To: filepath.Join(filepath.Dir(path), lines[i])})
 		lineOf = append(lineOf, i+1)
-		moving[path] = true
+		moving.Add(path)
 	}
 
 	claimed := make(map[string]int)
@@ -64,11 +64,53 @@ func PlanRenames(paths []string, edited string, occupied func(path, src string) 
 			return nil, fmt.Errorf("lines %d and %d both say %s", other, lineOf[i], filepath.Base(p.To))
 		}
 		claimed[p.To] = lineOf[i]
-		if !moving[p.To] && occupied(p.To, p.From) {
+		if !moving.Holds(p.To) && occupied(p.To, p.From) {
 			return nil, fmt.Errorf("line %d: %s already exists", lineOf[i], filepath.Base(p.To))
 		}
 	}
 	return pairs, nil
+}
+
+// Leaving is the files a batch of renames moves away from their names, by
+// folder and name as file systems compare them (see NameKey), so a name
+// being freed is known however it is spelled
+type Leaving map[string][]string
+
+// leaveKey keys path by its folder and folded name
+func leaveKey(path string) string {
+	return filepath.Dir(path) + "\x00" + NameKey(filepath.Base(path))
+}
+
+// Add notes that the file at path is renamed away
+func (l Leaving) Add(path string) {
+	k := leaveKey(path)
+	l[k] = append(l[k], path)
+}
+
+// Holds reports whether what is at path is a file being renamed away: path
+// itself, or the same file under another spelling of its name, as a file
+// system that ignores case finds Notes.txt at notes.txt. Another file of
+// that name, as a case-sensitive one can have, isn't.
+func (l Leaving) Holds(path string) bool {
+	paths := l[leaveKey(path)]
+	if len(paths) == 0 {
+		return false
+	}
+	for _, p := range paths {
+		if p == path {
+			return true
+		}
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	for _, p := range paths {
+		if other, err := os.Lstat(p); err == nil && os.SameFile(info, other) {
+			return true
+		}
+	}
+	return false
 }
 
 // RenameAll does a batch of renames as if all at once, so names can be

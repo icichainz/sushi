@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,8 +36,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		// A taller pane scrolls less far; every tab's pane is as tall
-		for i := range m.tabs {
-			tab := &m.tabs[i]
+		for _, tab := range m.panes() {
 			tab.PreviewScroll = min(tab.PreviewScroll, tab.Preview.MaxScroll(m.previewRows()))
 		}
 		return m, nil
@@ -51,6 +51,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The load read the directory before the order changed
 		resort := tab.resortWanted
 		tab.resortWanted = false
+		if msg.err != nil && msg.path == tab.CurrentPath && errors.Is(msg.err, os.ErrNotExist) && existingDir(msg.path) != msg.path {
+			// The folder shown went while it was read again: the nearest
+			// one above it that is there, saying so
+			tab.focusPath = ""
+			return m, m.reloadTab(tab)
+		}
 		if msg.err != nil {
 			// Keep showing the previous directory rather than an empty
 			// one. The file to focus was in the directory that failed, and
@@ -72,7 +78,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			focus = tab.CurrentPath
 		}
 
-		oldCursor := tab.Cursor
+		oldCursor, from := tab.Cursor, tab.CurrentPath
 		tab.setFiles(msg.files)
 		tab.ParentFiles = msg.parent
 		tab.CurrentPath = msg.path
@@ -80,6 +86,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			fs.SortFiles(tab.Files, m.sortBy, m.sortReverse)
 			fs.SortFiles(tab.ParentFiles, m.sortBy, m.sortReverse)
 		}
+		arrived := m.arriveIn(tab, msg.archive) // Into or out of an archive; see archive.go
 		tab.pruneSelection()
 		tab.Cursor = 0
 		if samePath {
@@ -100,7 +107,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateSearchResults()
 			m.cursorToMatch()
 		}
-		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt, m.gitAfterLoad(tab))
+		// For [, ] and z; see history.go
+		visit := m.noteVisit(tab, from)
+		cmd := tea.Batch(m.refreshPreview(tab), m.reloadIfWanted(tab), prompt, m.gitAfterLoad(tab), visit, arrived)
 		return m, cmd
 
 	case previewLoadedMsg:
@@ -171,10 +180,13 @@ func (m *Model) setStatusFor(msg string, d time.Duration) tea.Cmd {
 // flight. A load starting now sees every change so far, and lists files in
 // the order chosen so far, so no reload or re-sort is wanted after it.
 func (m *Model) loadDir(tab *Tab, path string) tea.Cmd {
-	tab.Loading = true
+	tab.Loading, tab.loadingTo = true, path
 	tab.reloadWanted = false
 	tab.resortWanted = false
 	tab.loadSeq++
+	if a := m.archiveFor(tab, path); a != nil {
+		return loadArchive(tab.ID, tab.loadSeq, a, path, m.scanOptions())
+	}
 	return loadDirectory(tab.ID, tab.loadSeq, path, m.scanOptions())
 }
 
@@ -195,7 +207,12 @@ var maxPreviewLines = 20000
 // shown. A text preview reads its usual lines, or enough to show the line
 // of a search result being opened, and on a reload as many as it had.
 func (m *Model) previewCmd(tab *Tab) tea.Cmd {
-	if !tab.PreviewEnabled || len(tab.Files) == 0 {
+	// What an archive entry's preview still loading would show is no longer
+	// wanted; see archive.go
+	m.arc.previews.cancel(tab.ID)
+	// The inactive pane of a dual-pane tab shows no preview; it loads one
+	// once active (see dual.go)
+	if !tab.PreviewEnabled || len(tab.Files) == 0 || m.isInactivePane(tab) {
 		return nil
 	}
 	file := tab.Files[tab.Cursor]
@@ -205,6 +222,9 @@ func (m *Model) previewCmd(tab *Tab) tea.Cmd {
 	}
 	if p := tab.Preview; p.Path == file.Path && p.IsText {
 		cfg.MaxLines = max(cfg.MaxLines, len(p.Lines))
+	}
+	if tab.archive != nil {
+		return m.entryPreview(tab, file, cfg) // See archive.go
 	}
 	return loadPreviewWith(tab.ID, file, cfg)
 }
@@ -322,6 +342,18 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == ModeTags {
 		return m.handleTagMode(msg)
 	}
+	if m.mode == ModeJump {
+		return m.handleJumpMode(msg)
+	}
+	if m.mode == ModeDiskUsage {
+		return m.handleDiskUsageMode(msg)
+	}
+	if m.mode == ModeTrash {
+		return m.handleTrashMode(msg)
+	}
+	if m.mode == ModePattern {
+		return m.handlePatternMode(msg)
+	}
 
 	// Plugin shortcuts; bindPluginKeys keeps them clear of built-in keys
 	if i, ok := m.pluginKeys[msg.String()]; ok {
@@ -333,6 +365,11 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if model, cmd, handled := m.whileBusy(msg); handled {
 			return model, cmd
 		}
+	}
+
+	// Inside an archive nothing changes, and some keys work on its entries
+	if model, cmd, handled := m.inArchive(msg); handled {
+		return model, cmd
 	}
 
 	tab := &m.tabs[m.activeTabIdx]
@@ -365,6 +402,12 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Tag):
 		return m.openTags()
+
+	case key.Matches(msg, m.keys.DiskUsage):
+		return m.openDiskUsage()
+
+	case key.Matches(msg, m.keys.Trash):
+		return m.openTrash()
 
 	case key.Matches(msg, m.keys.Help):
 		m.mode = ModeHelp
@@ -505,6 +548,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case m.keys.isToolKey(msg):
 		return m.handleToolKey(msg)
 
+	case m.keys.isPaneKey(msg):
+		// Dual pane and folder history; see dual.go
+		return m.handlePaneKey(msg)
+
 	case key.Matches(msg, m.keys.Search):
 		m.mode = ModeSearch
 		tab.SearchQuery = ""
@@ -582,6 +629,10 @@ func (m Model) openCursor() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if file := tab.Files[tab.Cursor]; !file.IsDir {
+		// Archives are gone into, and what is in them opens as a copy
+		if model, cmd, ok := m.openArchived(file); ok {
+			return model, cmd
+		}
 		// An editor or app could change the files a job is working on
 		if m.job != nil {
 			cmd := m.stillBusy()
@@ -626,6 +677,7 @@ func (m Model) closeTab() (tea.Model, tea.Cmd) {
 	if m.activeTabIdx >= len(m.tabs) {
 		m.activeTabIdx = len(m.tabs) - 1
 	}
+	m.sweepArchives()
 
 	cmd := m.setStatus(fmt.Sprintf("Tab closed. %d remaining", len(m.tabs)))
 	return m, cmd
@@ -868,7 +920,7 @@ func (m Model) handleConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "n", "N", "esc", "q":
 		m.mode = ModeNormal
-		m.pending, m.pasteDir = nil, ""
+		m.pending, m.pasteDir, m.sending = nil, "", nil
 		cmd := m.setStatus("Cancelled")
 		return m, cmd
 	}
@@ -884,6 +936,8 @@ type dirLoadedMsg struct {
 	files  []fs.FileInfo
 	parent []fs.FileInfo
 	err    error
+
+	archive *archiveView // The archive path is in, or nil on disk; see archive.go
 }
 
 // scanParent lists the directory above path for the parent pane. It is
@@ -936,6 +990,12 @@ type clearStatusMsg struct {
 func loadDirectory(tabID, seq int, path string, opts fs.ScanOptions) tea.Cmd {
 	return func() tea.Msg {
 		files, err := fs.ScanDirectory(path, opts)
+		if err != nil {
+			// Not a directory, but maybe an archive to go inside; see archive.go
+			if msg, ok := archiveLoad(tabID, seq, path, opts); ok {
+				return msg
+			}
+		}
 		msg := dirLoadedMsg{tabID: tabID, seq: seq, path: path, files: files, err: err}
 		if err == nil {
 			msg.parent = scanParent(path, opts)

@@ -22,7 +22,7 @@ var execProcess = tea.ExecProcess
 
 // isToolKey reports whether msg is handled by handleToolKey
 func (k KeyMap) isToolKey(msg tea.KeyMsg) bool {
-	return key.Matches(msg, k.HardDelete, k.Undo, k.Cancel, k.Duplicate, k.PasteLink, k.Chmod, k.BulkRename, k.Archive, k.Extract)
+	return key.Matches(msg, k.HardDelete, k.Undo, k.Cancel, k.Duplicate, k.PasteLink, k.Chmod, k.BulkRename, k.PatternRename, k.Archive, k.Extract)
 }
 
 // handleToolKey handles the keys for undo, permanent delete and the file
@@ -41,14 +41,15 @@ func (m Model) handleToolKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startChmod()
 	case key.Matches(msg, m.keys.BulkRename):
 		return m.startBulkRename()
+	case key.Matches(msg, m.keys.PatternRename):
+		return m.startPatternRename()
 	case key.Matches(msg, m.keys.Archive):
 		return m.startArchive()
 	case key.Matches(msg, m.keys.Extract):
 		return m.startExtract()
 	case key.Matches(msg, m.keys.Cancel):
-		// A running operation is cancelled by whileBusy
-		cmd := m.setStatus("Nothing to cancel")
-		return m, cmd
+		// A running operation is cancelled by whileBusy, before this
+		return m.cancelJob()
 	}
 	return m, nil
 }
@@ -61,9 +62,15 @@ func (m Model) startTrash() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	clear(m.tab().Selected)
+	cmd := m.trashJob(paths, nil)
+	return m, cmd
+}
 
-	cmd := m.startJob("Moving to trash", func(t *fs.Task) jobDoneMsg {
-		tr, err := fs.DefaultTrash()
+// trashJob moves paths to the trash in the background; after, if not nil,
+// runs once it is done, as jobDoneMsg says
+func (m *Model) trashJob(paths []string, after func(m *Model) tea.Cmd) tea.Cmd {
+	return m.startJob("Moving to trash", func(t *fs.Task) jobDoneMsg {
+		tr, err := userTrash()
 		if err != nil {
 			return jobDoneMsg{op: fileOperationMsg{operation: "trash", err: fmt.Errorf("can't find the trash: %w", err)}}
 		}
@@ -76,9 +83,8 @@ func (m Model) startTrash() (tea.Model, tea.Cmd) {
 			undo.steps = append(undo.steps, undoStep{kind: stepRestore, trashed: true, from: item.Path, to: item.Original, info: item.Info})
 			return nil
 		})
-		return jobDoneMsg{op: op, undo: undo}
+		return jobDoneMsg{op: op, undo: undo, after: after}
 	})
-	return m, cmd
 }
 
 // startHardDelete deletes the targets permanently. It always asks first,
@@ -352,12 +358,22 @@ func (msg bulkRenameMsg) apply(m Model) (tea.Model, tea.Cmd) {
 		cmd := m.setStatus("Can't rename: " + err.Error())
 		return m, cmd
 	}
+	return m.renamed(pairs)
+}
 
+// renamed follows a batch of renames done, by R or M: references to the
+// files follow them, the cursor stays on its file, and one undo puts them
+// all back at once
+func (m Model) renamed(pairs []fs.RenamePair) (tea.Model, tea.Cmd) {
 	m.retargetAll(pairs)
-	clear(m.tab().Selected)
+	tab := m.tab()
+	clear(tab.Selected)
 	back := make([]fs.RenamePair, len(pairs))
 	for i, p := range pairs {
 		back[i] = fs.RenamePair{From: p.To, To: p.From}
+		if len(tab.Files) > 0 && tab.Files[tab.Cursor].Path == p.From {
+			tab.focusPath = p.To
+		}
 	}
 	m.pushUndo(&undoEntry{label: "rename " + plural(len(pairs), "item"), steps: []undoStep{{kind: stepRenames, renames: back}}})
 	cmd := tea.Batch(m.setStatus("Renamed "+plural(len(pairs), "item")), m.reloadAll())

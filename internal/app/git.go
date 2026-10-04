@@ -70,8 +70,8 @@ func (m Model) startGit() tea.Cmd {
 
 func (gitStartMsg) apply(m Model) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	for i := range m.tabs {
-		cmds = append(cmds, m.gitAfterLoad(&m.tabs[i]))
+	for _, tab := range m.panes() {
+		cmds = append(cmds, m.gitAfterLoad(tab))
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -85,6 +85,14 @@ func (m *Model) gitAfterLoad(tab *Tab) tea.Cmd {
 		return nil
 	}
 	g := &tab.git
+	if tab.archive != nil {
+		// Nothing inside an archive is in a repository's work tree
+		if g.cancel != nil {
+			g.cancel()
+		}
+		*g = gitState{dir: tab.CurrentPath, seq: g.seq, off: true}
+		return nil
+	}
 	if g.dir != tab.CurrentPath {
 		if g.cancel != nil {
 			g.cancel()
@@ -189,14 +197,14 @@ func (t *Tab) gitChanged(changed map[string]bool) bool {
 // retryGit lets git run again in every tab, as ctrl+r asks: after git
 // init, say, or in a repository that took too long to read
 func (m *Model) retryGit() {
-	for i := range m.tabs {
-		m.tabs[i].git.off = false
+	for _, tab := range m.panes() {
+		tab.git.off = false
 	}
 }
 
 // stopGit stops the git commands running
 func (m Model) stopGit() {
-	for _, tab := range m.tabs {
+	for _, tab := range m.panes() {
 		if tab.git.cancel != nil {
 			tab.git.cancel()
 		}

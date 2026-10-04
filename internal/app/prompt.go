@@ -232,9 +232,10 @@ func (m *Model) retarget(oldPath, newPath string) {
 	// A job finishing may move what an open prompt is about
 	m.prompt.target = move(m.prompt.target)
 	m.prompt.dir = move(m.prompt.dir)
-	for i := range m.tabs {
-		tab := &m.tabs[i]
+	for _, tab := range m.panes() {
 		tab.CurrentPath = move(tab.CurrentPath)
+		tab.otherDir = move(tab.otherDir)
+		tab.nav.retarget(move)
 		for p := range tab.Selected {
 			if moved := move(p); moved != p {
 				delete(tab.Selected, p)
@@ -256,11 +257,24 @@ func (m *Model) retarget(oldPath, newPath string) {
 	}
 }
 
-// reloadAll reloads every tab, since any of them may show what changed
+// reloadAll reloads every tab, since any of them may show what changed:
+// a folder deleted, the nearest one above it that is still there. That
+// is said after what the status bar says, as what the operation did.
 func (m *Model) reloadAll() tea.Cmd {
-	cmds := make([]tea.Cmd, 0, len(m.tabs))
-	for i := range m.tabs {
-		cmds = append(cmds, m.loadDir(&m.tabs[i], m.tabs[i].CurrentPath))
+	cmds := make([]tea.Cmd, 0, len(m.tabs)+1)
+	note := ""
+	for _, tab := range m.panes() {
+		load, gone := m.reloadOrUp(tab)
+		cmds = append(cmds, load)
+		if note == "" {
+			note = gone
+		}
+	}
+	if note != "" {
+		if m.statusMsg != "" {
+			note = m.statusMsg + ". " + note
+		}
+		cmds = append(cmds, m.setStatus(note))
 	}
 	return tea.Batch(cmds...)
 }

@@ -45,12 +45,20 @@ func currentGlyphs() glyphs {
 type layout struct {
 	parentW, listW, previewW int // Pane widths including their divider; 0 hides the pane
 	bodyH                    int // Rows of each pane, heading included
+
+	// In dual-pane mode, the inactive list, and whether it is on the left
+	// of the active one; see dual.go
+	otherW     int
+	otherFirst bool
 }
 
 // layout works out the panes for the current terminal size: narrow
 // terminals lose the parent pane first, then the preview
 func (m Model) layout() layout {
 	tab := m.tabs[m.activeTabIdx]
+	if tab.split != nil {
+		return m.dualLayout(tab)
+	}
 	l := layout{bodyH: max(m.height-chromeRows, 1)}
 	rest := m.width
 	if m.width >= minWidthParent && filepath.Dir(tab.CurrentPath) != tab.CurrentPath {
@@ -100,6 +108,17 @@ func (m Model) View() string {
 		lines = m.withDialog(lines, m.openWithBox())
 	case ModeTags:
 		lines = m.withDialog(lines, m.tagBox())
+	case ModeJump:
+		lines = m.withDialog(lines, m.jumpBox())
+	case ModeDiskUsage:
+		lines = m.withDialog(lines, m.duBox())
+	case ModeTrash:
+		lines = m.withDialog(lines, m.trashBox())
+		if m.trash.confirm != "" {
+			lines = m.withDialog(lines, m.trashConfirmBox())
+		}
+	case ModePattern:
+		lines = m.withDialog(lines, m.patternBox())
 	case ModeHelp:
 		lines = m.withHelp(lines)
 	}
@@ -119,16 +138,32 @@ func (m Model) mainLines() []string {
 	lines := make([]string, 0, l.bodyH+chromeRows)
 	lines = append(lines, m.renderTabBar(), m.renderHeader())
 
-	var parent, preview []string
+	var parent, other, preview []string
 	if l.parentW > 0 {
 		parent = m.renderParent(l.parentW, l.bodyH)
 	}
-	list := m.renderFileList(l.listW, l.bodyH, l.parentW > 0)
+	listDivider, otherDivider := l.parentW > 0 || l.otherFirst, !l.otherFirst
+	room := 0
+	if l.otherW > 0 {
+		// The two lists show the same columns, as the wider can: the
+		// divider between them doesn't cost the other its size column
+		room = max(listInner(l.listW, listDivider), listInner(l.otherW, otherDivider))
+	}
+	list := m.renderFileListAt(l.listW, l.bodyH, listDivider, room)
+	if l.otherW > 0 {
+		// Beside the active list, as paneAt finds it; see dual.go
+		other = m.otherView().renderFileListAt(l.otherW, l.bodyH, otherDivider, room)
+	}
 	if l.previewW > 0 {
 		preview = m.renderPreview(l.previewW, l.bodyH)
 	}
 	for i := 0; i < l.bodyH; i++ {
 		row := list[i]
+		if other != nil && l.otherFirst {
+			row = other[i] + row
+		} else if other != nil {
+			row += other[i]
+		}
 		if parent != nil {
 			row = parent[i] + row
 		}
@@ -366,7 +401,14 @@ const (
 
 // listColumns sizes the columns; narrow lists lose the date, then the size
 func listColumns(inner int, files []fs.FileInfo) columns {
-	c := columns{inner: inner, iconW: 1, size: inner >= 40, date: inner >= 58}
+	return listColumnsAt(inner, inner, files)
+}
+
+// listColumnsAt sizes the columns of a list inner wide, with the size and
+// date a list room wide shows: the two lists of a dual pane show the same
+// columns, though the divider between them makes one a column narrower
+func listColumnsAt(inner, room int, files []fs.FileInfo) columns {
+	c := columns{inner: inner, iconW: 1, size: room >= 40, date: room >= 58}
 	for _, f := range files {
 		c.iconW = max(c.iconW, utils.Width(ui.GetFileIcon(f)))
 	}
@@ -398,22 +440,38 @@ func (m Model) visibleFiles() []int {
 
 // renderFileList renders the heading and rows of the file list
 func (m Model) renderFileList(width, height int, divider bool) []string {
+	return m.renderFileListAt(width, height, divider, 0)
+}
+
+// listInner is the width of a list's rows, inside its divider if it has one
+func listInner(width int, divider bool) int {
+	if divider {
+		return width - 1
+	}
+	return width
+}
+
+// renderFileListAt renders the file list with the columns of a list room
+// wide, as listColumnsAt has it, or its own with room 0
+func (m Model) renderFileListAt(width, height int, divider bool, room int) []string {
 	t := m.theme
 	g := currentGlyphs()
 	tab := m.tabs[m.activeTabIdx]
 
 	edge := ""
-	inner := width
+	inner := listInner(width, divider)
 	if divider {
 		edge = m.divider()
-		inner--
+	}
+	if room <= 0 {
+		room = inner
 	}
 	visible := m.visibleFiles()
 	files := make([]fs.FileInfo, len(visible))
 	for i, idx := range visible {
 		files[i] = tab.Files[idx]
 	}
-	c := m.withGitColumn(listColumns(inner, files))
+	c := m.withGitColumn(listColumnsAt(inner, room, files))
 
 	// Heading, with an arrow on the sorted column. The type has no column,
 	// nor has the size or date once the list is too narrow for it, so
@@ -439,7 +497,12 @@ func (m Model) renderFileList(width, height int, divider bool) []string {
 		head += utils.FitRight("Modified"+arrow("modified"), dateW)
 	}
 	out := make([]string, 0, height)
-	out = append(out, edge+m.fg(t.Faint).Render(utils.Fit(head, inner)))
+	if heading, ok := m.paneHeading(inner); ok {
+		// Two panes: each names its folder; see dual.go
+		out = append(out, edge+heading)
+	} else {
+		out = append(out, edge+m.fg(t.Faint).Render(utils.Fit(head, inner)))
+	}
 
 	rows := height - 1
 	message := ""
@@ -686,11 +749,25 @@ func (m Model) modeBadge() (string, lipgloss.Color) {
 		return "OPEN WITH", t.Accent
 	case ModeTags:
 		return "TAGS", t.Accent
+	case ModeJump:
+		return "JUMP", t.Accent
+	case ModeDiskUsage:
+		return "DISK USAGE", t.Accent
+	case ModeTrash:
+		if m.trash.confirm != "" {
+			return "CONFIRM", t.Danger
+		}
+		return "TRASH", t.Accent
+	case ModePattern:
+		return "RENAME", t.Accent
 	case ModeHelp:
 		return "KEYS", t.Accent
 	}
 	if len(m.tabs[m.activeTabIdx].Selected) > 0 {
 		return "SELECT", t.Selected
+	}
+	if m.tabs[m.activeTabIdx].archive != nil {
+		return "ARCHIVE", t.Highlight // Read-only; see archive.go
 	}
 	return "NORMAL", t.Accent
 }
@@ -857,6 +934,14 @@ func (m Model) renderBottomRow() string {
 		return m.renderHints(m.openWithHints())
 	case ModeTags:
 		return m.renderHints(m.tagHints())
+	case ModeJump:
+		return m.renderHints(m.jumpHints())
+	case ModeDiskUsage:
+		return m.renderHints(m.duHints())
+	case ModeTrash:
+		return m.renderHints(m.trashHints())
+	case ModePattern:
+		return m.renderHints(m.patternHints())
 	case ModeHelp:
 		if m.maxHelpScroll() > 0 {
 			return m.renderHints([]hint{{"esc", "close"}, {keysLabel("/", k.Down, k.Up), "scroll"}, {"any other key", "does what it says"}})
@@ -867,10 +952,17 @@ func (m Model) renderBottomRow() string {
 		return m.renderHints([]hint{keyHint("cancel "+strings.ToLower(m.job.doing), k.Cancel), keyHint("open", k.Enter),
 			keyHint("select", k.Select), keyHint("copy", k.Copy), keyHint("cut", k.Cut), keyHint("search", k.Search), keyHint("all keys", k.Help)})
 	}
+	if m.tabs[m.activeTabIdx].archive != nil {
+		return m.renderHints(m.archiveHints()) // See archive.go
+	}
+	if m.tab().split != nil {
+		return m.renderHints(m.dualHints())
+	}
 	if len(m.tabs[m.activeTabIdx].Selected) > 0 {
 		return m.renderHints([]hint{keyHint("toggle", k.Select), keyHint("invert", k.Invert), keyHint("clear", k.Unselect),
 			keyHint("copy", k.Copy), keyHint("cut", k.Cut), keyHint("delete", k.Delete), keyHint("edit", k.Edit),
-			keyHint("open", k.Open), keyHint("quick look", k.QuickLook), keyHint("shell", k.Shell), keyHint("all keys", k.Help)})
+			keyHint("open", k.Open), keyHint("quick look", k.QuickLook), keyHint("shell", k.Shell),
+			keyHint("rename by pattern", k.PatternRename), keyHint("all keys", k.Help)})
 	}
 	return m.renderHints([]hint{keyHint("open", k.Enter), keyHint("select", k.Select), keyHint("copy", k.Copy), keyHint("cut", k.Cut),
 		keyHint("paste", k.Paste), keyHint("rename", k.Rename), keyHint("new", k.NewFile), keyHint("delete", k.Delete),
@@ -1087,7 +1179,7 @@ func (k KeyMap) helpGroups() []helpGroup {
 	groups := []helpGroup{
 		{"Move", []hint{keyHint("down, up", k.Down, k.Up), keyHint("parent, open", k.Left, k.Right), keyHint("parent", k.Back),
 			keyHint("first, last", k.Home, k.End), keyHint("page up, down", k.PageUp, k.PageDown)}},
-		{"Files", []hint{keyHint("open", k.Enter), keyHint("edit, default app", k.Edit, k.Open), keyHint("rename, tags", k.Rename, k.Tag),
+		{"Files", []hint{keyHint("open", k.Enter), keyHint("edit, default app", k.Edit, k.Open), keyHint("rename, pattern, tags", k.Rename, k.PatternRename, k.Tag),
 			keyHint("new file, folder", k.NewFile, k.NewDir), keyHint("trash, delete", k.Delete, k.HardDelete)}},
 		{"Tools", []hint{keyHint("undo", k.Undo), keyHint("cancel operation", k.Cancel), keyHint("duplicate, paste link", k.Duplicate, k.PasteLink),
 			keyHint("chmod, bulk rename", k.Chmod, k.BulkRename), keyHint("zip, extract", k.Archive, k.Extract)}},
@@ -1097,10 +1189,16 @@ func (k KeyMap) helpGroups() []helpGroup {
 			keyHint("hidden files", k.Hidden), keyHint("this panel", k.Help)}},
 		{"Find", []hint{keyHint("find by name, tag", k.Find, k.FindTag), keyHint("find in files", k.Grep), keyHint("sort by, reverse", k.Sort, k.Reverse),
 			keyHint("refresh", k.Refresh), keyHint("quit without cd", k.QuitNoCd)}},
-		{"Tabs", []hint{keyHint("new here, home", k.NewTab, k.NewTabHome), keyHint("next", k.NextTab), keyHint("previous", k.PrevTab),
-			keyHint("close", k.CloseTab)}},
+		// The panel is full at 100x24, so disk usage and the trash share the
+		// Tabs group's spare row
+		{"Tabs, space", []hint{keyHint("new here, home", k.NewTab, k.NewTabHome), keyHint("next", k.NextTab), keyHint("previous", k.PrevTab),
+			keyHint("close", k.CloseTab), keyHint("disk usage, trash", k.DiskUsage, k.Trash)}},
 		{"Go", []hint{keyHint("bookmarks, add", k.Bookmark, k.AddBookmark), {"1-9", "jump to bookmark"}, keyHint("plugins", k.Plugins),
 			keyHint("shell command", k.Shell), keyHint("quit", k.Quit)}},
+		// Five rows at most, like the others, so the panel still fits 100x24
+		{"Panes, history", []hint{keyHint("dual pane, swap", k.DualPane, k.SwapPanes), keyHint("left, right pane", k.LeftPane, k.RightPane),
+			keyHint("copy, move across", k.CopyToPane, k.MoveToPane), keyHint("other pane here", k.OtherPaneHere),
+			keyHint("history, frequent", k.HistoryBack, k.HistoryForward, k.Frequent)}},
 	}
 	for i := range groups {
 		groups[i].keys = slices.DeleteFunc(groups[i].keys, func(h hint) bool { return h.key == "" })

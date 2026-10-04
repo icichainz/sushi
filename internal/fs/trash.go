@@ -26,6 +26,10 @@ import (
 type Trash struct {
 	Files string // Where trashed items go
 	Info  string // Where their .trashinfo files go; empty for ~/.Trash
+	// Where Put notes what it trashed, for a trash without .trashinfo
+	// files, so the trash browser can put it back; empty to note nothing.
+	// See trashlist.go.
+	Record string
 }
 
 // TrashedItem records where a trashed item came from, so it can be restored
@@ -97,6 +101,10 @@ func (tr *Trash) Put(t *Task, path string) (TrashedItem, error) {
 	if err != nil {
 		return TrashedItem{}, fmt.Errorf("cannot access %s: %w", filepath.Base(abs), err)
 	}
+	// Its rename fails as across filesystems, and the copy would empty it
+	if err := checkNotMount(abs, srcInfo); err != nil {
+		return TrashedItem{}, err
+	}
 
 	// The item itself isn't resolved: trashing a symlink moves only the link
 	item := filepath.Join(resolvePath(filepath.Dir(abs)), filepath.Base(abs))
@@ -118,8 +126,16 @@ func (tr *Trash) Put(t *Task, path string) (TrashedItem, error) {
 	}
 
 	trashed, err := tr.claim(abs, func(dest string) error { return renameForMove(abs, dest, false) })
-	if err == nil || !isCrossDevice(err) {
+	if err == nil {
+		tr.noteQuietly(trashed)
+		return trashed, nil
+	}
+	if !isCrossDevice(err) {
 		return trashed, err
+	}
+	// The original goes once copied, so its folder must let it
+	if err := checkRemovable(abs); err != nil {
+		return TrashedItem{}, err
 	}
 
 	// Another filesystem: copy, then rename the complete copy into place
@@ -139,11 +155,19 @@ func (tr *Trash) Put(t *Task, path string) (TrashedItem, error) {
 		os.RemoveAll(tmp)
 		return TrashedItem{}, err
 	}
+	tr.noteQuietly(trashed)
 	// A failed delete of the original leaves the item in the trash as well
 	if err := deleteCopied(list); err != nil {
 		return trashed, fmt.Errorf("move failed during cleanup: %w", err)
 	}
 	return trashed, nil
+}
+
+// noteQuietly notes a trashed item in the record. Failing to isn't the
+// trashing failing: the item is in the trash either way, and undo can
+// still put it back; only the trash browser won't know where it came from.
+func (tr *Trash) noteQuietly(it TrashedItem) {
+	_ = tr.note(it)
 }
 
 // claim puts the item from abs into the trash under the first free name,

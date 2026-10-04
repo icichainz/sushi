@@ -572,3 +572,56 @@ func TestMouseCanBeTurnedOff(t *testing.T) {
 		t.Fatal("a click moved the cursor with mouse: false")
 	}
 }
+
+// turnsMouseOn reports whether cmd, or a command it batches, turns the
+// mouse on again
+func turnsMouseOn(t *testing.T, cmd tea.Cmd) bool {
+	t.Helper()
+	if cmd == nil {
+		return false
+	}
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	select {
+	case msg := <-done:
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, c := range batch {
+				if turnsMouseOn(t, c) {
+					return true
+				}
+			}
+			return false
+		}
+		return fmt.Sprintf("%T", msg) == fmt.Sprintf("%T", tea.EnableMouseCellMotion())
+	case <-time.After(10 * time.Second):
+		t.Fatal("a command did not finish")
+		return false
+	}
+}
+
+func TestMouseBackAfterTheTerminalIsHandedBack(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "a.txt"), "")
+	for _, on := range []bool{true, false} {
+		cfg := noWatch()
+		cfg.Mouse = on
+		m := newTestModel(t, dir, cfg)
+		for _, c := range []struct {
+			msg  tea.Msg
+			back bool
+		}{
+			{externalDoneMsg{label: "Editor", exec: true, reload: true}, true},
+			{pluginDoneMsg{dir: dir, plugin: plugins.Plugin{Name: "t", Mode: plugins.ModeTerminal}}, true},
+			{pluginDoneMsg{dir: dir, plugin: plugins.Plugin{Name: "w", Mode: plugins.ModeWait}}, true},
+			{bulkRenameMsg{file: filepath.Join(t.TempDir(), "gone.txt"), err: fmt.Errorf("editor failed")}, true},
+			// These never had the terminal
+			{externalDoneMsg{label: "Open"}, false},
+			{pluginDoneMsg{dir: dir, plugin: plugins.Plugin{Name: "b", Mode: plugins.ModeBackground}}, false},
+		} {
+			_, cmd := m.Update(c.msg)
+			if got := turnsMouseOn(t, cmd); got != (c.back && on) {
+				t.Errorf("mouse: %v, after %#v: mouse turned on %v", on, c.msg, got)
+			}
+		}
+	}
+}
