@@ -291,6 +291,8 @@ func dialogKeys() []dialogKey {
 		{"the Run palette", []string{"up", "down", "shell"}, map[string]string{
 			"esc": "closes it", "enter": "runs the plugin", "tab": "switches to the command", "shift+tab": "switches to the command"}},
 		{"the Open with list", []string{"up", "down", "home", "end"}, map[string]string{"esc": "closes it", "enter": "opens with the app"}},
+		{"the disk usage view", []string{"up", "down", "page_up", "page_down", "left", "back", "right", "delete", "quick_look", "reveal", "refresh"},
+			map[string]string{"esc": "closes it", "enter": "opens the entry", "g": "goes to the entry"}},
 	}
 }
 

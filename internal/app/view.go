@@ -100,6 +100,8 @@ func (m Model) View() string {
 		lines = m.withDialog(lines, m.openWithBox())
 	case ModeTags:
 		lines = m.withDialog(lines, m.tagBox())
+	case ModeDiskUsage:
+		lines = m.withDialog(lines, m.duBox())
 	case ModeHelp:
 		lines = m.withHelp(lines)
 	}
@@ -686,6 +688,8 @@ func (m Model) modeBadge() (string, lipgloss.Color) {
 		return "OPEN WITH", t.Accent
 	case ModeTags:
 		return "TAGS", t.Accent
+	case ModeDiskUsage:
+		return "DISK USAGE", t.Accent
 	case ModeHelp:
 		return "KEYS", t.Accent
 	}
@@ -857,6 +861,8 @@ func (m Model) renderBottomRow() string {
 		return m.renderHints(m.openWithHints())
 	case ModeTags:
 		return m.renderHints(m.tagHints())
+	case ModeDiskUsage:
+		return m.renderHints(m.duHints())
 	case ModeHelp:
 		if m.maxHelpScroll() > 0 {
 			return m.renderHints([]hint{{"esc", "close"}, {keysLabel("/", k.Down, k.Up), "scroll"}, {"any other key", "does what it says"}})
@@ -1101,6 +1107,7 @@ func (k KeyMap) helpGroups() []helpGroup {
 			keyHint("close", k.CloseTab)}},
 		{"Go", []hint{keyHint("bookmarks, add", k.Bookmark, k.AddBookmark), {"1-9", "jump to bookmark"}, keyHint("plugins", k.Plugins),
 			keyHint("shell command", k.Shell), keyHint("quit", k.Quit)}},
+		{"Space", []hint{keyHint("disk usage", k.DiskUsage)}},
 	}
 	for i := range groups {
 		groups[i].keys = slices.DeleteFunc(groups[i].keys, func(h hint) bool { return h.key == "" })

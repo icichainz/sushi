@@ -119,6 +119,8 @@ type Model struct {
 	pb           pbState          // What sushi knows of the macOS pasteboard; see pasteboard.go
 	openWith     openWithState    // The Open with list; see openwith.go
 	quickLookWin *quickLookWindow // The Quick Look window open, if any; see quicklook.go
+
+	du duView // The disk usage view (U); see diskusage.go
 }
 
 // tab returns a pointer to the active tab
@@ -183,6 +185,7 @@ const (
 	ModeFind
 	ModeOpenWith
 	ModeTags
+	ModeDiskUsage
 )
 
 // KeyMap defines all key bindings. Each field is an action that keys: in
@@ -246,6 +249,7 @@ type KeyMap struct {
 	Grep        key.Binding
 	FindTag     key.Binding
 	QuitNoCd    key.Binding
+	DiskUsage   key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings
@@ -485,6 +489,11 @@ func DefaultKeyMap() KeyMap {
 		QuitNoCd: key.NewBinding(
 			key.WithKeys("Q"),
 			key.WithHelp("Q", "quit without cd"),
+		),
+		// See diskusage.go
+		DiskUsage: key.NewBinding(
+			key.WithKeys("U"),
+			key.WithHelp("U", "disk usage"),
 		),
 	}
 }
