@@ -120,7 +120,8 @@ type Model struct {
 	openWith     openWithState    // The Open with list; see openwith.go
 	quickLookWin *quickLookWindow // The Quick Look window open, if any; see quicklook.go
 
-	du duView // The disk usage view (U); see diskusage.go
+	du    duView    // The disk usage view (U); see diskusage.go
+	trash trashView // The trash browser (ctrl+t); see trashview.go
 }
 
 // tab returns a pointer to the active tab
@@ -186,6 +187,7 @@ const (
 	ModeOpenWith
 	ModeTags
 	ModeDiskUsage
+	ModeTrash
 )
 
 // KeyMap defines all key bindings. Each field is an action that keys: in
@@ -250,6 +252,7 @@ type KeyMap struct {
 	FindTag     key.Binding
 	QuitNoCd    key.Binding
 	DiskUsage   key.Binding
+	Trash       key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings
@@ -490,10 +493,14 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("Q"),
 			key.WithHelp("Q", "quit without cd"),
 		),
-		// See diskusage.go
+		// See diskusage.go and trashview.go
 		DiskUsage: key.NewBinding(
 			key.WithKeys("U"),
 			key.WithHelp("U", "disk usage"),
+		),
+		Trash: key.NewBinding(
+			key.WithKeys("ctrl+t"),
+			key.WithHelp("ctrl+t", "browse the trash"),
 		),
 	}
 }

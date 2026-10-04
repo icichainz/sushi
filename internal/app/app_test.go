@@ -825,7 +825,7 @@ func TestKeyPanel(t *testing.T) {
 	}
 	want := []string{"j k", "h l", "backspace", "g G", "ctrl+u d", "enter", "e o", "r L", "n N", "d D",
 		"ctrl+z", "ctrl+x", "y V", "m R", "a X", "space", "*", "u", "c x v", "O ctrl+o", "/", "p i", "J K", ".", "?",
-		"f #", "F", "s S", "ctrl+r", "Q", "t T", "tab", "shift+tab", "ctrl+w", "b B", "1-9", "P", "!", "q", "U"}
+		"f #", "F", "s S", "ctrl+r", "Q", "t T", "tab", "shift+tab", "ctrl+w", "b B", "1-9", "P", "!", "q", "U", "ctrl+t"}
 	if !slices.Equal(labels, want) {
 		t.Errorf("panel keys = %q\nwant %q", labels, want)
 	}

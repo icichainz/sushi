@@ -293,6 +293,8 @@ func dialogKeys() []dialogKey {
 		{"the Open with list", []string{"up", "down", "home", "end"}, map[string]string{"esc": "closes it", "enter": "opens with the app"}},
 		{"the disk usage view", []string{"up", "down", "page_up", "page_down", "left", "back", "right", "delete", "quick_look", "reveal", "refresh"},
 			map[string]string{"esc": "closes it", "enter": "opens the entry", "g": "goes to the entry"}},
+		{"the trash browser", []string{"up", "down", "page_up", "page_down", "hard_delete", "search", "quick_look", "refresh"},
+			map[string]string{"esc": "closes it", "enter": "puts the item back", "r": "puts the item back", "p": "restores the item here", "E": "empties the trash"}},
 	}
 }
 

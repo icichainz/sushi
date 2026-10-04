@@ -69,7 +69,7 @@ func (m Model) startTrash() (tea.Model, tea.Cmd) {
 // runs once it is done, as jobDoneMsg says
 func (m *Model) trashJob(paths []string, after func(m *Model) tea.Cmd) tea.Cmd {
 	return m.startJob("Moving to trash", func(t *fs.Task) jobDoneMsg {
-		tr, err := fs.DefaultTrash()
+		tr, err := userTrash()
 		if err != nil {
 			return jobDoneMsg{op: fileOperationMsg{operation: "trash", err: fmt.Errorf("can't find the trash: %w", err)}}
 		}
