@@ -232,9 +232,10 @@ func (m *Model) retarget(oldPath, newPath string) {
 	// A job finishing may move what an open prompt is about
 	m.prompt.target = move(m.prompt.target)
 	m.prompt.dir = move(m.prompt.dir)
-	for i := range m.tabs {
-		tab := &m.tabs[i]
+	for _, tab := range m.panes() {
 		tab.CurrentPath = move(tab.CurrentPath)
+		tab.otherDir = move(tab.otherDir)
+		tab.nav.retarget(move)
 		for p := range tab.Selected {
 			if moved := move(p); moved != p {
 				delete(tab.Selected, p)
@@ -259,8 +260,8 @@ func (m *Model) retarget(oldPath, newPath string) {
 // reloadAll reloads every tab, since any of them may show what changed
 func (m *Model) reloadAll() tea.Cmd {
 	cmds := make([]tea.Cmd, 0, len(m.tabs))
-	for i := range m.tabs {
-		cmds = append(cmds, m.loadDir(&m.tabs[i], m.tabs[i].CurrentPath))
+	for _, tab := range m.panes() {
+		cmds = append(cmds, m.loadDir(tab, tab.CurrentPath))
 	}
 	return tea.Batch(cmds...)
 }

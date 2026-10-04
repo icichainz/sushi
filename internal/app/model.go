@@ -44,6 +44,12 @@ type Tab struct {
 	resortWanted    bool // Sort order changed while loading: sort the load once in
 
 	git gitState // What Git says about CurrentPath; see git.go
+
+	// A tab's own fields are its active pane; in dual-pane mode split holds
+	// the other. See dual.go.
+	split    *split
+	otherDir string     // Where the other pane was when dual-pane mode was left
+	nav      navHistory // Folders to go back and forward to; see history.go
 }
 
 // Model represents the application state
@@ -119,18 +125,25 @@ type Model struct {
 	pb           pbState          // What sushi knows of the macOS pasteboard; see pasteboard.go
 	openWith     openWithState    // The Open with list; see openwith.go
 	quickLookWin *quickLookWindow // The Quick Look window open, if any; see quicklook.go
+
+	inactive bool          // This copy draws the inactive pane of a dual-pane tab; see dual.go
+	sending  *paneTransfer // The > or < transfer the overwrite dialog asks about; see dual.go
+	frecent  *frecency     // The folders visited, for z; see jump.go
+	jumper   jumpPalette   // The frequent folders palette (z)
 }
 
-// tab returns a pointer to the active tab
+// tab returns a pointer to the active tab: in dual-pane mode, its active
+// pane
 func (m *Model) tab() *Tab {
 	return &m.tabs[m.activeTabIdx]
 }
 
-// tabByID returns the tab with the given ID, or nil if it has been closed
+// tabByID returns the tab or pane with the given ID, or nil if it has been
+// closed
 func (m *Model) tabByID(id int) *Tab {
-	for i := range m.tabs {
-		if m.tabs[i].ID == id {
-			return &m.tabs[i]
+	for _, tab := range m.panes() {
+		if tab.ID == id {
+			return tab
 		}
 	}
 	return nil
@@ -183,6 +196,7 @@ const (
 	ModeFind
 	ModeOpenWith
 	ModeTags
+	ModeJump // The frequent folders palette; see jump.go
 )
 
 // KeyMap defines all key bindings. Each field is an action that keys: in
@@ -246,6 +260,18 @@ type KeyMap struct {
 	Grep        key.Binding
 	FindTag     key.Binding
 	QuitNoCd    key.Binding
+
+	// Dual pane and folder history; see dual.go, history.go and jump.go
+	DualPane       key.Binding
+	SwapPanes      key.Binding
+	LeftPane       key.Binding
+	RightPane      key.Binding
+	CopyToPane     key.Binding
+	MoveToPane     key.Binding
+	OtherPaneHere  key.Binding
+	HistoryBack    key.Binding
+	HistoryForward key.Binding
+	Frequent       key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings
@@ -486,6 +512,46 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("Q"),
 			key.WithHelp("Q", "quit without cd"),
 		),
+		DualPane: key.NewBinding(
+			key.WithKeys("w"),
+			key.WithHelp("w", "dual pane"),
+		),
+		SwapPanes: key.NewBinding(
+			key.WithKeys("W"),
+			key.WithHelp("W", "swap panes"),
+		),
+		LeftPane: key.NewBinding(
+			key.WithKeys("ctrl+h"),
+			key.WithHelp("ctrl+h", "left pane"),
+		),
+		RightPane: key.NewBinding(
+			key.WithKeys("ctrl+l"),
+			key.WithHelp("ctrl+l", "right pane"),
+		),
+		CopyToPane: key.NewBinding(
+			key.WithKeys(">"),
+			key.WithHelp(">", "copy to other pane"),
+		),
+		MoveToPane: key.NewBinding(
+			key.WithKeys("<"),
+			key.WithHelp("<", "move to other pane"),
+		),
+		OtherPaneHere: key.NewBinding(
+			key.WithKeys("="),
+			key.WithHelp("=", "other pane here"),
+		),
+		HistoryBack: key.NewBinding(
+			key.WithKeys("["),
+			key.WithHelp("[", "back in history"),
+		),
+		HistoryForward: key.NewBinding(
+			key.WithKeys("]"),
+			key.WithHelp("]", "forward in history"),
+		),
+		Frequent: key.NewBinding(
+			key.WithKeys("z"),
+			key.WithHelp("z", "frequent folders"),
+		),
 	}
 }
 
@@ -566,6 +632,13 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 	}
 
 	m.tabs = []Tab{initialTab}
+	// The folder sushi starts in counts as a visit, saved with the next
+	// or when sushi quits; see jump.go and dual.go
+	m.frecent = newFrecency(cfg.History)
+	m.frecent.record(path)
+	if cfg.DualPane {
+		m.splitTab(m.tab(), path)
+	}
 
 	loaded, warnings := plugins.Load(cfg.Plugins, config.PluginDir())
 	m.plugins = loaded

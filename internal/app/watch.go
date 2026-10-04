@@ -401,11 +401,15 @@ func (m *Model) watchTabs() {
 		}
 	}
 	add(m.tab().CurrentPath, filepath.Dir(m.tab().CurrentPath))
-	for i := range m.tabs {
-		add(m.tabs[i].CurrentPath, filepath.Dir(m.tabs[i].CurrentPath))
+	if other := m.otherPane(); other != nil {
+		add(other.CurrentPath) // Shown beside it, in dual-pane mode
 	}
-	for i := range m.tabs {
-		if tab := &m.tabs[i]; tab.git.dir == tab.CurrentPath {
+	panes := m.panes()
+	for _, tab := range panes {
+		add(tab.CurrentPath, filepath.Dir(tab.CurrentPath))
+	}
+	for _, tab := range panes {
+		if tab.git.dir == tab.CurrentPath {
 			add(tab.git.watch...)
 		}
 	}
@@ -425,8 +429,7 @@ func (m *Model) handleDirsChanged(msg dirsChangedMsg) tea.Cmd {
 	}
 
 	var cmds []tea.Cmd
-	for i := range m.tabs {
-		tab := &m.tabs[i]
+	for _, tab := range m.panes() {
 		if !changed[tab.CurrentPath] && !changed[filepath.Dir(tab.CurrentPath)] {
 			if tab.gitChanged(changed) && !tab.Loading {
 				cmds = append(cmds, m.runGit(tab))
@@ -480,10 +483,10 @@ func (m Model) refresh() (tea.Model, tea.Cmd) {
 	m.retryGit()
 	m.openWith.cache = nil
 	cmds := []tea.Cmd{m.setStatus("Refreshed")}
-	for i := range m.tabs {
+	for _, tab := range m.panes() {
 		// A load in flight may have read its directory before the change
 		// that prompted the refresh, so the tab reloads once it is in
-		if tab := &m.tabs[i]; tab.Loading {
+		if tab.Loading {
 			tab.reloadWanted = true
 		} else {
 			cmds = append(cmds, m.reloadTab(tab))

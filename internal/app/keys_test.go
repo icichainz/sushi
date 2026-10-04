@@ -489,7 +489,7 @@ func TestWriteKeys(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	cfg := config.DefaultConfig()
-	cfg.Keys = map[string]config.KeyList{"up": {"w", "up"}, "refresh": {}, "hidden": {"alt+space"}, "bogus": {"b"}}
+	cfg.Keys = map[string]config.KeyList{"up": {"H", "up"}, "refresh": {}, "hidden": {"alt+space"}, "bogus": {"b"}}
 	cfg.Plugins = []plugins.Plugin{{Name: "git status", Key: "Z", Command: "true"}}
 
 	var out strings.Builder
@@ -501,7 +501,7 @@ func TestWriteKeys(t *testing.T) {
 		t.Fatalf("problems = %q", problems)
 	}
 	text := out.String()
-	for _, want := range []string{"  up: [w, up]", "  hard_delete: [D]", "  select: [space]", `  help: ["?"]`, "  refresh: []",
+	for _, want := range []string{"  up: [H, up]", "  hard_delete: [D]", "  select: [space]", `  help: ["?"]`, "  refresh: []",
 		"  hidden: [alt+space]", "  quit: [q, ctrl+c]", "# move up", "#   Z  git status", "1-9"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("output lacks %q:\n%s", want, text)

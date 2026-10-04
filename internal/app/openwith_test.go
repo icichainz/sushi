@@ -312,18 +312,18 @@ func TestOpenWithFillsTheTerminal(t *testing.T) {
 func TestOpenWithAndRevealCanBeRemapped(t *testing.T) {
 	f := useFakeMac(t)
 	f.apps = `{"default":"/Applications/A.app","apps":[]}`
-	m := withKeys(t, threeFiles(t), map[string]config.KeyList{"open_with": {"W"}, "reveal": {"alt+r"}})
+	m := withKeys(t, threeFiles(t), map[string]config.KeyList{"open_with": {"A"}, "reveal": {"alt+r"}})
 	if m.statusMsg != "" {
 		t.Fatalf("unexpected problems: %s", m.statusMsg)
 	}
 	panel := strings.Join(strings.Fields(ansi.Strip(strings.Join(m.helpLines(), "\n"))), " ")
-	if !strings.Contains(panel, "W alt+r open with, reveal") {
+	if !strings.Contains(panel, "A alt+r open with, reveal") {
 		t.Fatalf("panel:\n%s", strings.Join(m.helpLines(), "\n"))
 	}
 	if same, _ := press(t, m, "O"); same.mode != ModeNormal {
 		t.Fatal("O still opens the list")
 	}
-	m, cmd := press(t, m, "W")
+	m, cmd := press(t, m, "A")
 	if m = drain(t, m, cmd); m.mode != ModeOpenWith || len(m.openWith.apps) != 1 {
 		t.Fatalf("W: mode %v", m.mode)
 	}

@@ -45,12 +45,20 @@ func currentGlyphs() glyphs {
 type layout struct {
 	parentW, listW, previewW int // Pane widths including their divider; 0 hides the pane
 	bodyH                    int // Rows of each pane, heading included
+
+	// In dual-pane mode, the inactive list, and whether it is on the left
+	// of the active one; see dual.go
+	otherW     int
+	otherFirst bool
 }
 
 // layout works out the panes for the current terminal size: narrow
 // terminals lose the parent pane first, then the preview
 func (m Model) layout() layout {
 	tab := m.tabs[m.activeTabIdx]
+	if tab.split != nil {
+		return m.dualLayout(tab)
+	}
 	l := layout{bodyH: max(m.height-chromeRows, 1)}
 	rest := m.width
 	if m.width >= minWidthParent && filepath.Dir(tab.CurrentPath) != tab.CurrentPath {
@@ -100,6 +108,8 @@ func (m Model) View() string {
 		lines = m.withDialog(lines, m.openWithBox())
 	case ModeTags:
 		lines = m.withDialog(lines, m.tagBox())
+	case ModeJump:
+		lines = m.withDialog(lines, m.jumpBox())
 	case ModeHelp:
 		lines = m.withHelp(lines)
 	}
@@ -119,16 +129,25 @@ func (m Model) mainLines() []string {
 	lines := make([]string, 0, l.bodyH+chromeRows)
 	lines = append(lines, m.renderTabBar(), m.renderHeader())
 
-	var parent, preview []string
+	var parent, other, preview []string
 	if l.parentW > 0 {
 		parent = m.renderParent(l.parentW, l.bodyH)
 	}
-	list := m.renderFileList(l.listW, l.bodyH, l.parentW > 0)
+	list := m.renderFileList(l.listW, l.bodyH, l.parentW > 0 || l.otherFirst)
+	if l.otherW > 0 {
+		// Beside the active list, as paneAt finds it; see dual.go
+		other = m.otherView().renderFileList(l.otherW, l.bodyH, !l.otherFirst)
+	}
 	if l.previewW > 0 {
 		preview = m.renderPreview(l.previewW, l.bodyH)
 	}
 	for i := 0; i < l.bodyH; i++ {
 		row := list[i]
+		if other != nil && l.otherFirst {
+			row = other[i] + row
+		} else if other != nil {
+			row += other[i]
+		}
 		if parent != nil {
 			row = parent[i] + row
 		}
@@ -439,7 +458,12 @@ func (m Model) renderFileList(width, height int, divider bool) []string {
 		head += utils.FitRight("Modified"+arrow("modified"), dateW)
 	}
 	out := make([]string, 0, height)
-	out = append(out, edge+m.fg(t.Faint).Render(utils.Fit(head, inner)))
+	if heading, ok := m.paneHeading(inner); ok {
+		// Two panes: each names its folder; see dual.go
+		out = append(out, edge+heading)
+	} else {
+		out = append(out, edge+m.fg(t.Faint).Render(utils.Fit(head, inner)))
+	}
 
 	rows := height - 1
 	message := ""
@@ -686,6 +710,8 @@ func (m Model) modeBadge() (string, lipgloss.Color) {
 		return "OPEN WITH", t.Accent
 	case ModeTags:
 		return "TAGS", t.Accent
+	case ModeJump:
+		return "JUMP", t.Accent
 	case ModeHelp:
 		return "KEYS", t.Accent
 	}
@@ -857,6 +883,8 @@ func (m Model) renderBottomRow() string {
 		return m.renderHints(m.openWithHints())
 	case ModeTags:
 		return m.renderHints(m.tagHints())
+	case ModeJump:
+		return m.renderHints(m.jumpHints())
 	case ModeHelp:
 		if m.maxHelpScroll() > 0 {
 			return m.renderHints([]hint{{"esc", "close"}, {keysLabel("/", k.Down, k.Up), "scroll"}, {"any other key", "does what it says"}})
@@ -866,6 +894,9 @@ func (m Model) renderBottomRow() string {
 	if m.job != nil {
 		return m.renderHints([]hint{keyHint("cancel "+strings.ToLower(m.job.doing), k.Cancel), keyHint("open", k.Enter),
 			keyHint("select", k.Select), keyHint("copy", k.Copy), keyHint("cut", k.Cut), keyHint("search", k.Search), keyHint("all keys", k.Help)})
+	}
+	if m.tab().split != nil {
+		return m.renderHints(m.dualHints())
 	}
 	if len(m.tabs[m.activeTabIdx].Selected) > 0 {
 		return m.renderHints([]hint{keyHint("toggle", k.Select), keyHint("invert", k.Invert), keyHint("clear", k.Unselect),
@@ -1101,6 +1132,10 @@ func (k KeyMap) helpGroups() []helpGroup {
 			keyHint("close", k.CloseTab)}},
 		{"Go", []hint{keyHint("bookmarks, add", k.Bookmark, k.AddBookmark), {"1-9", "jump to bookmark"}, keyHint("plugins", k.Plugins),
 			keyHint("shell command", k.Shell), keyHint("quit", k.Quit)}},
+		// Five rows at most, like the others, so the panel still fits 100x24
+		{"Panes, history", []hint{keyHint("dual pane, swap", k.DualPane, k.SwapPanes), keyHint("left, right pane", k.LeftPane, k.RightPane),
+			keyHint("copy, move across", k.CopyToPane, k.MoveToPane), keyHint("other pane here", k.OtherPaneHere),
+			keyHint("history, frequent", k.HistoryBack, k.HistoryForward, k.Frequent)}},
 	}
 	for i := range groups {
 		groups[i].keys = slices.DeleteFunc(groups[i].keys, func(h hint) bool { return h.key == "" })

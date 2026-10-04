@@ -36,6 +36,12 @@ type Config struct {
 	// d moves files to the trash, which ctrl+z can undo; D always deletes
 	DeleteToTrash bool `yaml:"delete_to_trash"`
 
+	// Start with two file lists side by side; w toggles them either way
+	DualPane bool `yaml:"dual_pane"`
+	// Remember the folders visited in history.json, for z to jump back to;
+	// off, z offers only this session's folders
+	History bool `yaml:"history"`
+
 	// A background operation that takes longer than this notifies the
 	// terminal, or the Sushi app, when it finishes; 0 never does
 	NotifyAfter Duration `yaml:"notify_after"`
@@ -67,6 +73,7 @@ func DefaultConfig() *Config {
 		Tags:           true,
 		ConfirmDelete:  true,
 		DeleteToTrash:  true,
+		History:        true,
 		NotifyAfter:    Duration(5 * time.Second),
 		Opener:         "auto",
 		SortBy:         "name",

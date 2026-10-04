@@ -6,13 +6,16 @@ import (
 )
 
 // Close stops the work sushi does in the background: watching directories,
-// searching and git status, and closes the Quick Look window. Call it once
-// the program has finished.
+// searching and git status, closes the Quick Look window, and saves the
+// folders visited that aren't saved yet. Call it once the program has
+// finished.
 func (m Model) Close() {
 	m.watch.stop()
 	m.stopFind()
 	m.stopGit()
 	m.quickLookWin.close()
+	// Nowhere left to say it failed; the history is a convenience
+	_ = m.frecent.flush()
 }
 
 // ExitDir returns the directory the shell should change to now that sushi
