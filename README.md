@@ -416,7 +416,7 @@ The preview pane shows the file under the cursor. `J` and `K`, or the mouse whee
 | Text and code | Syntax highlighting and line numbers, for the first 2000 lines. Files over 10 MB show their details only |
 | Folders | The first 200 entries, folders first and then by name, as the file list sorts them by name |
 | Images (PNG, JPEG, GIF, WebP, BMP) | Drawn to fit the pane in 24-bit or 256 colors, with the format and size in pixels in the heading. GIFs show their first frame |
-| Archives (`.zip`, `.jar`, `.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`/`.tbz2`) | The entries with their sizes (the first 500), with the number of entries and the unpacked size in the heading. Nothing is extracted |
+| Archives (`.zip`, `.jar`, `.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`/`.tbz2`) | The entries with their sizes (the first 500), with the number of entries and the unpacked size in the heading. Nothing is extracted. `Enter` goes inside; see [Browsing Archives](#browsing-archives) |
 | PDF | The text of the first 5 pages, and the page count, from poppler's `pdftotext` and `pdfinfo` |
 | Symbolic links | The preview of what the link points to, with its target in the heading. A link without an extension is previewed by its target's name, so `latest` pointing to `photo.png` shows the picture |
 | Other files | Type, size, permissions and modification date |
@@ -721,13 +721,13 @@ Nothing inside an archive can be changed. The keys that would change files (`d`,
 | `f` | Find entries by name, below the folder shown |
 | `Ctrl+o` | Show the archive in Finder |
 
-The preview shows what is in a folder of the archive, and a file up to 4 MB as it would show it on disk; a larger one shows its details. The copies previewed and opened, of files up to 1 GB, go to a folder of sushi's own in the system's temporary folder, which is removed once no tab is inside that archive, and when sushi quits.
+The preview shows what is in a folder of the archive, and a file up to 4 MB as it would show it on disk; a larger one shows its details. Files up to 1 GB can be opened. The copies previewed and opened go to a folder of sushi's own in the system's temporary folder, and are removed once no tab is inside that archive, and when sushi quits.
 
 `c` puts the selection, or the entry under the cursor, in sushi's clipboard. Finder can't take entries, so the pasteboard keeps what it had, and `v` pastes the entries until something is copied in Finder. `v` in a folder on disk then copies them out there, in the background, as safely as `X` extracts: a name already taken there is refused before anything is written, so nothing is ever replaced; links that would lead outside what is copied are refused; and a copy that is refused or cancelled leaves nothing behind. `Ctrl+z` removes what was copied out. `V` can't link to entries. Unlike `X`, which doesn't unpack `.tar.bz2` yet, copying out works with every kind of archive sushi browses.
 
 An entry named outside the archive, as `../evil.txt` would write outside the folder it is extracted to, is listed at the archive's top under its full name, whether hidden files are shown or not. It can be previewed, and is never copied out.
 
-- An archive with more than 100,000 entries, or a tar that takes more than 10 seconds to read through (a compressed one is read from its start), is listed in part, as is a damaged tar, up to the damage; the status bar says some entries are missing.
+- An archive with more than 100,000 entries, or a tar that takes more than 10 seconds to read through, is listed in part, as is a damaged tar, up to the damage; the status bar says some entries are missing.
 - Git badges and Finder tags aren't shown inside. Going into or out of an archive clears the selection.
 - Sushi watches the folder holding the archive, so when the archive changes, the list is read from it again, as with `Ctrl+r`; if it is deleted, the tab goes up to that folder. A new tab opened inside (`t`) is inside too.
 - Quitting with `q` under [`sushicd`](#changing-directory-on-quit) changes to the folder holding the archive.
