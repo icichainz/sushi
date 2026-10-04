@@ -322,6 +322,9 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == ModeTags {
 		return m.handleTagMode(msg)
 	}
+	if m.mode == ModePattern {
+		return m.handlePatternMode(msg)
+	}
 
 	// Plugin shortcuts; bindPluginKeys keeps them clear of built-in keys
 	if i, ok := m.pluginKeys[msg.String()]; ok {

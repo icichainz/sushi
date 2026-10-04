@@ -100,6 +100,8 @@ func (m Model) View() string {
 		lines = m.withDialog(lines, m.openWithBox())
 	case ModeTags:
 		lines = m.withDialog(lines, m.tagBox())
+	case ModePattern:
+		lines = m.withDialog(lines, m.patternBox())
 	case ModeHelp:
 		lines = m.withHelp(lines)
 	}
@@ -686,6 +688,8 @@ func (m Model) modeBadge() (string, lipgloss.Color) {
 		return "OPEN WITH", t.Accent
 	case ModeTags:
 		return "TAGS", t.Accent
+	case ModePattern:
+		return "RENAME", t.Accent
 	case ModeHelp:
 		return "KEYS", t.Accent
 	}
@@ -857,6 +861,8 @@ func (m Model) renderBottomRow() string {
 		return m.renderHints(m.openWithHints())
 	case ModeTags:
 		return m.renderHints(m.tagHints())
+	case ModePattern:
+		return m.renderHints(m.patternHints())
 	case ModeHelp:
 		if m.maxHelpScroll() > 0 {
 			return m.renderHints([]hint{{"esc", "close"}, {keysLabel("/", k.Down, k.Up), "scroll"}, {"any other key", "does what it says"}})
@@ -870,7 +876,8 @@ func (m Model) renderBottomRow() string {
 	if len(m.tabs[m.activeTabIdx].Selected) > 0 {
 		return m.renderHints([]hint{keyHint("toggle", k.Select), keyHint("invert", k.Invert), keyHint("clear", k.Unselect),
 			keyHint("copy", k.Copy), keyHint("cut", k.Cut), keyHint("delete", k.Delete), keyHint("edit", k.Edit),
-			keyHint("open", k.Open), keyHint("quick look", k.QuickLook), keyHint("shell", k.Shell), keyHint("all keys", k.Help)})
+			keyHint("open", k.Open), keyHint("quick look", k.QuickLook), keyHint("shell", k.Shell),
+			keyHint("rename by pattern", k.PatternRename), keyHint("all keys", k.Help)})
 	}
 	return m.renderHints([]hint{keyHint("open", k.Enter), keyHint("select", k.Select), keyHint("copy", k.Copy), keyHint("cut", k.Cut),
 		keyHint("paste", k.Paste), keyHint("rename", k.Rename), keyHint("new", k.NewFile), keyHint("delete", k.Delete),
@@ -1087,7 +1094,7 @@ func (k KeyMap) helpGroups() []helpGroup {
 	groups := []helpGroup{
 		{"Move", []hint{keyHint("down, up", k.Down, k.Up), keyHint("parent, open", k.Left, k.Right), keyHint("parent", k.Back),
 			keyHint("first, last", k.Home, k.End), keyHint("page up, down", k.PageUp, k.PageDown)}},
-		{"Files", []hint{keyHint("open", k.Enter), keyHint("edit, default app", k.Edit, k.Open), keyHint("rename, tags", k.Rename, k.Tag),
+		{"Files", []hint{keyHint("open", k.Enter), keyHint("edit, default app", k.Edit, k.Open), keyHint("rename, pattern, tags", k.Rename, k.PatternRename, k.Tag),
 			keyHint("new file, folder", k.NewFile, k.NewDir), keyHint("trash, delete", k.Delete, k.HardDelete)}},
 		{"Tools", []hint{keyHint("undo", k.Undo), keyHint("cancel operation", k.Cancel), keyHint("duplicate, paste link", k.Duplicate, k.PasteLink),
 			keyHint("chmod, bulk rename", k.Chmod, k.BulkRename), keyHint("zip, extract", k.Archive, k.Extract)}},
