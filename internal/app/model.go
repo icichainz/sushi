@@ -44,6 +44,8 @@ type Tab struct {
 	resortWanted    bool // Sort order changed while loading: sort the load once in
 
 	git gitState // What Git says about CurrentPath; see git.go
+
+	archive *archiveView // The archive the tab is inside of, or nil; see archive.go
 }
 
 // Model represents the application state
@@ -119,6 +121,7 @@ type Model struct {
 	pb           pbState          // What sushi knows of the macOS pasteboard; see pasteboard.go
 	openWith     openWithState    // The Open with list; see openwith.go
 	quickLookWin *quickLookWindow // The Quick Look window open, if any; see quicklook.go
+	arc          archiveState     // Copies of archive entries, and entries copied; see archive.go
 	pattern      patternRename    // The rename-by-pattern dialog (M); see pattern.go
 }
 
@@ -534,6 +537,7 @@ func NewModelWithConfig(path string, cfg *config.Config) Model {
 		showHidden:  cfg.ShowHidden,
 		sortBy:      cfg.SortBy,
 		sortReverse: cfg.SortReverse,
+		arc:         archiveState{cache: &archiveCache{}},
 	}
 	if cfg.Watch {
 		m.watch = newDirWatcher()

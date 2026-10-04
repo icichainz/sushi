@@ -400,9 +400,10 @@ func (m *Model) watchTabs() {
 			}
 		}
 	}
-	add(m.tab().CurrentPath, filepath.Dir(m.tab().CurrentPath))
+	// Inside an archive, the folder holding it; see archive.go
+	add(m.tab().realDir(), filepath.Dir(m.tab().realDir()))
 	for i := range m.tabs {
-		add(m.tabs[i].CurrentPath, filepath.Dir(m.tabs[i].CurrentPath))
+		add(m.tabs[i].realDir(), filepath.Dir(m.tabs[i].realDir()))
 	}
 	for i := range m.tabs {
 		if tab := &m.tabs[i]; tab.git.dir == tab.CurrentPath {
@@ -427,7 +428,7 @@ func (m *Model) handleDirsChanged(msg dirsChangedMsg) tea.Cmd {
 	var cmds []tea.Cmd
 	for i := range m.tabs {
 		tab := &m.tabs[i]
-		if !changed[tab.CurrentPath] && !changed[filepath.Dir(tab.CurrentPath)] {
+		if dir := tab.realDir(); !changed[dir] && !changed[filepath.Dir(dir)] {
 			if tab.gitChanged(changed) && !tab.Loading {
 				cmds = append(cmds, m.runGit(tab))
 			}
@@ -447,6 +448,9 @@ func (m *Model) handleDirsChanged(msg dirsChangedMsg) tea.Cmd {
 // nearest directory above it that still exists
 func (m *Model) reloadTab(tab *Tab) tea.Cmd {
 	dir := existingDir(tab.CurrentPath)
+	if a := tab.archive; a != nil && archiveAt(tab.CurrentPath) == a.ix.Path {
+		dir = tab.CurrentPath // Inside an archive that is still there; see archive.go
+	}
 	load := m.loadDir(tab, dir)
 	if dir != tab.CurrentPath && tab.ID == m.tab().ID {
 		return tea.Batch(load, m.setStatus(filepath.Base(tab.CurrentPath)+" no longer exists"))

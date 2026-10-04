@@ -85,6 +85,14 @@ func (m *Model) gitAfterLoad(tab *Tab) tea.Cmd {
 		return nil
 	}
 	g := &tab.git
+	if tab.archive != nil {
+		// Nothing inside an archive is in a repository's work tree
+		if g.cancel != nil {
+			g.cancel()
+		}
+		*g = gitState{dir: tab.CurrentPath, seq: g.seq, off: true}
+		return nil
+	}
 	if g.dir != tab.CurrentPath {
 		if g.cancel != nil {
 			g.cancel()

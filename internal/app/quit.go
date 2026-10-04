@@ -13,16 +13,17 @@ func (m Model) Close() {
 	m.stopFind()
 	m.stopGit()
 	m.quickLookWin.close()
+	m.arc.cache.removeAll() // Copies of archive entries; see archive.go
 }
 
 // ExitDir returns the directory the shell should change to now that sushi
-// has quit: the active tab's, or "" after Q, which leaves the shell where
-// it was
+// has quit: the active tab's, or the folder holding the archive it is
+// inside of, or "" after Q, which leaves the shell where it was
 func (m Model) ExitDir() string {
 	if m.keepShellDir {
 		return ""
 	}
-	return m.tab().CurrentPath
+	return m.tab().realDir()
 }
 
 // WriteExitDir writes ExitDir to path for the shell function printed by

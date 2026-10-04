@@ -185,7 +185,7 @@ func (m *Model) startFind() tea.Cmd {
 		q.Text = m.nameQuery()
 		q.Match = nameMatcher(q.Text)
 	}
-	engine := findEngine
+	engine := m.searchEngine(f.root) // Inside an archive, its own; see archive.go
 	go func() {
 		defer close(run.results)
 		emit := func(r search.Result) {

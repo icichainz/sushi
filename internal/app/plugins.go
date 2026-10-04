@@ -96,6 +96,11 @@ func (m Model) runPlugin(p plugins.Plugin) (tea.Model, tea.Cmd) {
 		cmd := m.stillBusy()
 		return m, cmd
 	}
+	// Archive entries aren't files a command could use; see archive.go
+	if m.tab().archive != nil {
+		cmd := m.setStatus("Plugins and shell commands work on files on disk, not inside an archive")
+		return m, cmd
+	}
 	cmdFile, err := os.CreateTemp("", "sushi-cmd-*")
 	if err != nil {
 		cmd := m.setStatus(fmt.Sprintf("Can't run %s: %v", p.Name, err))

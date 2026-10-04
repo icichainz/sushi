@@ -696,6 +696,9 @@ func (m Model) modeBadge() (string, lipgloss.Color) {
 	if len(m.tabs[m.activeTabIdx].Selected) > 0 {
 		return "SELECT", t.Selected
 	}
+	if m.tabs[m.activeTabIdx].archive != nil {
+		return "ARCHIVE", t.Highlight // Read-only; see archive.go
+	}
 	return "NORMAL", t.Accent
 }
 
@@ -872,6 +875,9 @@ func (m Model) renderBottomRow() string {
 	if m.job != nil {
 		return m.renderHints([]hint{keyHint("cancel "+strings.ToLower(m.job.doing), k.Cancel), keyHint("open", k.Enter),
 			keyHint("select", k.Select), keyHint("copy", k.Copy), keyHint("cut", k.Cut), keyHint("search", k.Search), keyHint("all keys", k.Help)})
+	}
+	if m.tabs[m.activeTabIdx].archive != nil {
+		return m.renderHints(m.archiveHints()) // See archive.go
 	}
 	if len(m.tabs[m.activeTabIdx].Selected) > 0 {
 		return m.renderHints([]hint{keyHint("toggle", k.Select), keyHint("invert", k.Invert), keyHint("clear", k.Unselect),
