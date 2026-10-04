@@ -403,7 +403,9 @@ The actions, with their default keys as the config writes them:
 | 72 to 99 columns | Files, preview |
 | Under 72 columns | Files only |
 
-Narrow file lists drop the date column first, then the size; sorted by one of those, the name's heading then says so, as in `Name (modified ↓)`. The status bar shows the current mode (`NORMAL`, `SELECT`, `SEARCH`, `FIND`, `SORT`, `CHMOD`, `ARCHIVE`, ...), then the latest message and the progress of any operation running in the background, then the number of items, their size, the selection and the clipboard, as far as they fit. The last line lists the keys that apply to the mode.
+With two file lists side by side (`w`), the parent pane isn't shown, and the preview only from 120 columns; see [Dual Pane](#dual-pane).
+
+Narrow file lists drop the date column first, then the size; sorted by one of those, the name's heading then says so, as in `Name (modified ↓)`. The status bar shows the current mode (`NORMAL`, `SELECT`, `SEARCH`, `FIND`, `SORT`, `CHMOD`, `RENAME`, `JUMP` in the frequent folders palette, `DISK USAGE`, `TRASH`, `ARCHIVE` while naming a new zip or browsing inside one, ...), then the latest message and the progress of any operation running in the background, then the number of items, their size, the selection and the clipboard, as far as they fit. The last line lists the keys that apply to the mode.
 
 ## Previews
 
@@ -595,15 +597,20 @@ The key panel lists these two in its `Tabs, space` group.
 | Click the parent pane's heading | Go up |
 | Click a tab | Switch to it |
 | Wheel over the file list / preview | Move the cursor / scroll the preview, 3 rows at a time |
-| Click / double-click in Bookmarks, the Run palette, the Find palette or the Open with list | Pick a row / go there, run it or open with that app |
+| Click or double-click the other list, in dual-pane mode | Make it the active list, then do there what the click does: move the cursor, or open |
+| Wheel over the other list, in dual-pane mode | Move its cursor, leaving it the inactive list |
+| Click / double-click in Bookmarks, the Run palette, the Find palette, the frequent folders palette or the Open with list | Pick a row / go there, run it or open with that app |
 | Click the command line in the Run palette | Type a shell command |
 | Click an order in the sort menu | Sort by it |
 | Click a tag / the field in the tag picker | Tick or untick it / type a new tag |
+| Click / double-click in the disk usage view | Pick an entry / open it, as `Enter` does |
+| Click / double-click in the trash browser | Pick an item / put it back |
+| Click a field of Rename by pattern | Type there, where you clicked |
 | Wheel while a dialog is open | Move through its rows |
-| Click outside a dialog | Close it |
+| Click outside a dialog | Close it. The disk usage view and Rename by pattern stay open, so a stray click loses nothing |
 | Wheel / click on the key panel | Scroll it / close it |
 
-While searching with `/`, clicks and the wheel move between the matches, and a double-click keeps the match and opens it. Prompts and confirmations ignore the mouse. Terminals don't pass `Cmd`-clicks on to programs.
+While searching with `/`, clicks and the wheel move between the matches, and a double-click keeps the match and opens it; clicks on the other list of a dual-pane tab are ignored. Prompts and confirmations, including those of the trash browser, ignore the mouse. Terminals don't pass `Cmd`-clicks on to programs.
 
 While sushi uses the mouse, terminals select text only with a key held: `Shift` in most, `Option` in iTerm2. In macOS Terminal, `Cmd+R` (View > Allow Mouse Reporting) switches the mouse between sushi and the terminal. Set `mouse: false` to leave the mouse to the terminal for good.
 
